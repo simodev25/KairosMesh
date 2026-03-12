@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forex-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forex-backend
+  template:
+    metadata:
+      labels:
+        app: forex-backend
+    spec:
+      containers:
+        - name: backend
+          image: {{ .Values.backend.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.backend.port }}

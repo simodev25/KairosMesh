@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: forex-frontend
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: forex-frontend
+  ports:
+    - port: {{ .Values.frontend.port }}
+      targetPort: {{ .Values.frontend.port }}

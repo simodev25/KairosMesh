@@ -1,0 +1,26 @@
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base
+
+
+class AnalysisRun(Base):
+    __tablename__ = 'analysis_runs'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    pair: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default='simulation')
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default='pending')
+    decision: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    trace: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_by_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    steps = relationship('AgentStep', back_populates='run', cascade='all, delete-orphan')
+    orders = relationship('ExecutionOrder', back_populates='run', cascade='all, delete-orphan')

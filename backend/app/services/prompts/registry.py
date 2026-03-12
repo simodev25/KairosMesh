@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.db.models.prompt_template import PromptTemplate
+
+LANGUAGE_DIRECTIVE = (
+    "Réponds en français. "
+    "Conserve uniquement les labels techniques attendus (BUY/SELL/HOLD et bullish/bearish/neutral) si nécessaire."
+)
+
+DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
+    'news-analyst': {
+        'system': (
+            "Tu es un analyste news Forex. "
+            "Infère strictement un sentiment directionnel bullish, bearish ou neutral."
+        ),
+        'user': (
+            "Pair: {pair}\nTimeframe: {timeframe}\nMémoires pertinentes:\n{memory_context}\n"
+            "Titres:\n{headlines}\nRetourne le sentiment, les risques et la confiance."
+        ),
+    },
+    'bullish-researcher': {
+        'system': "Tu es un chercheur Forex haussier. Construis le meilleur cas haussier avec des preuves.",
+        'user': (
+            "Pair: {pair}\nTimeframe: {timeframe}\nSignals: {signals_json}\nMémoire long-terme:\n{memory_context}\n"
+            "Produit des arguments haussiers concis et les risques d'invalidation."
+        ),
+    },
+    'bearish-researcher': {
+        'system': "Tu es un chercheur Forex baissier. Construis le meilleur cas baissier avec des preuves.",
+        'user': (
+            "Pair: {pair}\nTimeframe: {timeframe}\nSignals: {signals_json}\nMémoire long-terme:\n{memory_context}\n"
+            "Produit des arguments baissiers concis et les risques d'invalidation."
+        ),
+    },
+    'trader-agent': {
+        'system': "Tu es un assistant trader Forex. Résume la justification finale en note d'exécution compacte.",
+        'user': (
+            "Pair: {pair}\nTimeframe: {timeframe}\nDecision: {decision}\nBullish: {bullish_args}\n"
+            "Bearish: {bearish_args}\nNotes de risque: {risk_notes}"
+        ),
+    },
+}
+
+
+class SafeDict(dict):
+    def __missing__(self, key: str) -> str:
+        return '{' + key + '}'
+
+
+class PromptTemplateService:
+    @staticmethod
+    def _enforce_language(system_prompt: str) -> str:
+        lower = system_prompt.lower()
+        if 'réponds en français' in lower or 'respond in french' in lower:
+            return system_prompt
+        return f'{system_prompt}\n\n{LANGUAGE_DIRECTIVE}'
+
+    def seed_defaults(self, db: Session) -> None:
+        for agent_name, templates in DEFAULT_PROMPTS.items():
+            exists = db.query(PromptTemplate).filter(PromptTemplate.agent_name == agent_name).first()
+            if exists:
+                continue
+            db.add(
+                PromptTemplate(
+                    agent_name=agent_name,
+                    version=1,
+                    is_active=True,
+                    system_prompt=templates['system'],
+                    user_prompt_template=templates['user'],
+                    notes='seed default',
+                )
+            )
+        db.commit()
+
+    def create_version(
+        self,
+        db: Session,
+        agent_name: str,
+        system_prompt: str,
+        user_prompt_template: str,
+        notes: str | None,
+        created_by_id: int | None,
+    ) -> PromptTemplate:
+        max_version = (
+            db.query(func.max(PromptTemplate.version))
+            .filter(PromptTemplate.agent_name == agent_name)
+            .scalar()
+        )
+        next_version = (max_version or 0) + 1
+
+        prompt = PromptTemplate(
+            agent_name=agent_name,
+            version=next_version,
+            is_active=False,
+            system_prompt=system_prompt,
+            user_prompt_template=user_prompt_template,
+            notes=notes,
+            created_by_id=created_by_id,
+        )
+        db.add(prompt)
+        db.commit()
+        db.refresh(prompt)
+        return prompt
+
+    def activate(self, db: Session, prompt_id: int) -> PromptTemplate | None:
+        prompt = db.get(PromptTemplate, prompt_id)
+        if not prompt:
+            return None
+
+        db.query(PromptTemplate).filter(
+            PromptTemplate.agent_name == prompt.agent_name,
+            PromptTemplate.is_active.is_(True),
+        ).update({'is_active': False})
+
+        prompt.is_active = True
+        db.commit()
+        db.refresh(prompt)
+        return prompt
+
+    def get_active(self, db: Session, agent_name: str) -> PromptTemplate | None:
+        return (
+            db.query(PromptTemplate)
+            .filter(PromptTemplate.agent_name == agent_name, PromptTemplate.is_active.is_(True))
+            .order_by(PromptTemplate.version.desc())
+            .first()
+        )
+
+    def render(
+        self,
+        db: Session,
+        agent_name: str,
+        fallback_system: str,
+        fallback_user: str,
+        variables: dict[str, Any],
+    ) -> dict[str, Any]:
+        prompt = self.get_active(db, agent_name)
+        if prompt:
+            system_prompt = prompt.system_prompt
+            user_template = prompt.user_prompt_template
+            prompt_version = prompt.version
+            prompt_id = prompt.id
+        else:
+            system_prompt = fallback_system
+            user_template = fallback_user
+            prompt_version = 0
+            prompt_id = None
+
+        user_prompt = user_template.format_map(SafeDict(**variables))
+        system_prompt = self._enforce_language(system_prompt)
+
+        return {
+            'prompt_id': prompt_id,
+            'version': prompt_version,
+            'system_prompt': system_prompt,
+            'user_prompt': user_prompt,
+        }

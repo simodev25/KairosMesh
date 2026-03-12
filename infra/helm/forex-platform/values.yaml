@@ -1,0 +1,13 @@
+backend:
+  image: forex-backend:0.1.0
+  port: 8000
+
+frontend:
+  image: forex-frontend:0.1.0
+  port: 5173
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: false

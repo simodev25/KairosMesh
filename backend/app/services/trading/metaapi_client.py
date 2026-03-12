@@ -1,0 +1,315 @@
+import logging
+from typing import Any
+
+import httpx
+
+from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+class MetaApiClient:
+    _SUCCESS_TRADE_STRING_CODES = {
+        'ERR_NO_ERROR',
+        'TRADE_RETCODE_PLACED',
+        'TRADE_RETCODE_DONE',
+        'TRADE_RETCODE_DONE_PARTIAL',
+        'TRADE_RETCODE_NO_CHANGES',
+    }
+    _SUCCESS_TRADE_NUMERIC_CODES = {0, 10008, 10009, 10010, 10025}
+    _FAILURE_MARKERS = ('UNKNOWN', 'ERROR', 'INVALID', 'REJECT', 'DENIED', 'DISABLED', 'TIMEOUT', 'NO_MONEY')
+
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self._metaapi_cls = None
+        self._sdk_by_region: dict[str, Any] = {}
+
+        try:
+            from metaapi_cloud_sdk import MetaApi  # type: ignore
+
+            self._metaapi_cls = MetaApi
+        except Exception as exc:  # pragma: no cover
+            logger.warning('metaapi sdk unavailable, using REST fallback: %s', exc)
+
+    def _resolve_token(self) -> str:
+        return (self.settings.metaapi_token or '').strip()
+
+    def _resolve_account_id(self, account_id: str | None) -> str:
+        return (account_id or self.settings.metaapi_account_id or '').strip()
+
+    def _resolve_base_url(self) -> str:
+        return self.settings.metaapi_base_url.rstrip('/')
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {
+            self.settings.metaapi_auth_header: self._resolve_token(),
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+        }
+
+    def _get_sdk(self, region: str | None = None):
+        region = region or self.settings.metaapi_region
+        if not self._metaapi_cls or not self._resolve_token():
+            return None
+        if region not in self._sdk_by_region:
+            self._sdk_by_region[region] = self._metaapi_cls(self._resolve_token(), {'region': region})
+        return self._sdk_by_region[region]
+
+    def is_configured(self, account_id: str | None = None) -> bool:
+        resolved = self._resolve_account_id(account_id)
+        return bool(self._resolve_token() and resolved)
+
+    async def _rest_get(self, account_id: str, candidate_paths: list[str]) -> dict[str, Any]:
+        if not self.is_configured(account_id):
+            return {'degraded': True, 'reason': 'MetaApi token/account not configured'}
+
+        headers = self._auth_headers()
+        base_url = self._resolve_base_url()
+        timeout = max(self.settings.ollama_timeout_seconds, 30)
+        errors: list[str] = []
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for path in candidate_paths:
+                url = f'{base_url}{path}'
+                try:
+                    response = await client.get(url, headers=headers)
+                    if response.status_code == 200:
+                        return {'degraded': False, 'payload': response.json(), 'endpoint': url}
+                    errors.append(f'{url} -> {response.status_code}')
+                except Exception as exc:  # pragma: no cover
+                    errors.append(f'{url} -> {exc}')
+
+        return {'degraded': True, 'reason': 'REST fallback failed', 'errors': errors}
+
+    async def _rest_post(self, account_id: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.is_configured(account_id):
+            return {'degraded': True, 'executed': False, 'reason': 'MetaApi token/account not configured'}
+
+        headers = self._auth_headers()
+        base_url = self._resolve_base_url()
+        url = f'{base_url}{path}'
+
+        try:
+            async with httpx.AsyncClient(timeout=max(self.settings.ollama_timeout_seconds, 30)) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                if 200 <= response.status_code < 300:
+                    result_payload: Any = response.json()
+                    if path.endswith('/trade'):
+                        ok, reason = self._trade_result_ok(result_payload)
+                        if not ok:
+                            return {
+                                'degraded': True,
+                                'executed': False,
+                                'reason': reason or 'MetaApi trade rejected',
+                                'endpoint': url,
+                                'result': result_payload,
+                            }
+                    return {'degraded': False, 'executed': True, 'result': result_payload, 'endpoint': url}
+                return {
+                    'degraded': True,
+                    'executed': False,
+                    'reason': f'HTTP {response.status_code}',
+                    'endpoint': url,
+                    'raw': response.text,
+                }
+        except Exception as exc:  # pragma: no cover
+            logger.exception('metaapi rest post failure account_id=%s path=%s', account_id, path)
+            return {'degraded': True, 'executed': False, 'reason': str(exc), 'endpoint': url}
+
+    @classmethod
+    def _trade_result_ok(cls, payload: Any) -> tuple[bool, str | None]:
+        if not isinstance(payload, dict):
+            return False, 'Unexpected MetaApi trade response format'
+
+        raw_string_code = payload.get('stringCode') or payload.get('code') or ''
+        string_code = str(raw_string_code).upper().strip()
+        raw_numeric_code = payload.get('numericCode')
+        numeric_code: int | None = None
+        if raw_numeric_code is not None:
+            try:
+                numeric_code = int(raw_numeric_code)
+            except (TypeError, ValueError):
+                numeric_code = None
+
+        message = str(payload.get('message') or payload.get('error') or '').strip()
+        message_lower = message.lower()
+
+        if string_code in cls._SUCCESS_TRADE_STRING_CODES or numeric_code in cls._SUCCESS_TRADE_NUMERIC_CODES:
+            return True, None
+
+        if numeric_code is not None and numeric_code < 0:
+            return False, message or f'MetaApi trade failed (numericCode={numeric_code})'
+
+        if string_code:
+            if any(marker in string_code for marker in cls._FAILURE_MARKERS):
+                return False, message or f'MetaApi trade failed ({string_code})'
+            if string_code.startswith('TRADE_RETCODE_'):
+                return False, message or f'MetaApi trade not accepted ({string_code})'
+
+        if 'unknown trade return code' in message_lower:
+            return False, message
+
+        if payload.get('success') is True:
+            return True, None
+
+        # If MetaApi does not provide explicit retcode but returns identifiers, consider it accepted.
+        if any(key in payload for key in ('orderId', 'positionId', 'tradeId')):
+            return True, None
+
+        return False, message or 'MetaApi trade response did not confirm execution'
+
+    @staticmethod
+    def _validate_symbol_for_market_order(symbol: str, spec: Any) -> tuple[bool, str | None]:
+        if not isinstance(spec, dict):
+            return False, f'No symbol specification available for {symbol}'
+
+        trade_mode = str(spec.get('tradeMode') or '').upper()
+        if trade_mode == 'SYMBOL_TRADE_MODE_DISABLED':
+            return False, f'Symbol {symbol} trading is disabled on this account (tradeMode={trade_mode})'
+
+        allowed_types = spec.get('allowedOrderTypes')
+        if isinstance(allowed_types, list) and 'SYMBOL_ORDER_MARKET' not in allowed_types:
+            return False, f'Symbol {symbol} does not allow market orders (allowedOrderTypes={allowed_types})'
+
+        return True, None
+
+    async def get_account_information(self, account_id: str | None = None, region: str | None = None) -> dict[str, Any]:
+        resolved_account_id = self._resolve_account_id(account_id)
+        if not resolved_account_id:
+            return {'degraded': True, 'reason': 'MetaApi account id not configured'}
+
+        sdk = self._get_sdk(region)
+        if sdk:
+            try:
+                account = await sdk.metatrader_account_api.get_account(resolved_account_id)
+                if account.state != 'DEPLOYED':
+                    await account.deploy()
+                    await account.wait_connected()
+                connection = account.get_rpc_connection()
+                await connection.connect()
+                await connection.wait_synchronized()
+                return {'degraded': False, 'account_info': await connection.get_account_information(), 'provider': 'sdk'}
+            except Exception as exc:  # pragma: no cover
+                logger.warning('metaapi sdk account info failed, trying REST fallback: %s', exc)
+
+        result = await self._rest_get(
+            resolved_account_id,
+            [
+                f'/users/current/accounts/{resolved_account_id}/account-information',
+                f'/users/current/accounts/{resolved_account_id}/accountInformation',
+            ],
+        )
+        if result.get('degraded'):
+            return {'degraded': True, 'reason': result.get('reason', 'REST fallback failed'), 'errors': result.get('errors', [])}
+        return {'degraded': False, 'account_info': result.get('payload', {}), 'provider': 'rest', 'endpoint': result.get('endpoint')}
+
+    async def get_positions(self, account_id: str | None = None, region: str | None = None) -> dict[str, Any]:
+        resolved_account_id = self._resolve_account_id(account_id)
+        if not resolved_account_id:
+            return {'degraded': True, 'positions': [], 'reason': 'MetaApi account id not configured'}
+
+        sdk = self._get_sdk(region)
+        if sdk:
+            try:
+                account = await sdk.metatrader_account_api.get_account(resolved_account_id)
+                connection = account.get_rpc_connection()
+                await connection.connect()
+                await connection.wait_synchronized()
+                return {'degraded': False, 'positions': await connection.get_positions(), 'provider': 'sdk'}
+            except Exception as exc:  # pragma: no cover
+                logger.warning('metaapi sdk positions failed, trying REST fallback: %s', exc)
+
+        result = await self._rest_get(
+            resolved_account_id,
+            [
+                f'/users/current/accounts/{resolved_account_id}/positions',
+                f'/users/current/accounts/{resolved_account_id}/open-positions',
+            ],
+        )
+        if result.get('degraded'):
+            return {'degraded': True, 'positions': [], 'reason': result.get('reason', 'REST fallback failed'), 'errors': result.get('errors', [])}
+
+        payload = result.get('payload', [])
+        if isinstance(payload, dict):
+            payload = payload.get('positions', payload)
+        return {'degraded': False, 'positions': payload if isinstance(payload, list) else [], 'provider': 'rest', 'endpoint': result.get('endpoint')}
+
+    async def place_order(
+        self,
+        symbol: str,
+        side: str,
+        volume: float,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        account_id: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_account_id = self._resolve_account_id(account_id)
+        if not resolved_account_id:
+            return {'degraded': True, 'executed': False, 'reason': 'MetaApi account id not configured'}
+
+        sdk = self._get_sdk(region)
+        if sdk:
+            try:
+                account = await sdk.metatrader_account_api.get_account(resolved_account_id)
+                connection = account.get_rpc_connection()
+                await connection.connect()
+                await connection.wait_synchronized()
+                symbol_spec = await connection.get_symbol_specification(symbol)
+                tradable, reason = self._validate_symbol_for_market_order(symbol, symbol_spec)
+                if not tradable:
+                    return {
+                        'degraded': True,
+                        'executed': False,
+                        'reason': reason or f'Symbol {symbol} not tradable',
+                        'account_id': resolved_account_id,
+                        'provider': 'sdk',
+                        'symbol_spec': symbol_spec,
+                    }
+                if side.upper() == 'BUY':
+                    result = await connection.create_market_buy_order(symbol, volume, stop_loss=stop_loss, take_profit=take_profit)
+                else:
+                    result = await connection.create_market_sell_order(symbol, volume, stop_loss=stop_loss, take_profit=take_profit)
+                ok, reason = self._trade_result_ok(result)
+                if not ok:
+                    return {
+                        'degraded': True,
+                        'executed': False,
+                        'reason': reason or 'MetaApi SDK trade rejected',
+                        'account_id': resolved_account_id,
+                        'provider': 'sdk',
+                        'result': result,
+                    }
+                return {'degraded': False, 'executed': True, 'result': result, 'account_id': resolved_account_id, 'provider': 'sdk'}
+            except Exception as exc:  # pragma: no cover
+                logger.warning('metaapi sdk order failed, trying REST fallback: %s', exc)
+
+        action_type = 'ORDER_TYPE_BUY' if side.upper() == 'BUY' else 'ORDER_TYPE_SELL'
+        rest_payload = {
+            'actionType': action_type,
+            'symbol': symbol,
+            'volume': volume,
+        }
+        if stop_loss is not None:
+            rest_payload['stopLoss'] = stop_loss
+        if take_profit is not None:
+            rest_payload['takeProfit'] = take_profit
+
+        result = await self._rest_post(
+            resolved_account_id,
+            f'/users/current/accounts/{resolved_account_id}/trade',
+            rest_payload,
+        )
+        if result.get('executed'):
+            result['account_id'] = resolved_account_id
+            result['provider'] = 'rest'
+            return result
+
+        return {
+            'degraded': True,
+            'executed': False,
+            'reason': result.get('reason', 'MetaApi execution failed'),
+            'account_id': resolved_account_id,
+            'endpoint': result.get('endpoint'),
+            'raw': result.get('raw'),
+        }

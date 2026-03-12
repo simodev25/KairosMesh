@@ -1,0 +1,365 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root {
+  --bg: #06090f;
+  --surface: #0f1522;
+  --surface-alt: #141d2c;
+  --line: #24324a;
+  --text: #e9eef7;
+  --text-muted: #95a3b8;
+  --accent-blue: #3f82ff;
+  --accent-green: #20c997;
+  --accent-red: #ff5c6a;
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(63, 130, 255, 0.18), transparent 26%),
+    radial-gradient(circle at 84% 14%, rgba(32, 201, 151, 0.12), transparent 24%),
+    radial-gradient(circle at 50% 100%, rgba(255, 92, 106, 0.08), transparent 30%),
+    var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans', sans-serif;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+.topbar-title,
+.brand h1 {
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+a {
+  color: #87b2ff;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(15, 21, 34, 0.92) 0%, rgba(15, 21, 34, 0.8) 100%);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.brand p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-link {
+  color: var(--text-muted);
+  padding: 10px 12px;
+  border-radius: 10px;
+  transition: all 120ms ease-in-out;
+}
+
+.nav-link:hover,
+.nav-link.active {
+  color: var(--text);
+  background: rgba(63, 130, 255, 0.16);
+  text-decoration: none;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-footer p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+button {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, #1a2f54 0%, #11213f 100%);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.content {
+  padding: 20px 22px 36px;
+}
+
+.topbar {
+  height: 58px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 22px;
+}
+
+.topbar-title {
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(20, 29, 44, 0.88), rgba(12, 18, 29, 0.94));
+  border-radius: var(--radius);
+  padding: 18px;
+  overflow: auto;
+}
+
+.card.primary {
+  border-color: rgba(63, 130, 255, 0.4);
+}
+
+.form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid.inline {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+input,
+select,
+textarea {
+  border: 1px solid var(--line);
+  background: rgba(8, 13, 22, 0.9);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 10px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 660px;
+}
+
+thead th {
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 8px;
+}
+
+tbody td {
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(36, 50, 74, 0.45);
+  font-size: 0.9rem;
+}
+
+.badge {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge.completed,
+.badge.ok,
+.badge.simulated,
+.badge.submitted,
+.badge.paper-simulated {
+  border-color: rgba(32, 201, 151, 0.5);
+  color: #8cf3d3;
+  background: rgba(32, 201, 151, 0.16);
+}
+
+.badge.failed,
+.badge.blocked {
+  border-color: rgba(255, 92, 106, 0.5);
+  color: #ff9ca6;
+  background: rgba(255, 92, 106, 0.16);
+}
+
+.badge.pending,
+.badge.running,
+.badge.queued,
+.badge.created,
+.badge.role {
+  border-color: rgba(63, 130, 255, 0.5);
+  color: #9fc2ff;
+  background: rgba(63, 130, 255, 0.16);
+}
+
+.stats-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+}
+
+.stats-grid div {
+  background: rgba(8, 13, 22, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.stats-grid span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.stats-grid strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 1.2rem;
+}
+
+.alert {
+  color: #ff9ca6;
+}
+
+pre,
+code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  background: rgba(8, 13, 22, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+pre {
+  overflow: auto;
+  max-height: 480px;
+}
+
+code {
+  font-size: 0.8rem;
+  border-radius: 8px;
+  padding: 2px 6px;
+}
+
+.json-view {
+  background: rgba(6, 11, 20, 0.98);
+  border-color: #2d3f5e;
+  color: #f2f7ff;
+}
+
+.steps-list {
+  display: grid;
+  gap: 12px;
+}
+
+.step-card {
+  border: 1px solid rgba(36, 50, 74, 0.8);
+  border-radius: 12px;
+  background: rgba(8, 13, 22, 0.86);
+  padding: 12px;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(15, 21, 34, 0.95), rgba(12, 18, 29, 0.95));
+  border-radius: 18px;
+  padding: 24px;
+}
+
+.loading-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    overflow-x: auto;
+  }
+
+  .brand,
+  .sidebar-footer {
+    display: none;
+  }
+
+  .nav {
+    flex-direction: row;
+  }
+
+  .content {
+    padding-top: 0;
+  }
+}
