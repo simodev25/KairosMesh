@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -11,6 +14,7 @@ from app.schemas.backtest import BacktestCreateRequest, BacktestRunDetailOut, Ba
 from app.services.backtest.engine import BacktestEngine
 
 router = APIRouter(prefix='/backtests', tags=['backtests'])
+logger = logging.getLogger(__name__)
 
 
 @router.get('', response_model=list[BacktestRunOut])
@@ -30,8 +34,13 @@ def create_backtest(
     user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST)),
 ) -> BacktestRunOut:
     settings = get_settings()
+    engine = BacktestEngine()
+    normalized_strategy = engine.normalize_strategy(payload.strategy)
     pair = payload.pair.upper()
     timeframe = payload.timeframe.upper()
+    if not normalized_strategy:
+        supported = ', '.join(sorted(BacktestEngine.SUPPORTED_STRATEGIES))
+        raise HTTPException(status_code=400, detail=f'Unsupported strategy {payload.strategy}. Supported: {supported}')
     if pair not in settings.default_forex_pairs:
         raise HTTPException(status_code=400, detail=f'Unsupported pair {pair} for V1 scope')
     if timeframe not in settings.default_timeframes:
@@ -44,7 +53,7 @@ def create_backtest(
         timeframe=timeframe,
         start_date=payload.start_date,
         end_date=payload.end_date,
-        strategy=payload.strategy,
+        strategy=normalized_strategy,
         status='running',
         metrics={},
         equity_curve=[],
@@ -54,10 +63,23 @@ def create_backtest(
     db.commit()
     db.refresh(run)
 
-    engine = BacktestEngine()
-
     try:
-        result = engine.run(pair, timeframe, payload.start_date.isoformat(), payload.end_date.isoformat())
+        logger.info(
+            'backtest_start run_id=%s pair=%s timeframe=%s strategy_in=%s strategy=%s',
+            run.id,
+            pair,
+            timeframe,
+            payload.strategy,
+            normalized_strategy,
+        )
+        result = engine.run(
+            pair,
+            timeframe,
+            payload.start_date.isoformat(),
+            payload.end_date.isoformat(),
+            strategy=normalized_strategy,
+            db=db,
+        )
         run.status = 'completed'
         run.metrics = result.metrics
         run.equity_curve = result.equity_curve
@@ -77,12 +99,40 @@ def create_backtest(
             )
         db.commit()
         db.refresh(run)
+        logger.info(
+            'backtest_done run_id=%s strategy=%s workflow_source=%s trades=%s return_pct=%s',
+            run.id,
+            run.strategy,
+            run.metrics.get('workflow_source'),
+            run.metrics.get('trades'),
+            run.metrics.get('total_return_pct'),
+        )
         return BacktestRunOut.model_validate(run)
+    except asyncio.CancelledError:
+        run.status = 'failed'
+        run.error = 'Backtest request cancelled before completion'
+        db.commit()
+        db.refresh(run)
+        logger.warning(
+            'backtest_cancelled run_id=%s pair=%s timeframe=%s strategy=%s',
+            run.id,
+            pair,
+            timeframe,
+            normalized_strategy,
+        )
+        raise
     except Exception as exc:
         run.status = 'failed'
         run.error = str(exc)
         db.commit()
         db.refresh(run)
+        logger.exception(
+            'backtest_failed run_id=%s pair=%s timeframe=%s strategy=%s',
+            run.id,
+            pair,
+            timeframe,
+            normalized_strategy,
+        )
         return BacktestRunOut.model_validate(run)
 
 

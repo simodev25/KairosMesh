@@ -5,6 +5,10 @@ import type { BacktestRun } from '../types';
 
 const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP'];
 const TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1'];
+const STRATEGIES = [
+  { value: 'agents_v1', label: 'Agents V1' },
+  { value: 'ema_rsi', label: 'EMA + RSI (legacy)' },
+];
 
 function defaultStartDate() {
   const d = new Date();
@@ -22,7 +26,7 @@ export function BacktestsPage() {
   const [timeframe, setTimeframe] = useState('H1');
   const [startDate, setStartDate] = useState(defaultStartDate());
   const [endDate, setEndDate] = useState(defaultEndDate());
-  const [strategy, setStrategy] = useState('ema_rsi');
+  const [strategy, setStrategy] = useState('agents_v1');
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [selected, setSelected] = useState<BacktestRun | null>(null);
   const [loading, setLoading] = useState(false);
@@ -104,7 +108,13 @@ export function BacktestsPage() {
           </label>
           <label>
             Strategy
-            <input value={strategy} onChange={(e) => setStrategy(e.target.value)} />
+            <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+              {STRATEGIES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
           </label>
           <button disabled={loading}>{loading ? 'Calcul...' : 'Lancer backtest'}</button>
         </form>

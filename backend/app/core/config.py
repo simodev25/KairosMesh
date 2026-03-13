@@ -69,6 +69,10 @@ class Settings(BaseSettings):
 
     prometheus_enabled: bool = Field(default=True, alias='PROMETHEUS_ENABLED')
     open_telemetry_enabled: bool = Field(default=False, alias='OPEN_TELEMETRY_ENABLED')
+    log_agent_steps: bool = Field(default=True, alias='LOG_AGENT_STEPS')
+    backtest_agent_log_every: int = Field(default=25, alias='BACKTEST_AGENT_LOG_EVERY')
+    backtest_enable_llm: bool = Field(default=False, alias='BACKTEST_ENABLE_LLM')
+    backtest_llm_every: int = Field(default=24, alias='BACKTEST_LLM_EVERY')
 
     @field_validator('cors_origins', mode='before')
     @classmethod
