@@ -125,6 +125,22 @@ async def positions(
     )
 
 
+@router.get('/open-orders')
+async def open_orders(
+    account_ref: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
+) -> dict:
+    account = _get_account_or_none(db, account_ref)
+    account_id = account.account_id if account else None
+    region = account.region if account else None
+    db.close()
+    return await metaapi_client.get_open_orders(
+        account_id=account_id,
+        region=region,
+    )
+
+
 @router.get('/deals')
 async def deals(
     account_ref: int | None = Query(default=None),

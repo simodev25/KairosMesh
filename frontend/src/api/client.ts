@@ -60,6 +60,18 @@ export const api = {
       token,
     ),
   listMetaApiAccounts: (token: string) => request('/trading/accounts', {}, token),
+  listMetaApiPositions: (token: string, params: { account_ref?: number | null } = {}) => {
+    const search = new URLSearchParams();
+    if (params.account_ref != null) search.set('account_ref', String(params.account_ref));
+    const suffix = search.toString();
+    return request(`/trading/positions${suffix ? `?${suffix}` : ''}`, {}, token);
+  },
+  listMetaApiOpenOrders: (token: string, params: { account_ref?: number | null } = {}) => {
+    const search = new URLSearchParams();
+    if (params.account_ref != null) search.set('account_ref', String(params.account_ref));
+    const suffix = search.toString();
+    return request(`/trading/open-orders${suffix ? `?${suffix}` : ''}`, {}, token);
+  },
   listMetaApiDeals: (
     token: string,
     params: { account_ref?: number | null; days?: number; limit?: number; offset?: number } = {},

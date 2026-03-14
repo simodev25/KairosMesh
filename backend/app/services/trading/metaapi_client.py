@@ -446,6 +446,58 @@ class MetaApiClient:
             payload = payload.get('positions', payload)
         return {'degraded': False, 'positions': payload if isinstance(payload, list) else [], 'provider': 'rest', 'endpoint': result.get('endpoint')}
 
+    async def get_open_orders(self, account_id: str | None = None, region: str | None = None) -> dict[str, Any]:
+        resolved_account_id = self._resolve_account_id(account_id)
+        if not resolved_account_id:
+            return {'degraded': True, 'open_orders': [], 'reason': 'MetaApi account id not configured'}
+
+        sdk = self._get_sdk(region)
+        if sdk:
+            connection = None
+            try:
+                account = await sdk.metatrader_account_api.get_account(resolved_account_id)
+                connection = account.get_rpc_connection()
+                await connection.connect()
+                await connection.wait_synchronized()
+                return {'degraded': False, 'open_orders': await connection.get_orders(), 'provider': 'sdk'}
+            except Exception as exc:  # pragma: no cover
+                logger.warning('metaapi sdk open orders failed, trying REST fallback: %s', exc)
+            finally:
+                await self._close_connection(connection)
+
+        result = await self._rest_get(
+            resolved_account_id,
+            [
+                f'/users/current/accounts/{resolved_account_id}/orders',
+                f'/users/current/accounts/{resolved_account_id}/open-orders',
+                f'/users/current/accounts/{resolved_account_id}/openOrders',
+                f'/users/current/accounts/{resolved_account_id}/pending-orders',
+                f'/users/current/accounts/{resolved_account_id}/pendingOrders',
+            ],
+        )
+        if result.get('degraded'):
+            return {'degraded': True, 'open_orders': [], 'reason': result.get('reason', 'REST fallback failed'), 'errors': result.get('errors', [])}
+
+        payload = result.get('payload', [])
+        if isinstance(payload, dict):
+            if isinstance(payload.get('orders'), list):
+                payload = payload.get('orders', [])
+            elif isinstance(payload.get('openOrders'), list):
+                payload = payload.get('openOrders', [])
+            elif isinstance(payload.get('pendingOrders'), list):
+                payload = payload.get('pendingOrders', [])
+            elif isinstance(payload.get('items'), list):
+                payload = payload.get('items', [])
+            else:
+                payload = []
+
+        return {
+            'degraded': False,
+            'open_orders': payload if isinstance(payload, list) else [],
+            'provider': 'rest',
+            'endpoint': result.get('endpoint'),
+        }
+
     async def get_deals(
         self,
         account_id: str | None = None,

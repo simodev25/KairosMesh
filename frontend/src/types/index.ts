@@ -87,6 +87,42 @@ export interface MetaApiHistoryOrder {
   [key: string]: unknown;
 }
 
+export interface MetaApiPosition {
+  id?: string | number;
+  ticket?: string | number;
+  orderId?: string | number;
+  positionId?: string | number;
+  symbol?: string;
+  type?: string;
+  volume?: number;
+  openPrice?: number;
+  currentPrice?: number;
+  profit?: number;
+  swap?: number;
+  brokerTime?: string;
+  time?: string;
+  comment?: string;
+  [key: string]: unknown;
+}
+
+export interface MetaApiOpenOrder {
+  id?: string | number;
+  ticket?: string | number;
+  orderId?: string | number;
+  positionId?: string | number;
+  symbol?: string;
+  type?: string;
+  state?: string;
+  volume?: number;
+  currentVolume?: number;
+  openPrice?: number;
+  currentPrice?: number;
+  time?: string;
+  brokerTime?: string;
+  comment?: string;
+  [key: string]: unknown;
+}
+
 export interface ConnectorConfig {
   id: number;
   connector_name: string;
