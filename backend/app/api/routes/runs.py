@@ -10,6 +10,7 @@ from app.db.models.run import AnalysisRun
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.run import CreateRunRequest, RunDetailOut, RunOut
+from app.services.market.symbols import canonical_symbol, get_market_symbols_config
 from app.services.orchestrator.engine import ForexOrchestrator
 from app.tasks.run_analysis_task import execute as run_analysis_task
 
@@ -35,10 +36,12 @@ async def create_run(
     user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST)),
 ) -> RunOut:
     settings = get_settings()
-    pair = payload.pair.upper()
+    pair = canonical_symbol(payload.pair)
     timeframe = payload.timeframe.upper()
+    symbols_config = get_market_symbols_config(db, settings)
+    supported_pairs = {canonical_symbol(item) for item in symbols_config['tradeable_pairs']}
 
-    if pair not in settings.default_forex_pairs:
+    if pair not in supported_pairs:
         raise HTTPException(status_code=400, detail=f'Unsupported pair {pair} for V1 scope')
     if timeframe not in settings.default_timeframes:
         raise HTTPException(status_code=400, detail=f'Unsupported timeframe {timeframe} for V1 scope')

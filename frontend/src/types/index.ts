@@ -39,6 +39,7 @@ export interface RunDetail extends Run {
 export interface ExecutionOrder {
   id: number;
   run_id: number;
+  timeframe?: string | null;
   mode: ExecutionMode;
   side: string;
   symbol: string;
@@ -48,6 +49,15 @@ export interface ExecutionOrder {
   response_payload: Record<string, unknown>;
   error?: string | null;
   created_at: string;
+}
+
+export interface MarketCandle {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
 }
 
 export interface MetaApiDeal {
@@ -128,6 +138,19 @@ export interface ConnectorConfig {
   connector_name: string;
   enabled: boolean;
   settings: Record<string, unknown>;
+}
+
+export interface MarketSymbolGroup {
+  name: string;
+  symbols: string[];
+}
+
+export interface MarketSymbolsConfig {
+  forex_pairs: string[];
+  crypto_pairs: string[];
+  symbol_groups: MarketSymbolGroup[];
+  tradeable_pairs: string[];
+  source: string;
 }
 
 export interface MetaApiAccount {

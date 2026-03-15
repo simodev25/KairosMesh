@@ -6,8 +6,9 @@ from app.core.config import get_settings
 from app.core.security import Role, require_roles
 from app.db.models.connector_config import ConnectorConfig
 from app.db.session import get_db
-from app.schemas.connector import ConnectorConfigOut, ConnectorConfigUpdate
+from app.schemas.connector import ConnectorConfigOut, ConnectorConfigUpdate, MarketSymbolsOut, MarketSymbolsUpdate
 from app.services.llm.ollama_client import OllamaCloudClient
+from app.services.market.symbols import get_market_symbols_config, save_market_symbols_config
 from app.services.market.yfinance_provider import YFinanceMarketProvider
 from app.services.memory.vector_memory import VectorMemoryService
 from app.services.trading.metaapi_client import MetaApiClient
@@ -31,6 +32,34 @@ def list_connectors(
     db.commit()
     connectors = db.query(ConnectorConfig).all()
     return [ConnectorConfigOut.model_validate(conn) for conn in connectors]
+
+
+@router.get('/market-symbols', response_model=MarketSymbolsOut)
+def get_market_symbols(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
+) -> MarketSymbolsOut:
+    settings = get_settings()
+    payload = get_market_symbols_config(db, settings)
+    return MarketSymbolsOut.model_validate(payload)
+
+
+@router.put('/market-symbols', response_model=MarketSymbolsOut)
+def update_market_symbols(
+    payload: MarketSymbolsUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
+) -> MarketSymbolsOut:
+    symbol_groups_payload = [group.model_dump() for group in payload.symbol_groups]
+    save_market_symbols_config(
+        db,
+        symbol_groups=symbol_groups_payload,
+        forex_pairs=payload.forex_pairs,
+        crypto_pairs=payload.crypto_pairs,
+    )
+    settings = get_settings()
+    resolved = get_market_symbols_config(db, settings)
+    return MarketSymbolsOut.model_validate(resolved)
 
 
 @router.get('/ollama/models')

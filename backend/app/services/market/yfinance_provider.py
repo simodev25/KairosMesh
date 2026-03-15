@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any
 
 import pandas as pd
@@ -18,27 +19,116 @@ class YFinanceMarketProvider:
         'H4': ('60m', '180d'),
         'D1': ('1d', '365d'),
     }
+    index_alias_map = {
+        'SPX500': '^GSPC',
+        'US500': '^GSPC',
+        'NSDQ100': '^NDX',
+        'NAS100': '^NDX',
+        'US30': '^DJI',
+        'DJI30': '^DJI',
+        'GER40': '^GDAXI',
+        'DE40': '^GDAXI',
+        'UK100': '^FTSE',
+        'FRA40': '^FCHI',
+        'JP225': '^N225',
+        'NIKKEI225': '^N225',
+    }
 
-    def _symbol(self, pair: str) -> str:
-        return f"{pair}=X"
+    @staticmethod
+    def _normalize_pair(pair: str) -> str:
+        normalized = (pair or '').strip().upper()
+        if not normalized:
+            return normalized
+        match = re.search(r'[A-Z]{6}', normalized)
+        return match.group(0) if match else normalized
 
-    def _prepare_frame(self, pair: str, timeframe: str) -> pd.DataFrame:
-        interval, period = self.interval_map.get(timeframe.upper(), ('60m', '90d'))
-        ticker = yf.Ticker(self._symbol(pair))
-        frame = ticker.history(period=period, interval=interval)
+    @classmethod
+    def _ticker_candidates(cls, pair: str) -> list[str]:
+        cleaned = (pair or '').strip()
+        if not cleaned:
+            return []
 
+        candidates: list[str] = []
+
+        def add_candidate(value: str) -> None:
+            item = (value or '').strip()
+            if item and item not in candidates:
+                candidates.append(item)
+
+        upper_pair = cleaned.upper()
+        without_suffix = re.sub(r'\.[A-Z0-9_]+$', '', upper_pair)
+        base_pair = without_suffix or upper_pair
+        # Strip broker suffixes for Yahoo lookups as well.
+        add_candidate(base_pair)
+
+        forex_match = re.search(r'[A-Z]{6}', base_pair)
+        if forex_match:
+            add_candidate(forex_match.group(0))
+
+        index_alias = cls.index_alias_map.get(base_pair)
+        if index_alias:
+            add_candidate(index_alias)
+
+        yfinance_symbols: list[str] = []
+        for symbol in candidates:
+            if symbol.startswith('^') or '=' in symbol:
+                add_to = symbol
+                if add_to not in yfinance_symbols:
+                    yfinance_symbols.append(add_to)
+                continue
+            fx_like = re.fullmatch(r'[A-Z]{6}', symbol) is not None
+            if fx_like:
+                with_suffix = f'{symbol}=X'
+                if with_suffix not in yfinance_symbols:
+                    yfinance_symbols.append(with_suffix)
+            if symbol not in yfinance_symbols:
+                yfinance_symbols.append(symbol)
+
+        return yfinance_symbols
+
+    def _resample_if_needed(self, frame: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         if timeframe.upper() == 'H4' and not frame.empty:
-            frame = (
+            return (
                 frame.resample('4h')
                 .agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
                 .dropna()
             )
+        return frame
 
+    def _fetch_history_with_fallback(
+        self,
+        pair: str,
+        timeframe: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[pd.DataFrame, str | None]:
+        interval, period = self.interval_map.get(timeframe.upper(), ('60m', '90d'))
+        symbols = self._ticker_candidates(pair)
+        if not symbols:
+            return pd.DataFrame(), None
+
+        for symbol in symbols:
+            try:
+                ticker = yf.Ticker(symbol)
+                if start_date is not None and end_date is not None:
+                    frame = ticker.history(start=start_date, end=end_date, interval=interval)
+                else:
+                    frame = ticker.history(period=period, interval=interval)
+                frame = self._resample_if_needed(frame, timeframe)
+                if not frame.empty:
+                    return frame, symbol
+            except Exception:  # pragma: no cover
+                logger.debug('yfinance history candidate failed pair=%s symbol=%s', pair, symbol, exc_info=True)
+        return pd.DataFrame(), symbols[0]
+
+    def _prepare_frame(self, pair: str, timeframe: str) -> pd.DataFrame:
+        frame, _ = self._fetch_history_with_fallback(pair, timeframe)
         return frame
 
     def get_market_snapshot(self, pair: str, timeframe: str) -> dict[str, Any]:
         try:
-            frame = self._prepare_frame(pair, timeframe)
+            frame, used_symbol = self._fetch_history_with_fallback(pair, timeframe)
             if frame.empty:
                 return {'degraded': True, 'error': 'No market data available', 'pair': pair, 'timeframe': timeframe}
 
@@ -64,6 +154,7 @@ class YFinanceMarketProvider:
                 'degraded': False,
                 'pair': pair,
                 'timeframe': timeframe,
+                'symbol': used_symbol,
                 'last_price': latest,
                 'change_pct': round(float(pct_change), 5),
                 'rsi': round(float(rsi), 3),
@@ -79,17 +170,12 @@ class YFinanceMarketProvider:
 
     def get_historical_candles(self, pair: str, timeframe: str, start_date: str, end_date: str) -> pd.DataFrame:
         try:
-            interval, _ = self.interval_map.get(timeframe.upper(), ('60m', '90d'))
-            ticker = yf.Ticker(self._symbol(pair))
-            frame = ticker.history(start=start_date, end=end_date, interval=interval)
-
-            if timeframe.upper() == 'H4' and not frame.empty:
-                frame = (
-                    frame.resample('4h')
-                    .agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
-                    .dropna()
-                )
-
+            frame, _ = self._fetch_history_with_fallback(
+                pair,
+                timeframe,
+                start_date=start_date,
+                end_date=end_date,
+            )
             return frame
         except Exception as exc:  # pragma: no cover
             logger.exception('yfinance historical retrieval failure pair=%s timeframe=%s', pair, timeframe)
@@ -97,19 +183,31 @@ class YFinanceMarketProvider:
 
     def get_news_context(self, pair: str, limit: int = 5) -> dict[str, Any]:
         try:
-            ticker = yf.Ticker(self._symbol(pair))
-            news_items = ticker.news or []
-            selected = []
-            for item in news_items[:limit]:
-                selected.append(
-                    {
-                        'title': item.get('title', ''),
-                        'publisher': item.get('publisher', ''),
-                        'link': item.get('link', ''),
-                        'published': item.get('providerPublishTime'),
-                    }
-                )
-            return {'degraded': False, 'pair': pair, 'news': selected}
+            last_symbol: str | None = None
+            for symbol in self._ticker_candidates(pair):
+                try:
+                    last_symbol = symbol
+                    ticker = yf.Ticker(symbol)
+                    news_items = ticker.news or []
+                except Exception:  # pragma: no cover
+                    logger.debug('yfinance news candidate failed pair=%s symbol=%s', pair, symbol, exc_info=True)
+                    continue
+
+                selected = []
+                for item in news_items[:limit]:
+                    selected.append(
+                        {
+                            'title': item.get('title', ''),
+                            'publisher': item.get('publisher', ''),
+                            'link': item.get('link', ''),
+                            'published': item.get('providerPublishTime'),
+                        }
+                    )
+
+                if selected:
+                    return {'degraded': False, 'pair': pair, 'symbol': symbol, 'news': selected}
+
+            return {'degraded': False, 'pair': pair, 'symbol': last_symbol, 'news': []}
         except Exception as exc:  # pragma: no cover
             logger.exception('yfinance news retrieval failure pair=%s', pair)
             return {'degraded': True, 'pair': pair, 'news': [], 'error': str(exc)}

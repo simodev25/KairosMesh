@@ -12,6 +12,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.backtest import BacktestCreateRequest, BacktestRunDetailOut, BacktestRunOut
 from app.services.backtest.engine import BacktestEngine
+from app.services.market.symbols import canonical_symbol, get_market_symbols_config
 
 router = APIRouter(prefix='/backtests', tags=['backtests'])
 logger = logging.getLogger(__name__)
@@ -36,12 +37,14 @@ def create_backtest(
     settings = get_settings()
     engine = BacktestEngine()
     normalized_strategy = engine.normalize_strategy(payload.strategy)
-    pair = payload.pair.upper()
+    pair = canonical_symbol(payload.pair)
     timeframe = payload.timeframe.upper()
+    symbols_config = get_market_symbols_config(db, settings)
+    supported_pairs = {canonical_symbol(item) for item in symbols_config['tradeable_pairs']}
     if not normalized_strategy:
         supported = ', '.join(sorted(BacktestEngine.SUPPORTED_STRATEGIES))
         raise HTTPException(status_code=400, detail=f'Unsupported strategy {payload.strategy}. Supported: {supported}')
-    if pair not in settings.default_forex_pairs:
+    if pair not in supported_pairs:
         raise HTTPException(status_code=400, detail=f'Unsupported pair {pair} for V1 scope')
     if timeframe not in settings.default_timeframes:
         raise HTTPException(status_code=400, detail=f'Unsupported timeframe {timeframe} for V1 scope')

@@ -1,16 +1,17 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
+import { CRYPTO_PAIRS, DEFAULT_PAIR, DEFAULT_TIMEFRAMES, FOREX_PAIRS, TRADEABLE_PAIRS } from '../constants/markets';
 import { useAuth } from '../hooks/useAuth';
 import type {
   ConnectorConfig,
   LlmModelUsage,
   LlmSummary,
+  MarketSymbolGroup,
+  MarketSymbolsConfig,
   MetaApiAccount,
   PromptTemplate,
 } from '../types';
 
-const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP'];
-const TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1'];
 const ORCHESTRATION_AGENTS = [
   'technical-analyst',
   'news-analyst',
@@ -73,6 +74,46 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
   },
 };
 
+function parseSymbolInput(value: string): string[] {
+  const normalized = value
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const symbol of normalized) {
+    const key = symbol.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(symbol);
+  }
+  return deduped;
+}
+
+interface EditableSymbolGroup {
+  id: string;
+  name: string;
+  symbolsInput: string;
+}
+
+const FALLBACK_SYMBOL_GROUPS: MarketSymbolGroup[] = [
+  { name: 'forex', symbols: FOREX_PAIRS },
+  { name: 'crypto', symbols: CRYPTO_PAIRS },
+];
+
+let editableGroupCounter = 0;
+
+function toEditableGroups(groups: MarketSymbolGroup[]): EditableSymbolGroup[] {
+  return groups.map((group) => {
+    editableGroupCounter += 1;
+    return {
+      id: `symbol-group-${editableGroupCounter}`,
+      name: group.name,
+      symbolsInput: group.symbols.join(', '),
+    };
+  });
+}
+
 export function ConnectorsPage() {
   const { token } = useAuth();
   const [connectors, setConnectors] = useState<ConnectorConfig[]>([]);
@@ -105,9 +146,18 @@ export function ConnectorsPage() {
   const [promptUser, setPromptUser] = useState(AGENT_PROMPT_FALLBACKS['news-analyst'].user);
   const [promptSaving, setPromptSaving] = useState(false);
 
-  const [memoryPair, setMemoryPair] = useState('EURUSD');
+  const [memoryPair, setMemoryPair] = useState(DEFAULT_PAIR);
   const [memoryTimeframe, setMemoryTimeframe] = useState('H1');
   const [memoryQuery, setMemoryQuery] = useState('recent bullish context');
+  const [marketSymbols, setMarketSymbols] = useState<MarketSymbolsConfig>({
+    forex_pairs: FOREX_PAIRS,
+    crypto_pairs: CRYPTO_PAIRS,
+    symbol_groups: FALLBACK_SYMBOL_GROUPS,
+    tradeable_pairs: TRADEABLE_PAIRS,
+    source: 'fallback',
+  });
+  const [symbolGroupsInput, setSymbolGroupsInput] = useState<EditableSymbolGroup[]>(toEditableGroups(FALLBACK_SYMBOL_GROUPS));
+  const [symbolsSaving, setSymbolsSaving] = useState(false);
 
   const hydrateAgentModels = (connectorRows: ConnectorConfig[]) => {
     const ollama = connectorRows.find((item) => item.connector_name === 'ollama');
@@ -139,16 +189,36 @@ export function ConnectorsPage() {
   const loadAll = async () => {
     if (!token) return;
     try {
-      const [c, a, p, s, m, usage] = await Promise.all([
+      const [c, a, p, s, m, usage, symbols] = await Promise.all([
         api.listConnectors(token),
         api.listMetaApiAccounts(token),
         api.listPrompts(token),
         api.llmSummary(token),
         api.listOllamaModels(token).catch(() => ({ models: [], source: null, error: 'cannot fetch models' })),
         api.llmModelsUsage(token).catch(() => []),
+        api.getMarketSymbols(token).catch(() => ({
+          forex_pairs: FOREX_PAIRS,
+          crypto_pairs: CRYPTO_PAIRS,
+          symbol_groups: FALLBACK_SYMBOL_GROUPS,
+          tradeable_pairs: TRADEABLE_PAIRS,
+          source: 'fallback',
+        })),
       ]);
       const connectorRows = c as ConnectorConfig[];
       const accountRows = a as MetaApiAccount[];
+      const symbolsPayload = symbols as MarketSymbolsConfig;
+      const symbolGroups = Array.isArray(symbolsPayload.symbol_groups) && symbolsPayload.symbol_groups.length > 0
+        ? symbolsPayload.symbol_groups
+        : FALLBACK_SYMBOL_GROUPS;
+      const forexPairs = Array.isArray(symbolsPayload.forex_pairs) && symbolsPayload.forex_pairs.length > 0
+        ? symbolsPayload.forex_pairs
+        : (symbolGroups.find((group) => group.name.toLowerCase() === 'forex')?.symbols ?? FOREX_PAIRS);
+      const cryptoPairs = Array.isArray(symbolsPayload.crypto_pairs) && symbolsPayload.crypto_pairs.length > 0
+        ? symbolsPayload.crypto_pairs
+        : (symbolGroups.find((group) => group.name.toLowerCase() === 'crypto')?.symbols ?? CRYPTO_PAIRS);
+      const tradeablePairs = Array.isArray(symbolsPayload.tradeable_pairs) && symbolsPayload.tradeable_pairs.length > 0
+        ? symbolsPayload.tradeable_pairs
+        : Array.from(new Set(symbolGroups.flatMap((group) => group.symbols ?? [])));
       setConnectors(connectorRows);
       setAccounts(accountRows);
       setPrompts(p as PromptTemplate[]);
@@ -156,6 +226,14 @@ export function ConnectorsPage() {
       setModelChoices(Array.isArray(m.models) ? m.models : []);
       setModelSource(typeof m.source === 'string' ? m.source : '');
       setModelsUsage(usage as LlmModelUsage[]);
+      setMarketSymbols({
+        forex_pairs: forexPairs,
+        crypto_pairs: cryptoPairs,
+        symbol_groups: symbolGroups,
+        tradeable_pairs: tradeablePairs,
+        source: typeof symbolsPayload.source === 'string' ? symbolsPayload.source : 'config',
+      });
+      setSymbolGroupsInput(toEditableGroups(symbolGroups));
       hydrateAgentModels(connectorRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Cannot load admin data');
@@ -176,6 +254,11 @@ export function ConnectorsPage() {
     return map;
   }, [prompts]);
 
+  const memoryPairOptions = useMemo(() => {
+    const list = Array.isArray(marketSymbols.tradeable_pairs) ? marketSymbols.tradeable_pairs : [];
+    return list.length > 0 ? list : TRADEABLE_PAIRS;
+  }, [marketSymbols.tradeable_pairs]);
+
   useEffect(() => {
     const active = activePromptByAgent.get(promptAgent);
     const fallback = AGENT_PROMPT_FALLBACKS[promptAgent] ?? {
@@ -185,6 +268,13 @@ export function ConnectorsPage() {
     setPromptSystem(active?.system_prompt ?? fallback.system);
     setPromptUser(active?.user_prompt_template ?? fallback.user);
   }, [promptAgent, activePromptByAgent]);
+
+  useEffect(() => {
+    if (memoryPairOptions.length === 0) return;
+    if (!memoryPairOptions.includes(memoryPair)) {
+      setMemoryPair(memoryPairOptions[0]);
+    }
+  }, [memoryPairOptions, memoryPair]);
 
   const toggleConnector = async (connector: ConnectorConfig) => {
     if (!token) return;
@@ -294,6 +384,78 @@ export function ConnectorsPage() {
     if (!token) return;
     await api.activatePrompt(token, prompt.id);
     await loadAll();
+  };
+
+  const addSymbolGroupRow = () => {
+    editableGroupCounter += 1;
+    setSymbolGroupsInput((prev) => [
+      ...prev,
+      {
+        id: `symbol-group-${editableGroupCounter}`,
+        name: '',
+        symbolsInput: '',
+      },
+    ]);
+  };
+
+  const removeSymbolGroupRow = (id: string) => {
+    setSymbolGroupsInput((prev) => prev.filter((group) => group.id !== id));
+  };
+
+  const updateSymbolGroupRow = (id: string, updates: Partial<EditableSymbolGroup>) => {
+    setSymbolGroupsInput((prev) => prev.map((group) => (group.id === id ? { ...group, ...updates } : group)));
+  };
+
+  const saveMarketSymbols = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token) return;
+
+    const symbolGroups = symbolGroupsInput
+      .map((group) => ({
+        name: group.name.trim(),
+        symbols: parseSymbolInput(group.symbolsInput),
+      }))
+      .filter((group) => group.name.length > 0 && group.symbols.length > 0);
+
+    if (symbolGroups.length === 0) {
+      setError('Ajouter au moins un groupe avec des symboles');
+      return;
+    }
+
+    setSymbolsSaving(true);
+    setError(null);
+    try {
+      const payload = (await api.updateMarketSymbols(token, {
+        symbol_groups: symbolGroups,
+      })) as MarketSymbolsConfig;
+      const resolvedGroups = Array.isArray(payload.symbol_groups) && payload.symbol_groups.length > 0
+        ? payload.symbol_groups
+        : symbolGroups;
+      const resolvedForex = Array.isArray(payload.forex_pairs) && payload.forex_pairs.length > 0
+        ? payload.forex_pairs
+        : (resolvedGroups.find((group) => group.name.toLowerCase() === 'forex')?.symbols ?? []);
+      const resolvedCrypto = Array.isArray(payload.crypto_pairs) && payload.crypto_pairs.length > 0
+        ? payload.crypto_pairs
+        : (resolvedGroups.find((group) => group.name.toLowerCase() === 'crypto')?.symbols ?? []);
+      const resolvedTradeable = Array.isArray(payload.tradeable_pairs) && payload.tradeable_pairs.length > 0
+        ? payload.tradeable_pairs
+        : Array.from(new Set(resolvedGroups.flatMap((group) => group.symbols ?? [])));
+      setMarketSymbols({
+        forex_pairs: resolvedForex,
+        crypto_pairs: resolvedCrypto,
+        symbol_groups: resolvedGroups,
+        tradeable_pairs: resolvedTradeable,
+        source: typeof payload.source === 'string' ? payload.source : 'config',
+      });
+      setSymbolGroupsInput(toEditableGroups(resolvedGroups));
+      if (resolvedTradeable.length > 0 && !resolvedTradeable.includes(memoryPair)) {
+        setMemoryPair(resolvedTradeable[0]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Cannot save market symbols');
+    } finally {
+      setSymbolsSaving(false);
+    }
   };
 
   const searchMemory = async (e: FormEvent) => {
@@ -564,12 +726,51 @@ export function ConnectorsPage() {
       </section>
 
       <section className="card">
+        <h3>Symboles marché</h3>
+        <p className="model-source">
+          Source active: <code>{marketSymbols.source}</code>
+        </p>
+        <form className="form-grid" onSubmit={saveMarketSymbols}>
+          {symbolGroupsInput.map((group) => (
+            <div key={group.id} className="form-grid inline">
+              <label>
+                Groupe
+                <input
+                  value={group.name}
+                  onChange={(e) => updateSymbolGroupRow(group.id, { name: e.target.value })}
+                  placeholder="ex: indices"
+                />
+              </label>
+              <label>
+                Symboles (CSV)
+                <textarea
+                  value={group.symbolsInput}
+                  onChange={(e) => updateSymbolGroupRow(group.id, { symbolsInput: e.target.value })}
+                  rows={2}
+                  placeholder="ex: SPX500,NSDQ100"
+                />
+              </label>
+              <button type="button" onClick={() => removeSymbolGroupRow(group.id)}>
+                Supprimer groupe
+              </button>
+            </div>
+          ))}
+          <div className="form-grid inline">
+            <button type="button" onClick={addSymbolGroupRow}>
+              Ajouter groupe
+            </button>
+          </div>
+          <button disabled={symbolsSaving}>{symbolsSaving ? 'Enregistrement...' : 'Enregistrer symboles'}</button>
+        </form>
+      </section>
+
+      <section className="card">
         <h3>Mémoire long-terme</h3>
         <form className="form-grid inline" onSubmit={searchMemory}>
           <label>
             Pair
             <select value={memoryPair} onChange={(e) => setMemoryPair(e.target.value)}>
-              {PAIRS.map((item) => (
+              {memoryPairOptions.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>
@@ -577,7 +778,7 @@ export function ConnectorsPage() {
           <label>
             Timeframe
             <select value={memoryTimeframe} onChange={(e) => setMemoryTimeframe(e.target.value)}>
-              {TIMEFRAMES.map((item) => (
+              {DEFAULT_TIMEFRAMES.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>

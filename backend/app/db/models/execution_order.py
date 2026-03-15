@@ -22,3 +22,7 @@ class ExecutionOrder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     run = relationship('AnalysisRun', back_populates='orders')
+
+    @property
+    def timeframe(self) -> str | None:
+        return self.run.timeframe if self.run else None

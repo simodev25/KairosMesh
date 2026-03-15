@@ -57,7 +57,6 @@ class Settings(BaseSettings):
         alias='METAAPI_MARKET_BASE_URL',
     )
     metaapi_auth_header: str = Field(default='auth-token', alias='METAAPI_AUTH_HEADER')
-    metaapi_symbol_suffix: str = Field(default='', alias='METAAPI_SYMBOL_SUFFIX')
     enable_metaapi_real_trades_dashboard: bool = Field(
         default=False,
         alias='ENABLE_METAAPI_REAL_TRADES_DASHBOARD',
@@ -68,8 +67,37 @@ class Settings(BaseSettings):
     enable_paper_execution: bool = Field(default=True, alias='ENABLE_PAPER_EXECUTION')
 
     default_forex_pairs: Annotated[List[str], NoDecode] = Field(
-        default_factory=lambda: ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP'],
+        default_factory=lambda: [
+            'EURUSD.PRO',
+            'GBPUSD.PRO',
+            'USDJPY.PRO',
+            'USDCHF.PRO',
+            'AUDUSD.PRO',
+            'USDCAD.PRO',
+            'NZDUSD.PRO',
+            'EURJPY.PRO',
+            'GBPJPY.PRO',
+            'EURGBP.PRO',
+        ],
         alias='DEFAULT_FOREX_PAIRS',
+    )
+    default_crypto_pairs: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: [
+            'ADAUSD',
+            'AVAXUSD',
+            'BCHUSD',
+            'BNBUSD',
+            'BTCUSD',
+            'DOGEUSD',
+            'DOTUSD',
+            'ETHUSD',
+            'LINKUSD',
+            'LTCUSD',
+            'MATICUSD',
+            'SOLUSD',
+            'UNIUSD',
+        ],
+        alias='DEFAULT_CRYPTO_PAIRS',
     )
     default_timeframes: Annotated[List[str], NoDecode] = Field(
         default_factory=lambda: ['M5', 'M15', 'H1', 'H4', 'D1'],
@@ -98,7 +126,7 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(',') if item.strip()]
         return value
 
-    @field_validator('default_forex_pairs', 'default_timeframes', mode='before')
+    @field_validator('default_forex_pairs', 'default_crypto_pairs', 'default_timeframes', mode='before')
     @classmethod
     def split_csv(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):

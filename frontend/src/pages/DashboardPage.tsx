@@ -1,11 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { DEFAULT_PAIR, DEFAULT_TIMEFRAMES } from '../constants/markets';
 import { useAuth } from '../hooks/useAuth';
+import { useMarketSymbols } from '../hooks/useMarketSymbols';
 import type { ExecutionMode, MetaApiAccount, Run } from '../types';
 
-const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP'];
-const TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1'];
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'pending']);
 
 function parseApiDateMs(value: string): number {
@@ -40,9 +40,10 @@ function runElapsed(run: Run, nowMs: number): string {
 
 export function DashboardPage() {
   const { token } = useAuth();
+  const { pairs } = useMarketSymbols(token);
   const [runs, setRuns] = useState<Run[]>([]);
   const [accounts, setAccounts] = useState<MetaApiAccount[]>([]);
-  const [pair, setPair] = useState('EURUSD');
+  const [pair, setPair] = useState(DEFAULT_PAIR);
   const [timeframe, setTimeframe] = useState('H1');
   const [mode, setMode] = useState<ExecutionMode>('simulation');
   const [riskPercent, setRiskPercent] = useState(1);
@@ -89,6 +90,13 @@ export function DashboardPage() {
     return () => clearInterval(ticker);
   }, []);
 
+  useEffect(() => {
+    if (pairs.length === 0) return;
+    if (!pairs.includes(pair)) {
+      setPair(pairs[0]);
+    }
+  }, [pairs, pair]);
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
@@ -125,7 +133,7 @@ export function DashboardPage() {
           <label>
             Pair
             <select value={pair} onChange={(e) => setPair(e.target.value)}>
-              {PAIRS.map((item) => (
+              {pairs.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>
@@ -133,7 +141,7 @@ export function DashboardPage() {
           <label>
             Timeframe
             <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-              {TIMEFRAMES.map((item) => (
+              {DEFAULT_TIMEFRAMES.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>

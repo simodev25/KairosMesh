@@ -139,7 +139,7 @@ Sens:
 Fix:
 
 - utiliser un symbole tradable sur le compte.
-- si broker suffixe les paires, configurer `METAAPI_SYMBOL_SUFFIX` (ex: `.pro`).
+- si broker suffixe les paires, configurer le suffixe directement dans `DEFAULT_FOREX_PAIRS` (ex: `EURUSD.pro`).
 
 ## `Object of type datetime is not JSON serializable`
 

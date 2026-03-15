@@ -6,6 +6,25 @@ class ConnectorConfigUpdate(BaseModel):
     settings: dict = Field(default_factory=dict)
 
 
+class MarketSymbolGroup(BaseModel):
+    name: str
+    symbols: list[str] = Field(default_factory=list)
+
+
+class MarketSymbolsUpdate(BaseModel):
+    forex_pairs: list[str] = Field(default_factory=list)
+    crypto_pairs: list[str] = Field(default_factory=list)
+    symbol_groups: list[MarketSymbolGroup] = Field(default_factory=list)
+
+
+class MarketSymbolsOut(BaseModel):
+    forex_pairs: list[str]
+    crypto_pairs: list[str]
+    symbol_groups: list[MarketSymbolGroup]
+    tradeable_pairs: list[str]
+    source: str
+
+
 class ConnectorConfigOut(BaseModel):
     id: int
     connector_name: str

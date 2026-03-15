@@ -24,16 +24,55 @@ def test_login_and_create_run(monkeypatch) -> None:
         assert login_resp.status_code == 200
         token = login_resp.json()['access_token']
 
+        bootstrap_symbols_resp = client.put(
+            '/api/v1/connectors/market-symbols',
+            json={
+                'symbol_groups': [
+                    {'name': 'forex', 'symbols': ['EURUSD.PRO', 'GBPUSD.PRO']},
+                    {'name': 'crypto', 'symbols': ['BTCUSD', 'ETHUSD']},
+                ]
+            },
+            headers={'Authorization': f'Bearer {token}'},
+        )
+        assert bootstrap_symbols_resp.status_code == 200
+
         run_resp = client.post(
             '/api/v1/runs?async_execution=false',
-            json={'pair': 'EURUSD', 'timeframe': 'H1', 'mode': 'simulation', 'risk_percent': 1.0},
+            json={'pair': 'EURUSD.PRO', 'timeframe': 'H1', 'mode': 'simulation', 'risk_percent': 1.0},
             headers={'Authorization': f'Bearer {token}'},
         )
         assert run_resp.status_code == 200
         payload = run_resp.json()
-        assert payload['pair'] == 'EURUSD'
+        assert payload['pair'] == 'EURUSD.PRO'
         assert payload['status'] == 'completed'
+
+        crypto_run_resp = client.post(
+            '/api/v1/runs?async_execution=false',
+            json={'pair': 'BTCUSD', 'timeframe': 'H1', 'mode': 'simulation', 'risk_percent': 1.0},
+            headers={'Authorization': f'Bearer {token}'},
+        )
+        assert crypto_run_resp.status_code == 200
+        crypto_payload = crypto_run_resp.json()
+        assert crypto_payload['pair'] == 'BTCUSD'
+        assert crypto_payload['status'] == 'completed'
+
+        symbols_resp = client.put(
+            '/api/v1/connectors/market-symbols',
+            json={'forex_pairs': ['USDJPY.PRO'], 'crypto_pairs': ['BTCUSD']},
+            headers={'Authorization': f'Bearer {token}'},
+        )
+        assert symbols_resp.status_code == 200
+        symbols_payload = symbols_resp.json()
+        assert symbols_payload['forex_pairs'] == ['USDJPY.PRO']
+        assert symbols_payload['crypto_pairs'] == ['BTCUSD']
+
+        overridden_run_resp = client.post(
+            '/api/v1/runs?async_execution=false',
+            json={'pair': 'USDJPY.PRO', 'timeframe': 'H1', 'mode': 'simulation', 'risk_percent': 1.0},
+            headers={'Authorization': f'Bearer {token}'},
+        )
+        assert overridden_run_resp.status_code == 200
 
         list_resp = client.get('/api/v1/runs', headers={'Authorization': f'Bearer {token}'})
         assert list_resp.status_code == 200
-        assert len(list_resp.json()) >= 1
+        assert len(list_resp.json()) >= 3

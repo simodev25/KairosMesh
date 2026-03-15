@@ -46,6 +46,15 @@ export const api = {
   getRun: (token: string, runId: string) => request(`/runs/${runId}`, {}, token),
   listOrders: (token: string) => request('/trading/orders', {}, token),
   listConnectors: (token: string) => request('/connectors', {}, token),
+  getMarketSymbols: (token: string) => request('/connectors/market-symbols', {}, token),
+  updateMarketSymbols: (
+    token: string,
+    payload: { forex_pairs?: string[]; crypto_pairs?: string[]; symbol_groups?: Array<{ name: string; symbols: string[] }> },
+  ) =>
+    request('/connectors/market-symbols', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, token),
   updateConnector: (token: string, connector: string, payload: { enabled: boolean; settings: Record<string, unknown> }) =>
     request(`/connectors/${connector}`, {
       method: 'PUT',
@@ -95,6 +104,17 @@ export const api = {
     if (params.offset != null) search.set('offset', String(params.offset));
     const suffix = search.toString();
     return request(`/trading/history-orders${suffix ? `?${suffix}` : ''}`, {}, token);
+  },
+  listMarketCandles: (
+    token: string,
+    params: { account_ref?: number | null; pair: string; timeframe: string; limit?: number },
+  ) => {
+    const search = new URLSearchParams();
+    if (params.account_ref != null) search.set('account_ref', String(params.account_ref));
+    search.set('pair', params.pair);
+    search.set('timeframe', params.timeframe);
+    if (params.limit != null) search.set('limit', String(params.limit));
+    return request(`/trading/market-candles?${search.toString()}`, {}, token);
   },
   createMetaApiAccount: (
     token: string,

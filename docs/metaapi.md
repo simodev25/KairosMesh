@@ -8,7 +8,8 @@
 - `METAAPI_BASE_URL` (par défaut `https://mt-client-api-v1.london.agiliumtrade.ai`)
 - `METAAPI_MARKET_BASE_URL`
 - `METAAPI_AUTH_HEADER` (par défaut `auth-token`)
-- `METAAPI_SYMBOL_SUFFIX` (ex: `.pro`)
+- `DEFAULT_FOREX_PAIRS` (inclure les suffixes broker directement, ex: `EURUSD.pro,GBPUSD.pro,...`)
+- `DEFAULT_CRYPTO_PAIRS` (ex: `BTCUSD,ETHUSD,...`)
 - `ENABLE_METAAPI_REAL_TRADES_DASHBOARD` (`true|false`, active la vue trades MT5 réels + graphes)
 - `METAAPI_USE_SDK_FOR_MARKET_DATA` (`false` recommandé pour éviter la limite d'abonnements SDK sur deals/history)
 
@@ -33,11 +34,9 @@ Compatibilité alias legacy (déjà supportée):
 
 ## Résolution du symbole (important)
 
-- Le moteur ajoute automatiquement `METAAPI_SYMBOL_SUFFIX` si nécessaire.
-- Exemple:
-  - pair run: `EURUSD`
-  - suffix config: `.pro`
-  - symbole envoyé: `EURUSD.pro`
+- Le moteur n'ajoute plus de suffixe automatiquement.
+- Le symbole envoyé à MetaApi est celui reçu depuis le run / ordre / UI.
+- Configurer les suffixes broker directement dans `DEFAULT_FOREX_PAIRS`.
 
 ## Modes d'exécution
 

@@ -1,5 +1,6 @@
 import logging
 import inspect
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
@@ -21,6 +22,29 @@ class MetaApiClient:
     }
     _SUCCESS_TRADE_NUMERIC_CODES = {0, 10008, 10009, 10010, 10025}
     _FAILURE_MARKERS = ('UNKNOWN', 'ERROR', 'INVALID', 'REJECT', 'DENIED', 'DISABLED', 'TIMEOUT', 'NO_MONEY')
+    _MARKET_TIMEFRAME_MAP = {
+        'M1': '1m',
+        'M2': '2m',
+        'M3': '3m',
+        'M4': '4m',
+        'M5': '5m',
+        'M6': '6m',
+        'M10': '10m',
+        'M12': '12m',
+        'M15': '15m',
+        'M20': '20m',
+        'M30': '30m',
+        'H1': '1h',
+        'H2': '2h',
+        'H3': '3h',
+        'H4': '4h',
+        'H6': '6h',
+        'H8': '8h',
+        'H12': '12h',
+        'D1': '1d',
+        'W1': '1w',
+        'MN1': '1mn',
+    }
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -179,14 +203,137 @@ class MetaApiClient:
         selected.sort(key=lambda item: item[0], reverse=True)
         return [item for _, item in selected]
 
+    @staticmethod
+    def _strip_trailing_pro_suffix(symbol: str) -> str:
+        cleaned = (symbol or '').strip().upper()
+        if not cleaned:
+            return ''
+        # Some brokers expose symbols with one or several trailing ".PRO" suffixes.
+        return re.sub(r'(?:\.PRO)+$', '', cleaned)
+
     def _resolve_trade_symbol(self, symbol: str) -> str:
-        base_symbol = (symbol or '').strip()
-        suffix = (self.settings.metaapi_symbol_suffix or '').strip()
-        if suffix and not suffix.startswith('.'):
-            suffix = f'.{suffix}'
-        if suffix and not base_symbol.endswith(suffix):
-            return f'{base_symbol}{suffix}'
-        return base_symbol
+        return (symbol or '').strip().upper()
+
+    @classmethod
+    def _trade_symbol_candidates(cls, symbol: str) -> list[str]:
+        cleaned = (symbol or '').strip()
+        if not cleaned:
+            return []
+
+        candidates: list[str] = []
+
+        def add_candidate(value: str) -> None:
+            item = (value or '').strip()
+            if item and item not in candidates:
+                candidates.append(item)
+
+        upper_symbol = cleaned.upper()
+        if '.' in upper_symbol:
+            base, suffix = upper_symbol.rsplit('.', 1)
+            if base and suffix:
+                # Prefer broker suffix variant with lowercase (e.g. EURUSD.pro).
+                add_candidate(f'{base}.{suffix.lower()}')
+                add_candidate(cleaned)
+                add_candidate(f'{base}.{suffix}')
+                add_candidate(base)
+            else:
+                add_candidate(cleaned)
+                add_candidate(upper_symbol)
+        else:
+            add_candidate(cleaned)
+            add_candidate(upper_symbol)
+
+        stripped = cls._strip_trailing_pro_suffix(upper_symbol)
+        if stripped and stripped != upper_symbol:
+            add_candidate(stripped)
+
+        forex_match = re.search(r'[A-Z]{6}', upper_symbol)
+        if forex_match:
+            base_symbol = forex_match.group(0)
+            add_candidate(base_symbol)
+            add_candidate(f'{base_symbol}.pro')
+            add_candidate(f'{base_symbol}.PRO')
+
+        return candidates
+
+    @staticmethod
+    def _market_symbol_candidates(symbol: str) -> list[str]:
+        cleaned = (symbol or '').strip()
+        if not cleaned:
+            return []
+
+        candidates: list[str] = []
+
+        def add_candidate(value: str) -> None:
+            item = (value or '').strip()
+            if item and item not in candidates:
+                candidates.append(item)
+
+        upper_symbol = cleaned.upper()
+        base_symbol = upper_symbol
+        if '.' in upper_symbol:
+            base_part, suffix = upper_symbol.rsplit('.', 1)
+            if base_part and suffix:
+                # Prefer broker suffix in lower-case first (e.g. EURUSD.pro).
+                add_candidate(f'{base_part}.{suffix.lower()}')
+                add_candidate(cleaned)
+                add_candidate(f'{base_part}.{suffix}')
+                base_symbol = base_part
+
+        add_candidate(base_symbol)
+
+        forex_match = re.search(r'[A-Z]{6}', base_symbol)
+        if forex_match:
+            add_candidate(forex_match.group(0))
+
+        return candidates
+
+    @classmethod
+    def _normalize_market_timeframe(cls, timeframe: str) -> str:
+        raw = (timeframe or '').strip().upper()
+        if raw in cls._MARKET_TIMEFRAME_MAP:
+            return cls._MARKET_TIMEFRAME_MAP[raw]
+        # Already in SDK format (e.g. 1h, 15m, 1d)
+        return raw.lower() or '1h'
+
+    def _normalize_market_candle(self, candle: Any) -> dict[str, Any] | None:
+        if not isinstance(candle, dict):
+            return None
+
+        ts = self._to_utc_datetime(candle.get('time'))
+        if ts is None:
+            return None
+
+        def as_number(value: Any) -> float | None:
+            if isinstance(value, (int, float)):
+                num = float(value)
+                return num if num == num else None
+            if isinstance(value, str):
+                try:
+                    num = float(value)
+                    return num if num == num else None
+                except ValueError:
+                    return None
+            return None
+
+        open_price = as_number(candle.get('open'))
+        high = as_number(candle.get('high'))
+        low = as_number(candle.get('low'))
+        close = as_number(candle.get('close'))
+        if open_price is None or high is None or low is None or close is None:
+            return None
+
+        normalized: dict[str, Any] = {
+            'time': self._iso_utc(ts),
+            'open': round(open_price, 8),
+            'high': round(high, 8),
+            'low': round(low, 8),
+            'close': round(close, 8),
+        }
+        volume = as_number(candle.get('volume'))
+        if volume is not None:
+            normalized['volume'] = round(volume, 8)
+        return normalized
 
     def _auth_headers(self) -> dict[str, str]:
         return {
@@ -379,6 +526,22 @@ class MetaApiClient:
 
         return True, None
 
+    @staticmethod
+    def _is_symbol_candidate_failure(reason: str | None) -> bool:
+        message = (reason or '').strip().lower()
+        if not message:
+            return False
+        markers = (
+            'unknown symbol',
+            'specified symbol not found',
+            'invalid symbol',
+            'no symbol specification',
+            'not tradable',
+            'trading is disabled on this account',
+            'does not allow market orders',
+        )
+        return any(marker in message for marker in markers)
+
     async def get_account_information(self, account_id: str | None = None, region: str | None = None) -> dict[str, Any]:
         resolved_account_id = self._resolve_account_id(account_id)
         if not resolved_account_id:
@@ -517,8 +680,7 @@ class MetaApiClient:
         safe_offset = max(int(offset or 0), 0)
         safe_limit = min(max(int(limit or 1), 1), 1000)
 
-        use_sdk = self._use_sdk_for_market_data()
-        sdk = self._get_sdk(region) if use_sdk else None
+        sdk = self._get_sdk(region)
         if sdk:
             connection = None
             try:
@@ -637,8 +799,7 @@ class MetaApiClient:
         safe_offset = max(int(offset or 0), 0)
         safe_limit = min(max(int(limit or 1), 1), 1000)
 
-        use_sdk = self._use_sdk_for_market_data()
-        sdk = self._get_sdk(region) if use_sdk else None
+        sdk = self._get_sdk(region)
         if sdk:
             connection = None
             try:
@@ -740,6 +901,180 @@ class MetaApiClient:
             'limit': safe_limit,
         }
 
+    async def get_market_candles(
+        self,
+        *,
+        pair: str,
+        timeframe: str,
+        limit: int = 300,
+        account_id: str | None = None,
+        region: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_account_id = self._resolve_account_id(account_id)
+        if not resolved_account_id:
+            return {
+                'degraded': True,
+                'pair': pair,
+                'timeframe': timeframe,
+                'candles': [],
+                'reason': 'MetaApi account id not configured',
+            }
+
+        symbol = self._resolve_trade_symbol(pair)
+        normalized_timeframe = self._normalize_market_timeframe(timeframe)
+        safe_limit = min(max(int(limit or 1), 1), 1000)
+        symbol_candidates = self._market_symbol_candidates(symbol)
+        if not symbol_candidates:
+            return {
+                'degraded': True,
+                'pair': pair,
+                'timeframe': timeframe,
+                'candles': [],
+                'reason': 'Invalid symbol',
+            }
+
+        sdk = self._get_sdk(region)
+        if sdk:
+            try:
+                account = await sdk.metatrader_account_api.get_account(resolved_account_id)
+                if account.state != 'DEPLOYED':
+                    await account.deploy()
+                    await account.wait_connected()
+                last_sdk_error: str | None = None
+                for candidate in symbol_candidates:
+                    try:
+                        candles = await account.get_historical_candles(candidate, normalized_timeframe, None, safe_limit)
+                        normalized_candles = [
+                            normalized
+                            for item in (candles or [])
+                            for normalized in [self._normalize_market_candle(item)]
+                            if normalized is not None
+                        ]
+                        if not normalized_candles:
+                            # Continue trying the next candidate symbol instead of
+                            # returning an empty success payload on the first 200 response.
+                            last_sdk_error = f'No candles returned for symbol {candidate}'
+                            continue
+                        return {
+                            'degraded': False,
+                            'pair': pair,
+                            'symbol': candidate,
+                            'timeframe': timeframe,
+                            'candles': normalized_candles,
+                            'provider': 'sdk',
+                            'account_id': resolved_account_id,
+                            'requested_symbol': symbol,
+                            'tried_symbols': symbol_candidates,
+                        }
+                    except Exception as exc:  # pragma: no cover
+                        last_sdk_error = str(exc)
+                if last_sdk_error:
+                    logger.warning(
+                        'metaapi sdk market candles failed for all symbols account_id=%s symbols=%s error=%s; trying REST fallback',
+                        resolved_account_id,
+                        symbol_candidates,
+                        last_sdk_error,
+                    )
+            except Exception as exc:  # pragma: no cover
+                logger.warning('metaapi sdk market candles failed, trying REST fallback: %s', exc)
+
+        if not self._resolve_token():
+            return {
+                'degraded': True,
+                'pair': pair,
+                'timeframe': timeframe,
+                'candles': [],
+                'reason': 'MetaApi token not configured',
+            }
+
+        market_base_url = self.settings.metaapi_market_base_url.rstrip('/')
+        headers = self._auth_headers()
+        try:
+            async with httpx.AsyncClient(timeout=max(self.settings.ollama_timeout_seconds, 30)) as client:
+                last_response: httpx.Response | None = None
+                last_url: str | None = None
+                had_success_without_candles = False
+                for candidate in symbol_candidates:
+                    symbol_encoded = quote(candidate, safe='')
+                    url = (
+                        f'{market_base_url}/users/current/accounts/{resolved_account_id}/historical-market-data/symbols/'
+                        f'{symbol_encoded}/timeframes/{normalized_timeframe}/candles'
+                    )
+                    response = await client.get(url, headers=headers, params={'limit': safe_limit})
+                    last_response = response
+                    last_url = url
+                    if response.status_code == 200:
+                        payload = response.json()
+                        raw_candles = payload if isinstance(payload, list) else []
+                        normalized_candles = [
+                            normalized
+                            for item in raw_candles
+                            for normalized in [self._normalize_market_candle(item)]
+                            if normalized is not None
+                        ]
+                        if not normalized_candles:
+                            # A 200 response with no candles can happen for an invalid
+                            # broker symbol variant. Keep trying fallback candidates.
+                            had_success_without_candles = True
+                            continue
+                        return {
+                            'degraded': False,
+                            'pair': pair,
+                            'symbol': candidate,
+                            'timeframe': timeframe,
+                            'candles': normalized_candles,
+                            'provider': 'rest',
+                            'account_id': resolved_account_id,
+                            'endpoint': url,
+                            'requested_symbol': symbol,
+                            'tried_symbols': symbol_candidates,
+                        }
+                if last_response is None:
+                    return {
+                        'degraded': True,
+                        'pair': pair,
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'candles': [],
+                        'provider': 'rest',
+                        'reason': 'No symbol candidate available',
+                    }
+                if had_success_without_candles:
+                    return {
+                        'degraded': True,
+                        'pair': pair,
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'candles': [],
+                        'provider': 'rest',
+                        'reason': 'No market candles returned for symbol candidates',
+                        'endpoint': last_url,
+                        'tried_symbols': symbol_candidates,
+                    }
+                return {
+                    'degraded': True,
+                    'pair': pair,
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'candles': [],
+                    'provider': 'rest',
+                    'reason': f'HTTP {last_response.status_code}',
+                    'endpoint': last_url,
+                    'tried_symbols': symbol_candidates,
+                }
+        except Exception as exc:  # pragma: no cover
+            logger.exception('metaapi rest market candles failure account_id=%s symbol=%s', resolved_account_id, symbol)
+            return {
+                'degraded': True,
+                'pair': pair,
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'candles': [],
+                'provider': 'rest',
+                'reason': str(exc),
+                'tried_symbols': symbol_candidates,
+            }
+
     async def place_order(
         self,
         symbol: str,
@@ -753,7 +1088,17 @@ class MetaApiClient:
         resolved_account_id = self._resolve_account_id(account_id)
         if not resolved_account_id:
             return {'degraded': True, 'executed': False, 'reason': 'MetaApi account id not configured'}
-        trade_symbol = self._resolve_trade_symbol(symbol)
+        requested_symbol = self._resolve_trade_symbol(symbol)
+        symbol_candidates = self._trade_symbol_candidates(requested_symbol)
+        if not symbol_candidates:
+            return {
+                'degraded': True,
+                'executed': False,
+                'reason': 'Invalid symbol',
+                'account_id': resolved_account_id,
+                'symbol': requested_symbol,
+            }
+        trade_symbol = symbol_candidates[0]
 
         sdk = self._get_sdk(region)
         if sdk:
@@ -763,74 +1108,116 @@ class MetaApiClient:
                 connection = account.get_rpc_connection()
                 await connection.connect()
                 await connection.wait_synchronized()
-                symbol_spec = await connection.get_symbol_specification(trade_symbol)
-                tradable, reason = self._validate_symbol_for_market_order(trade_symbol, symbol_spec)
-                if not tradable:
+                failed_reasons: list[str] = []
+                normalized_side = side.upper()
+                for candidate in symbol_candidates:
+                    try:
+                        symbol_spec = await connection.get_symbol_specification(candidate)
+                    except Exception as exc:
+                        failed_reasons.append(f'{candidate}: {exc}')
+                        continue
+
+                    tradable, reason = self._validate_symbol_for_market_order(candidate, symbol_spec)
+                    if not tradable:
+                        failed_reasons.append(f'{candidate}: {reason or "not tradable"}')
+                        continue
+
+                    try:
+                        if normalized_side == 'BUY':
+                            result = await connection.create_market_buy_order(candidate, volume, stop_loss=stop_loss, take_profit=take_profit)
+                        else:
+                            result = await connection.create_market_sell_order(candidate, volume, stop_loss=stop_loss, take_profit=take_profit)
+                    except Exception as exc:
+                        failed_reasons.append(f'{candidate}: {exc}')
+                        continue
+
+                    ok, reason = self._trade_result_ok(result)
+                    if not ok:
+                        failure_reason = reason or 'trade rejected'
+                        failed_reasons.append(f'{candidate}: {failure_reason}')
+                        if not self._is_symbol_candidate_failure(failure_reason):
+                            return {
+                                'degraded': True,
+                                'executed': False,
+                                'reason': failure_reason,
+                                'account_id': resolved_account_id,
+                                'provider': 'sdk',
+                                'symbol': candidate,
+                                'requested_symbol': requested_symbol,
+                                'tried_symbols': symbol_candidates,
+                                'result': result,
+                            }
+                        continue
+
                     return {
-                        'degraded': True,
-                        'executed': False,
-                        'reason': reason or f'Symbol {trade_symbol} not tradable',
-                        'account_id': resolved_account_id,
-                        'provider': 'sdk',
-                        'symbol': trade_symbol,
-                        'symbol_spec': symbol_spec,
-                    }
-                if side.upper() == 'BUY':
-                    result = await connection.create_market_buy_order(trade_symbol, volume, stop_loss=stop_loss, take_profit=take_profit)
-                else:
-                    result = await connection.create_market_sell_order(trade_symbol, volume, stop_loss=stop_loss, take_profit=take_profit)
-                ok, reason = self._trade_result_ok(result)
-                if not ok:
-                    return {
-                        'degraded': True,
-                        'executed': False,
-                        'reason': reason or 'MetaApi SDK trade rejected',
-                        'account_id': resolved_account_id,
-                        'provider': 'sdk',
-                        'symbol': trade_symbol,
+                        'degraded': False,
+                        'executed': True,
                         'result': result,
+                        'account_id': resolved_account_id,
+                        'provider': 'sdk',
+                        'symbol': candidate,
+                        'requested_symbol': requested_symbol,
+                        'tried_symbols': symbol_candidates,
                     }
-                return {
-                    'degraded': False,
-                    'executed': True,
-                    'result': result,
-                    'account_id': resolved_account_id,
-                    'provider': 'sdk',
-                    'symbol': trade_symbol,
-                }
+
+                if failed_reasons:
+                    logger.warning(
+                        'metaapi sdk order rejected for all symbols account_id=%s requested=%s symbols=%s reasons=%s',
+                        resolved_account_id,
+                        requested_symbol,
+                        symbol_candidates,
+                        failed_reasons[:5],
+                    )
             except Exception as exc:  # pragma: no cover
                 logger.warning('metaapi sdk order failed, trying REST fallback: %s', exc)
             finally:
                 await self._close_connection(connection)
 
         action_type = 'ORDER_TYPE_BUY' if side.upper() == 'BUY' else 'ORDER_TYPE_SELL'
-        rest_payload = {
-            'actionType': action_type,
-            'symbol': trade_symbol,
-            'volume': volume,
-        }
-        if stop_loss is not None:
-            rest_payload['stopLoss'] = stop_loss
-        if take_profit is not None:
-            rest_payload['takeProfit'] = take_profit
+        last_result: dict[str, Any] | None = None
+        for candidate in symbol_candidates:
+            rest_payload = {
+                'actionType': action_type,
+                'symbol': candidate,
+                'volume': volume,
+            }
+            if stop_loss is not None:
+                rest_payload['stopLoss'] = stop_loss
+            if take_profit is not None:
+                rest_payload['takeProfit'] = take_profit
 
-        result = await self._rest_post(
-            resolved_account_id,
-            f'/users/current/accounts/{resolved_account_id}/trade',
-            rest_payload,
-        )
-        if result.get('executed'):
-            result['account_id'] = resolved_account_id
-            result['provider'] = 'rest'
-            result['symbol'] = trade_symbol
-            return result
+            result = await self._rest_post(
+                resolved_account_id,
+                f'/users/current/accounts/{resolved_account_id}/trade',
+                rest_payload,
+            )
+            if result.get('executed'):
+                result['account_id'] = resolved_account_id
+                result['provider'] = 'rest'
+                result['symbol'] = candidate
+                result['requested_symbol'] = requested_symbol
+                result['tried_symbols'] = symbol_candidates
+                return result
+
+            reason = str(result.get('reason') or '').strip()
+            if reason and not self._is_symbol_candidate_failure(reason):
+                result['account_id'] = resolved_account_id
+                result['provider'] = result.get('provider', 'rest')
+                result['symbol'] = candidate
+                result['requested_symbol'] = requested_symbol
+                result['tried_symbols'] = symbol_candidates
+                return result
+            last_result = result
 
         return {
             'degraded': True,
             'executed': False,
-            'reason': result.get('reason', 'MetaApi execution failed'),
+            'reason': (last_result or {}).get('reason', 'MetaApi execution failed'),
             'account_id': resolved_account_id,
             'symbol': trade_symbol,
-            'endpoint': result.get('endpoint'),
-            'raw': result.get('raw'),
+            'requested_symbol': requested_symbol,
+            'tried_symbols': symbol_candidates,
+            'result': (last_result or {}).get('result'),
+            'endpoint': (last_result or {}).get('endpoint'),
+            'raw': (last_result or {}).get('raw'),
         }

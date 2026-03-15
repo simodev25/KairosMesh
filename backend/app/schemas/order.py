@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class ExecutionOrderOut(BaseModel):
     id: int
     run_id: int
+    timeframe: str | None = None
     mode: str
     side: str
     symbol: str

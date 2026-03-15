@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import get_settings
 from app.core.security import Role, require_roles
@@ -20,8 +20,57 @@ def list_orders(
     db: Session = Depends(get_db),
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
 ) -> list[ExecutionOrderOut]:
-    orders = db.query(ExecutionOrder).order_by(ExecutionOrder.created_at.desc()).limit(limit).all()
+    orders = (
+        db.query(ExecutionOrder)
+        .options(joinedload(ExecutionOrder.run))
+        .order_by(ExecutionOrder.created_at.desc())
+        .limit(limit)
+        .all()
+    )
     return [ExecutionOrderOut.model_validate(order) for order in orders]
+
+
+@router.get('/market-candles')
+async def market_candles(
+    account_ref: int | None = Query(default=None),
+    pair: str = Query(min_length=3, max_length=20),
+    timeframe: str = Query(default='H1', min_length=2, max_length=5),
+    limit: int = Query(default=240, ge=20, le=2000),
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
+) -> dict:
+    account = _get_account_or_none(db, account_ref)
+    account_id = account.account_id if account else None
+    region = account.region if account else None
+    normalized_pair = pair.strip()
+    normalized_timeframe = timeframe.strip().upper()
+    result = await metaapi_client.get_market_candles(
+        account_id=account_id,
+        region=region,
+        pair=normalized_pair,
+        timeframe=normalized_timeframe,
+        limit=limit,
+    )
+    if result.get('degraded'):
+        return {
+            'pair': normalized_pair,
+            'timeframe': normalized_timeframe,
+            'symbol': result.get('symbol'),
+            'requested_symbol': result.get('requested_symbol'),
+            'tried_symbols': result.get('tried_symbols', []),
+            'provider': result.get('provider', 'sdk'),
+            'candles': result.get('candles', []),
+            'reason': result.get('reason', 'No market data available for selected symbol/timeframe'),
+        }
+    return {
+        'pair': normalized_pair,
+        'timeframe': normalized_timeframe,
+        'symbol': result.get('symbol'),
+        'requested_symbol': result.get('requested_symbol'),
+        'tried_symbols': result.get('tried_symbols', []),
+        'provider': result.get('provider', 'sdk'),
+        'candles': result.get('candles', []),
+    }
 
 
 @router.get('/accounts', response_model=list[MetaApiAccountOut])

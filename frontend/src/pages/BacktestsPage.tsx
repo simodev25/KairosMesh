@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { DEFAULT_PAIR, DEFAULT_TIMEFRAMES } from '../constants/markets';
 import { useAuth } from '../hooks/useAuth';
+import { useMarketSymbols } from '../hooks/useMarketSymbols';
 import type { BacktestRun } from '../types';
 
-const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP'];
-const TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1'];
 const STRATEGIES = [
   { value: 'agents_v1', label: 'Agents V1' },
   { value: 'ema_rsi', label: 'EMA + RSI (legacy)' },
@@ -22,7 +22,8 @@ function defaultEndDate() {
 
 export function BacktestsPage() {
   const { token } = useAuth();
-  const [pair, setPair] = useState('EURUSD');
+  const { pairs } = useMarketSymbols(token);
+  const [pair, setPair] = useState(DEFAULT_PAIR);
   const [timeframe, setTimeframe] = useState('H1');
   const [startDate, setStartDate] = useState(defaultStartDate());
   const [endDate, setEndDate] = useState(defaultEndDate());
@@ -45,6 +46,13 @@ export function BacktestsPage() {
   useEffect(() => {
     void loadRuns();
   }, [token]);
+
+  useEffect(() => {
+    if (pairs.length === 0) return;
+    if (!pairs.includes(pair)) {
+      setPair(pairs[0]);
+    }
+  }, [pairs, pair]);
 
   const createBacktest = async (e: FormEvent) => {
     e.preventDefault();
@@ -85,7 +93,7 @@ export function BacktestsPage() {
           <label>
             Pair
             <select value={pair} onChange={(e) => setPair(e.target.value)}>
-              {PAIRS.map((item) => (
+              {pairs.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>
@@ -93,7 +101,7 @@ export function BacktestsPage() {
           <label>
             Timeframe
             <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-              {TIMEFRAMES.map((item) => (
+              {DEFAULT_TIMEFRAMES.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>
