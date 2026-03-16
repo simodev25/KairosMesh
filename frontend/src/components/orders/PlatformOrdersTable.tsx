@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import type { ExecutionOrder } from '../../types';
 import { TableSkeletonRows } from './TableSkeletonRows';
-import { displaySymbol, failureCode, failureReason } from './formatters';
+import { displaySymbol, failureCode, failureReason, formatExecutionDate } from './formatters';
 
 interface PlatformOrdersTableProps {
   bootstrapLoading: boolean;
@@ -21,6 +21,7 @@ export function PlatformOrdersTable({ bootstrapLoading, orders }: PlatformOrders
           <th>Side</th>
           <th>Mode</th>
           <th>TF ouverture</th>
+          <th>Date d&apos;exécution</th>
           <th>Volume</th>
           <th>Status</th>
           <th>Action</th>
@@ -28,10 +29,10 @@ export function PlatformOrdersTable({ bootstrapLoading, orders }: PlatformOrders
       </thead>
       <tbody>
         {bootstrapLoading ? (
-          <TableSkeletonRows prefix="platform-orders" columns={9} rows={5} />
+          <TableSkeletonRows prefix="platform-orders" columns={10} rows={5} />
         ) : orders.length === 0 ? (
           <tr>
-            <td colSpan={9}>Aucun ordre plateforme pour le moment.</td>
+            <td colSpan={10}>Aucun ordre plateforme pour le moment.</td>
           </tr>
         ) : orders.map((order) => {
           const failed = String(order.status).toLowerCase() === 'failed';
@@ -45,6 +46,7 @@ export function PlatformOrdersTable({ bootstrapLoading, orders }: PlatformOrders
                 <td>{order.side}</td>
                 <td>{order.mode}</td>
                 <td>{order.timeframe ?? '-'}</td>
+                <td>{formatExecutionDate(order.created_at)}</td>
                 <td>{order.volume}</td>
                 <td><span className={`badge ${order.status}`}>{order.status}</span></td>
                 <td>
@@ -62,7 +64,7 @@ export function PlatformOrdersTable({ bootstrapLoading, orders }: PlatformOrders
               </tr>
               {failed && expanded && (
                 <tr>
-                  <td colSpan={9}>
+                  <td colSpan={10}>
                     <p className="model-source">
                       Raison: <code>{failureReason(order)}</code> | Code: <code>{failureCode(order)}</code>
                     </p>

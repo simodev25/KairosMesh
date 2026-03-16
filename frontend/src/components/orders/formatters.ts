@@ -1,9 +1,36 @@
 import type { ExecutionOrder } from '../../types';
 import { symbolBase } from '../../utils/tradingSymbols';
 
+const EXECUTION_DATE_FORMATTER = new Intl.DateTimeFormat('fr-FR', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
 export function displaySymbol(value: unknown): string {
   const base = symbolBase(value);
   return base || '-';
+}
+
+function parseApiDateMs(value: unknown): number {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return Number.NaN;
+
+  const normalized = raw.includes(' ') ? raw.replace(' ', 'T') : raw;
+  const hasTimezone = /([zZ]|[+-]\d{2}:\d{2})$/.test(normalized);
+  const asUtc = hasTimezone ? normalized : `${normalized}Z`;
+  const ts = Date.parse(asUtc);
+  return Number.isFinite(ts) ? ts : Number.NaN;
+}
+
+export function formatExecutionDate(value: unknown): string {
+  const ts = parseApiDateMs(value);
+  if (!Number.isFinite(ts)) return '-';
+  return EXECUTION_DATE_FORMATTER.format(new Date(ts));
 }
 
 function asText(value: unknown): string | null {

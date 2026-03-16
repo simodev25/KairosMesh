@@ -51,7 +51,6 @@ export const runtimeConfig = {
   enableMetaApiRealTradesDashboard: parseBool(import.meta.env.VITE_ENABLE_METAAPI_REAL_TRADES_DASHBOARD, false),
   metaApiRealTradesDefaultDays: metaApiDays.defaultDays,
   metaApiRealTradesDaysOptions: metaApiDays.dayOptions,
-  metaApiRealTradesRefreshMs: parseIntClamped(import.meta.env.VITE_METAAPI_REAL_TRADES_REFRESH_MS, 15000, 5000, 300000),
   metaApiRealTradesDashboardLimit: parseIntClamped(import.meta.env.VITE_METAAPI_REAL_TRADES_DASHBOARD_LIMIT, 8, 1, 1000),
   metaApiRealTradesTableLimit: parseIntClamped(import.meta.env.VITE_METAAPI_REAL_TRADES_TABLE_LIMIT, 15, 1, 1000),
   metaApiRealTradesOrdersPageLimit: parseIntClamped(import.meta.env.VITE_METAAPI_REAL_TRADES_ORDERS_PAGE_LIMIT, 25, 1, 1000),

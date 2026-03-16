@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api/client';
+import { api, wsTradingOrdersUrl } from '../api/client';
 import { runtimeConfig } from '../config/runtime';
 import type { MetaApiAccount, MetaApiDeal, MetaApiHistoryOrder, MetaApiOpenOrder, MetaApiPosition } from '../types';
 
 const REFRESH_DEBOUNCE_MS = 1200;
+const WS_RECONNECT_DELAY_MS = 3000;
+const WS_REFRESH_DEBOUNCE_MS = 1500;
+type TradingOrdersWsMessage = {
+  type?: string;
+  order?: {
+    mode?: string;
+    status?: string;
+  };
+};
 
 export function useMetaTradingData(token: string | null) {
   const [accounts, setAccounts] = useState<MetaApiAccount[]>([]);
@@ -27,6 +36,7 @@ export function useMetaTradingData(token: string | null) {
 
   const metaLoadingRef = useRef(false);
   const lastManualRefreshMsRef = useRef(0);
+  const lastEventRefreshMsRef = useRef(0);
 
   useEffect(() => {
     metaLoadingRef.current = metaLoading;
@@ -171,6 +181,92 @@ export function useMetaTradingData(token: string | null) {
     if (accounts.length > 0 && accountRef == null) return;
     void loadMetaTrading(accountRef);
   }, [token, accountRef, days, metaFeatureDisabled, initialMetaLoadDone, accounts.length, loadMetaTrading]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (metaFeatureDisabled) return;
+    if (!initialMetaLoadDone) return;
+    if (accounts.length > 0 && accountRef == null) return;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      void loadMetaTrading(accountRef);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [token, accountRef, metaFeatureDisabled, initialMetaLoadDone, accounts.length, loadMetaTrading]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (metaFeatureDisabled) return;
+    if (!initialMetaLoadDone) return;
+    if (accounts.length > 0 && accountRef == null) return;
+
+    let cancelled = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+
+    const scheduleReconnect = () => {
+      if (cancelled) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, WS_RECONNECT_DELAY_MS);
+    };
+
+    const connect = () => {
+      if (cancelled) return;
+      socket = new WebSocket(wsTradingOrdersUrl());
+
+      socket.onmessage = (event: MessageEvent<string>) => {
+        let payload: TradingOrdersWsMessage;
+
+        try {
+          payload = JSON.parse(event.data) as TradingOrdersWsMessage;
+        } catch {
+          return;
+        }
+
+        if (payload.type !== 'execution-order') return;
+        const mode = String(payload.order?.mode ?? '').toLowerCase();
+        const status = String(payload.order?.status ?? '').toLowerCase();
+        if (!['paper', 'live'].includes(mode)) return;
+        if (!['submitted', 'paper-simulated'].includes(status)) return;
+        if (document.visibilityState === 'hidden') return;
+
+        const now = Date.now();
+        if (now - lastEventRefreshMsRef.current < WS_REFRESH_DEBOUNCE_MS) return;
+        lastEventRefreshMsRef.current = now;
+        void loadMetaTrading(accountRef);
+      };
+
+      socket.onerror = () => {
+        if (socket && socket.readyState < WebSocket.CLOSING) {
+          socket.close();
+        }
+      };
+
+      socket.onclose = () => {
+        if (cancelled) return;
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer != null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        socket.close();
+      }
+    };
+  }, [token, accountRef, metaFeatureDisabled, initialMetaLoadDone, accounts.length, loadMetaTrading]);
 
   return {
     accounts,

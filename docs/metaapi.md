@@ -20,7 +20,6 @@ Variables UI associées (`frontend/.env`):
   - liste CSV (ex: `0,7,14,30,90`) => options explicites, premier élément sélectionné par défaut
   - `0` = `Aujourd'hui` (de minuit UTC à maintenant)
   - compatibilité: `1` est interprété en UI comme `Aujourd'hui`
-- `VITE_METAAPI_REAL_TRADES_REFRESH_MS`
 - `VITE_METAAPI_REAL_TRADES_DASHBOARD_LIMIT`
 - `VITE_METAAPI_REAL_TRADES_TABLE_LIMIT`
 - `VITE_METAAPI_REAL_TRADES_ORDERS_PAGE_LIMIT`

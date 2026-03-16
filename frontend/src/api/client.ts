@@ -173,3 +173,9 @@ export function wsRunUrl(runId: number): string {
   const wsBase = apiBase.replace('http://', 'ws://').replace('https://', 'wss://');
   return `${wsBase}/ws/runs/${runId}`;
 }
+
+export function wsTradingOrdersUrl(): string {
+  const apiBase = BASE_URL.replace('/api/v1', '');
+  const wsBase = apiBase.replace('http://', 'ws://').replace('https://', 'wss://');
+  return `${wsBase}/ws/trading/orders`;
+}

@@ -16,6 +16,7 @@ from app.core.logging import configure_logging
 from app.core.security import Role, get_password_hash
 from app.db.base import Base
 from app.db.models.connector_config import ConnectorConfig
+from app.db.models.execution_order import ExecutionOrder
 from app.db.models.metaapi_account import MetaApiAccount
 from app.db.models.run import AnalysisRun
 from app.db.models.user import User
@@ -122,6 +123,39 @@ async def run_updates_socket(websocket: WebSocket, run_id: int) -> None:
                 if run.status in {'completed', 'failed'}:
                     await websocket.close(code=1000)
                     return
+            finally:
+                db.close()
+
+            await asyncio.sleep(2)
+    except WebSocketDisconnect:
+        return
+
+
+@app.websocket('/ws/trading/orders')
+async def trading_orders_socket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    last_order_id: int | None = None
+    try:
+        while True:
+            db: Session = SessionLocal()
+            try:
+                order = db.query(ExecutionOrder).order_by(ExecutionOrder.id.desc()).first()
+                if order and order.id != last_order_id:
+                    event_type = 'snapshot' if last_order_id is None else 'execution-order'
+                    await websocket.send_json(
+                        {
+                            'type': event_type,
+                            'order': {
+                                'id': order.id,
+                                'run_id': order.run_id,
+                                'mode': order.mode,
+                                'status': order.status,
+                                'symbol': order.symbol,
+                                'created_at': order.created_at.isoformat(),
+                            },
+                        }
+                    )
+                    last_order_id = order.id
             finally:
                 db.close()
 
