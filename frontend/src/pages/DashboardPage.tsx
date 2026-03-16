@@ -23,6 +23,7 @@ const CRON_PRESET_BY_TIMEFRAME: Record<string, string> = {
   H4: '0 */4 * * *',
   D1: '0 0 * * *',
 };
+const RUNS_PAGE_SIZE = 10;
 
 function parseApiDateMs(value: string): number {
   const raw = String(value ?? '').trim();
@@ -98,6 +99,7 @@ export function DashboardPage() {
   const [showLlmReport, setShowLlmReport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [runsPage, setRunsPage] = useState(1);
 
   const loadRuns = async () => {
     if (!token) return;
@@ -172,6 +174,12 @@ export function DashboardPage() {
       setScheduleCronExpression(CRON_PRESET_BY_TIMEFRAME[scheduleTimeframe] ?? '0 * * * *');
     }
   }, [scheduleTimeframe, scheduleCronTouched]);
+
+  const runsTotalPages = Math.max(1, Math.ceil(runs.length / RUNS_PAGE_SIZE));
+
+  useEffect(() => {
+    setRunsPage((currentPage) => Math.min(currentPage, runsTotalPages));
+  }, [runsTotalPages]);
 
   const toggleTf = (list: string[], timeframe: string) => {
     if (list.includes(timeframe)) {
@@ -314,6 +322,14 @@ export function DashboardPage() {
     const active = runs.filter((r) => ['queued', 'running', 'pending'].includes(r.status)).length;
     return { completed, failed, active, total: runs.length };
   }, [runs]);
+
+  const pagedRuns = useMemo(() => {
+    const pageStart = (runsPage - 1) * RUNS_PAGE_SIZE;
+    return runs.slice(pageStart, pageStart + RUNS_PAGE_SIZE);
+  }, [runs, runsPage]);
+
+  const runsPageStart = runs.length === 0 ? 0 : (runsPage - 1) * RUNS_PAGE_SIZE + 1;
+  const runsPageEnd = Math.min(runs.length, runsPage * RUNS_PAGE_SIZE);
 
   return (
     <div className="dashboard-grid">
@@ -609,7 +625,7 @@ export function DashboardPage() {
             </tr>
           </thead>
           <tbody>
-            {runs.map((run) => (
+            {pagedRuns.map((run) => (
               <tr key={run.id}>
                 <td>{run.id}</td>
                 <td>{run.pair}</td>
@@ -628,6 +644,26 @@ export function DashboardPage() {
             ))}
           </tbody>
         </table>
+        {runs.length > 0 && (
+          <div className="table-pagination">
+            <p className="table-pagination-meta">
+              {runsPageStart}-{runsPageEnd} sur {runs.length}
+            </p>
+            <div className="table-pagination-actions">
+              <button type="button" disabled={runsPage <= 1} onClick={() => setRunsPage((currentPage) => Math.max(1, currentPage - 1))}>
+                Précédent
+              </button>
+              <span>Page {runsPage} / {runsTotalPages}</span>
+              <button
+                type="button"
+                disabled={runsPage >= runsTotalPages}
+                onClick={() => setRunsPage((currentPage) => Math.min(runsTotalPages, currentPage + 1))}
+              >
+                Suivant
+              </button>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

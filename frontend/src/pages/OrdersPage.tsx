@@ -16,6 +16,7 @@ const RealTradesCharts = lazy(() =>
 );
 
 const DEALS_PER_PAGE = 10;
+const PLATFORM_ORDERS_PER_PAGE = 10;
 
 function formatDaysWindowLabel(days: number): string {
   if (days === 0) return "Aujourd'hui";
@@ -26,6 +27,7 @@ function formatDaysWindowLabel(days: number): string {
 export function OrdersPage() {
   const { token } = useAuth();
   const [dealsPage, setDealsPage] = useState(1);
+  const [platformOrdersPage, setPlatformOrdersPage] = useState(1);
 
   const {
     orders,
@@ -73,6 +75,9 @@ export function OrdersPage() {
   const dealsTotalPages = Math.max(1, Math.ceil(deals.length / DEALS_PER_PAGE));
   const dealsPageStart = (dealsPage - 1) * DEALS_PER_PAGE;
   const pagedDeals = deals.slice(dealsPageStart, dealsPageStart + DEALS_PER_PAGE);
+  const platformOrdersTotalPages = Math.max(1, Math.ceil(orders.length / PLATFORM_ORDERS_PER_PAGE));
+  const platformOrdersPageStart = (platformOrdersPage - 1) * PLATFORM_ORDERS_PER_PAGE;
+  const pagedPlatformOrders = orders.slice(platformOrdersPageStart, platformOrdersPageStart + PLATFORM_ORDERS_PER_PAGE);
   const bootstrapLoading = ordersLoading || metaBootstrapLoading;
 
   useEffect(() => {
@@ -84,6 +89,12 @@ export function OrdersPage() {
       setDealsPage(dealsTotalPages);
     }
   }, [dealsPage, dealsTotalPages]);
+
+  useEffect(() => {
+    if (platformOrdersPage > platformOrdersTotalPages) {
+      setPlatformOrdersPage(platformOrdersTotalPages);
+    }
+  }, [platformOrdersPage, platformOrdersTotalPages]);
 
   return (
     <div className="dashboard-grid">
@@ -250,7 +261,16 @@ export function OrdersPage() {
 
       <section className="card">
         <h2>Ordres plateforme</h2>
-        <PlatformOrdersTable bootstrapLoading={bootstrapLoading} orders={orders} />
+        <PlatformOrdersTable
+          bootstrapLoading={bootstrapLoading}
+          orders={orders}
+          pagedOrders={pagedPlatformOrders}
+          ordersPage={platformOrdersPage}
+          ordersTotalPages={platformOrdersTotalPages}
+          ordersPerPage={PLATFORM_ORDERS_PER_PAGE}
+          onPreviousPage={() => setPlatformOrdersPage((prev) => Math.max(1, prev - 1))}
+          onNextPage={() => setPlatformOrdersPage((prev) => Math.min(platformOrdersTotalPages, prev + 1))}
+        />
       </section>
     </div>
   );

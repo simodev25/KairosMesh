@@ -244,6 +244,31 @@ tbody td {
   font-size: 0.9rem;
 }
 
+.table-pagination {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.table-pagination-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.table-pagination-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.table-pagination-actions span {
+  color: #c8d8f2;
+  font-size: 0.85rem;
+}
+
 .table-skeleton-cell {
   vertical-align: middle;
 }
@@ -681,6 +706,16 @@ label.tf-chip {
 }
 
 @media (max-width: 900px) {
+  .table-pagination {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .table-pagination-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .open-orders-chart-canvas {
     height: clamp(320px, 44vh, 460px);
     min-height: 320px;
