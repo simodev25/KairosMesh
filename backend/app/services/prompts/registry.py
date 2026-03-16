@@ -68,6 +68,26 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
             "Bearish: {bearish_args}\nNotes de risque: {risk_notes}"
         ),
     },
+    'schedule-planner-agent': {
+        'system': (
+            "Tu es un agent dédié à l’automatisation intelligente des plans cron Forex. "
+            "Tu dois produire un résultat strictement structuré et exploitable par une API."
+        ),
+        'user': (
+            "Construit un plan de scheduling.\n"
+            "Objectif: proposer des planifications actives robustes selon historique + risque.\n"
+            "Contraintes:\n"
+            "- exactement target_count plans\n"
+            "- pair doit être dans allowed_pairs\n"
+            "- timeframe doit être dans allowed_timeframes\n"
+            "- mode = mode demandé\n"
+            "- risk_percent entre 0.1 et limite mode (simulation=5, paper=3, live=2)\n"
+            "- cron_expression cohérent avec timeframe si possible\n"
+            "- name court et lisible\n"
+            "Réponse: JSON strict avec les clés plans (liste) et note (texte).\n"
+            "Contexte JSON:\n{context_json}"
+        ),
+    },
 }
 
 

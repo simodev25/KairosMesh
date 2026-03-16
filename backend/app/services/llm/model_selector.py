@@ -15,6 +15,7 @@ DEFAULT_AGENT_LLM_ENABLED: dict[str, bool] = {
     'trader-agent': False,
     'risk-manager': False,
     'execution-manager': False,
+    'schedule-planner-agent': True,
 }
 
 

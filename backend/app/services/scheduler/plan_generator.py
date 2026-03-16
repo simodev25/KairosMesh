@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.models.backtest_run import BacktestRun
 from app.db.models.run import AnalysisRun
-from app.services.llm.ollama_client import OllamaCloudClient
 from app.services.market.symbols import canonical_symbol, get_market_symbols_config
+from app.services.scheduler.automation_agent import SchedulePlannerAgent
 from app.services.scheduler.cron import validate_cron_expression
 from app.services.scheduler.runner import validate_schedule_target
 
@@ -308,6 +308,7 @@ def _fallback_generate_plans(
 
 
 def _generate_with_llm(
+    db: Session,
     analysis: dict[str, Any],
     *,
     target_count: int,
@@ -341,41 +342,36 @@ def _generate_with_llm(
         'allowed_pairs': analysis['supported_pairs'],
         'scored_candidates': compact_rows,
     }
-    system_prompt = (
-        'Tu conçois des plans de planification de trading Forex orientés risque. '
-        'Réponds uniquement en JSON strict.'
-    )
-    user_prompt = (
-        'Construit un plan de scheduling.\n'
-        'Objectif: proposer des planifications actives robustes selon historique + risque.\n'
-        'Contraintes:\n'
-        '- exactement target_count plans\n'
-        '- pair doit être dans allowed_pairs\n'
-        '- timeframe doit être dans allowed_timeframes\n'
-        '- mode = mode demandé\n'
-        '- risk_percent entre 0.1 et limite mode (simulation=5, paper=3, live=2)\n'
-        '- cron_expression cohérent avec timeframe si possible\n'
-        '- name court et lisible\n'
-        'Retourne exactement ce schéma JSON:\n'
-        '{"plans":[{"name":"","pair":"","timeframe":"","mode":"","risk_percent":1.0,'
-        '"cron_expression":"","metaapi_account_ref":null,"rationale":""}],"note":""}\n'
-        f'Contexte JSON:\n{json.dumps(context, ensure_ascii=True)}'
-    )
-
-    llm = OllamaCloudClient()
-    llm_result = llm.chat(system_prompt, user_prompt)
+    llm_agent = SchedulePlannerAgent()
+    llm_out = llm_agent.run(db, context)
+    llm_result = llm_out.get('llm_result', {})
+    llm_enabled = bool(llm_out.get('llm_enabled', False))
+    prompt_meta = llm_out.get('prompt_meta', {})
     degraded = bool(llm_result.get('degraded', False))
     note = str(llm_result.get('text', '') or '')
     base_report = {
         'used': True,
+        'agent_name': llm_agent.name,
         'provider': llm_result.get('provider'),
+        'llm_model': llm_out.get('llm_model'),
+        'llm_enabled': llm_enabled,
         'degraded': degraded,
+        'prompt_id': prompt_meta.get('prompt_id'),
+        'prompt_version': prompt_meta.get('prompt_version', 0),
         'latency_ms': llm_result.get('latency_ms'),
         'prompt_tokens': llm_result.get('prompt_tokens'),
         'completion_tokens': llm_result.get('completion_tokens'),
         'cost_usd': llm_result.get('cost_usd'),
         'text_excerpt': note[:2000],
     }
+    if not llm_enabled:
+        report = {
+            **base_report,
+            'parse_ok': False,
+            'selected_source': 'fallback',
+            'error': 'LLM disabled for schedule-planner-agent',
+        }
+        return [], True, 'LLM disabled for schedule-planner-agent', report
 
     payload = _extract_first_json(note)
     if not isinstance(payload, dict):
@@ -525,6 +521,7 @@ def generate_schedule_plan(
 
     if use_llm:
         llm_plans, llm_degraded, llm_note, llm_report = _generate_with_llm(
+            db,
             analysis,
             target_count=target_count,
             mode=mode,

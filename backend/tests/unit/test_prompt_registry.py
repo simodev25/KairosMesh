@@ -14,6 +14,9 @@ def test_prompt_registry_version_activation() -> None:
     service = PromptTemplateService()
     with Session(engine) as db:
         service.seed_defaults(db)
+        schedule_prompt = service.get_active(db, 'schedule-planner-agent')
+        assert schedule_prompt is not None
+        assert schedule_prompt.version >= 1
 
         created = service.create_version(
             db=db,

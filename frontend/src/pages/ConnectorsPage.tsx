@@ -22,6 +22,7 @@ const ORCHESTRATION_AGENTS = [
   'trader-agent',
   'risk-manager',
   'execution-manager',
+  'schedule-planner-agent',
 ];
 const SWITCHABLE_LLM_AGENTS = new Set([
   'technical-analyst',
@@ -31,6 +32,7 @@ const SWITCHABLE_LLM_AGENTS = new Set([
   'bullish-researcher',
   'bearish-researcher',
   'trader-agent',
+  'schedule-planner-agent',
 ]);
 const DEFAULT_AGENT_LLM_ENABLED: Record<string, boolean> = {
   'technical-analyst': false,
@@ -42,6 +44,7 @@ const DEFAULT_AGENT_LLM_ENABLED: Record<string, boolean> = {
   'trader-agent': false,
   'risk-manager': false,
   'execution-manager': false,
+  'schedule-planner-agent': true,
 };
 const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> = {
   'technical-analyst': {
@@ -71,6 +74,15 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
   'trader-agent': {
     system: "Tu es un assistant trader Forex. Résume la note d'exécution.",
     user: 'Pair: {pair}\nTimeframe: {timeframe}\nDecision: {decision}\nBullish: {bullish_args}\nBearish: {bearish_args}\nNotes: {risk_notes}',
+  },
+  'schedule-planner-agent': {
+    system: 'Tu es un agent dédié à l’automatisation intelligente des plans cron Forex.',
+    user: (
+      'Construit un plan de scheduling.\n'
+      + 'Contraintes: target_count plans, pairs/timeframes autorisés, mode demandé, risk_percent borné, cron cohérent.\n'
+      + 'Retour: JSON strict avec keys plans et note.\n'
+      + 'Contexte JSON:\n{context_json}'
+    ),
   },
 };
 
