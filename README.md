@@ -2,7 +2,7 @@
 
 Plateforme IA multi-agent dédiée au Forex avec:
 - Orchestration multi-agent (analystes, débat bullish/bearish, trader, risk manager, execution manager)
-- API FastAPI sécurisée (JWT + RBAC)
+- API FastAPI (JWT + RBAC sur endpoints REST)
 - Intégration Ollama Cloud (LLM), MetaApi (trading), yfinance (news + contexte)
 - Séparation simulation / paper / live (live désactivé par défaut)
 - Frontend React TypeScript (thème sombre premium)
@@ -51,6 +51,14 @@ Compte seed local:
 - email: `admin@local.dev`
 - mot de passe: `admin1234`
 - usage local uniquement (dev/test), à changer avant tout environnement exposé.
+
+## Sécurité V1 (important)
+
+- Les protections JWT + RBAC couvrent les endpoints REST `/api/v1/...`.
+- Les WebSockets (`/ws/runs/{id}`, `/ws/trading/orders`) doivent être exposés uniquement sur réseau interne tant que l'auth WS n'est pas ajoutée.
+- L'endpoint `/metrics` doit rester interne (monitoring) ou protégé via reverse proxy.
+- Le compte seed local et `POST /api/v1/auth/bootstrap-admin` sont destinés au dev/test interne uniquement.
+- Détails et limites connues: `docs/limits.md`.
 
 ## Modes d'exécution
 

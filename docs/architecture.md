@@ -44,6 +44,16 @@ flowchart LR
 - `backend/app/services/memory`: mémoire vectorielle (Qdrant + repli SQL cosine), filtrée par `pair` et `timeframe`.
 - `backend/app/services/backtest`: stratégies `agents_v1` et `ema_rsi`.
 
+## Frontières de sécurité (V1)
+
+- Les endpoints REST `/api/v1/...` utilisent JWT + RBAC.
+- Les WebSockets `/ws/runs/{run_id}` et `/ws/trading/orders` sont des endpoints FastAPI séparés (hors préfixe `/api/v1`).
+- En V1, l'authentification WebSocket n'est pas encore implémentée nativement dans l'application:
+  - exposition recommandée uniquement en réseau interne;
+  - ou protection via gateway/reverse proxy (ACL/IP allowlist, auth en amont).
+- L'endpoint `/metrics` est prévu pour Prometheus/Grafana et doit être traité comme endpoint interne.
+- Les détails d'exploitation/sécurité sont suivis dans `docs/limits.md`.
+
 ## Flux run (temps réel)
 
 ```mermaid
