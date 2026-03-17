@@ -103,7 +103,14 @@ async def lifespan(_: FastAPI):
                     exists = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == name).first()
                     if not exists:
                         enabled = name != 'order-guardian'
-                        db.add(ConnectorConfig(connector_name=name, enabled=enabled, settings={}))
+                        connector_settings: dict = {}
+                        if name == 'ollama':
+                            connector_settings = {'provider': settings.llm_provider}
+                        db.add(ConnectorConfig(connector_name=name, enabled=enabled, settings=connector_settings))
+                    elif name == 'ollama':
+                        connector_settings = exists.settings if isinstance(exists.settings, dict) else {}
+                        if 'provider' not in connector_settings:
+                            exists.settings = {**connector_settings, 'provider': settings.llm_provider}
 
                 if settings.metaapi_account_id and not db.query(MetaApiAccount).count():
                     db.add(

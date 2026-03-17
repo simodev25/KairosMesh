@@ -40,7 +40,7 @@ def test_news_agent_detects_french_bearish_sentiment(monkeypatch) -> None:
     agent = NewsAnalystAgent(service)
     captured: dict[str, str | None] = {'model': None}
 
-    def fake_chat(_system: str, _user: str, model: str | None = None) -> dict[str, str]:
+    def fake_chat(_system: str, _user: str, model: str | None = None, **_kwargs: object) -> dict[str, str]:
         captured['model'] = model
         return {'text': 'Sentiment: baissier. Le dollar reste dominant.'}
 

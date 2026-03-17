@@ -119,7 +119,7 @@ export const api = {
   testConnector: (token: string, connector: string) =>
     request(`/connectors/${connector}/test`, { method: 'POST' }, token),
   listOllamaModels: (token: string) =>
-    request<{ models: string[]; source?: string | null; error?: string }>(
+    request<{ models: string[]; source?: string | null; error?: string; provider?: string | null }>(
       '/connectors/ollama/models',
       {},
       token,

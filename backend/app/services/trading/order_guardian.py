@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.models.connector_config import ConnectorConfig
 from app.schemas.order_guardian import OrderGuardianStatusUpdate
 from app.services.llm.model_selector import AgentModelSelector
-from app.services.llm.ollama_client import OllamaCloudClient
+from app.services.llm.provider_client import LlmClient
 from app.services.orchestrator.agents import AgentContext
 from app.services.orchestrator.engine import ForexOrchestrator
 from app.services.prompts.registry import PromptTemplateService
@@ -41,7 +41,7 @@ class OrderGuardianService:
         self.metaapi = MetaApiClient()
         self.account_selector = MetaApiAccountSelector()
         self.orchestrator = ForexOrchestrator()
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -366,6 +366,7 @@ class OrderGuardianService:
             prompt_info['system_prompt'],
             prompt_info['user_prompt'],
             model=llm_model,
+            db=db,
         )
         return {
             'text': llm_res.get('text', ''),

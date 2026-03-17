@@ -107,6 +107,23 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
   },
 };
 
+type LlmProvider = 'ollama' | 'openai' | 'mistral';
+
+const LLM_PROVIDERS: LlmProvider[] = ['ollama', 'openai', 'mistral'];
+
+function normalizeLlmProvider(value: unknown): LlmProvider {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (text === 'openai') return 'openai';
+  if (text === 'mistral') return 'mistral';
+  return 'ollama';
+}
+
+function defaultModelForProvider(provider: LlmProvider): string {
+  if (provider === 'openai') return 'gpt-4o-mini';
+  if (provider === 'mistral') return 'mistral-small-latest';
+  return 'llama3.1';
+}
+
 function parseSymbolInput(value: string): string[] {
   const normalized = value
     .split(/[\n,]+/)
@@ -170,6 +187,7 @@ export function ConnectorsPage() {
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigTabId>('models');
 
   const [defaultLlmModel, setDefaultLlmModel] = useState('llama3.1');
+  const [llmProvider, setLlmProvider] = useState<LlmProvider>('ollama');
   const [agentModels, setAgentModels] = useState<Record<string, string>>(
     Object.fromEntries(MODEL_EDIT_AGENTS.map((agent) => [agent, ''])),
   );
@@ -205,6 +223,7 @@ export function ConnectorsPage() {
   const hydrateAgentModels = (connectorRows: ConnectorConfig[]) => {
     const ollama = connectorRows.find((item) => item.connector_name === 'ollama');
     const settings = (ollama?.settings ?? {}) as Record<string, unknown>;
+    const provider = normalizeLlmProvider(settings.provider);
     const configuredDefault = typeof settings.default_model === 'string' ? settings.default_model.trim() : '';
     const rawMap = settings.agent_models && typeof settings.agent_models === 'object'
       ? (settings.agent_models as Record<string, unknown>)
@@ -224,7 +243,8 @@ export function ConnectorsPage() {
         : (DEFAULT_AGENT_LLM_ENABLED[agentName] ?? false);
     });
 
-    setDefaultLlmModel(configuredDefault || 'llama3.1');
+    setLlmProvider(provider);
+    setDefaultLlmModel(configuredDefault || defaultModelForProvider(provider));
     setAgentModels(next);
     setAgentLlmEnabled(nextEnabled);
   };
@@ -237,7 +257,7 @@ export function ConnectorsPage() {
         api.listMetaApiAccounts(token),
         api.listPrompts(token),
         api.llmSummary(token),
-        api.listOllamaModels(token).catch(() => ({ models: [], source: null, error: 'cannot fetch models' })),
+        api.listOllamaModels(token).catch(() => ({ models: [], source: null, error: 'cannot fetch models', provider: null })),
         api.llmModelsUsage(token).catch(() => []),
         api.getMarketSymbols(token).catch(() => ({
           forex_pairs: FOREX_PAIRS,
@@ -267,7 +287,11 @@ export function ConnectorsPage() {
       setPrompts(p as PromptTemplate[]);
       setSummary(s as LlmSummary);
       setModelChoices(Array.isArray(m.models) ? m.models : []);
-      setModelSource(typeof m.source === 'string' ? m.source : '');
+      const modelSourceParts = [
+        typeof m.provider === 'string' && m.provider.trim() ? m.provider.trim() : '',
+        typeof m.source === 'string' && m.source.trim() ? m.source.trim() : '',
+      ].filter((part) => part.length > 0);
+      setModelSource(modelSourceParts.join(' | '));
       setModelsUsage(usage as LlmModelUsage[]);
       setMarketSymbols({
         forex_pairs: forexPairs,
@@ -365,7 +389,8 @@ export function ConnectorsPage() {
         enabled: ollama.enabled,
         settings: {
           ...existingSettings,
-          default_model: defaultLlmModel.trim() || 'llama3.1',
+          provider: llmProvider,
+          default_model: defaultLlmModel.trim() || defaultModelForProvider(llmProvider),
           agent_models: cleanedModels,
           agent_llm_enabled: cleanedEnabled,
         },
@@ -519,7 +544,7 @@ export function ConnectorsPage() {
 
   const effectiveModelFor = (agentName: string): string => {
     const specific = (agentModels[agentName] ?? '').trim();
-    const fallback = defaultLlmModel.trim() || 'llama3.1';
+    const fallback = defaultLlmModel.trim() || defaultModelForProvider(llmProvider);
     return specific || fallback;
   };
 
@@ -539,12 +564,16 @@ export function ConnectorsPage() {
         <div className="config-hero-status">
           <p className="config-hero-status-title">
             <span className={`status-dot ${ollamaConnector?.enabled ? 'ok' : 'blocked'}`} />
-            OLLAMA
+            LLM
           </p>
           <div className="config-hero-status-grid">
             <div>
               <span>État</span>
               <strong className={ollamaConnector?.enabled ? 'ok-text' : 'danger-text'}>{ollamaConnector?.enabled ? 'Online' : 'Offline'}</strong>
+            </div>
+            <div>
+              <span>Provider</span>
+              <strong>{llmProvider}</strong>
             </div>
             <div>
               <span>Coût moyen</span>
@@ -643,16 +672,26 @@ export function ConnectorsPage() {
               <h3>Modèles LLM par agent</h3>
               <form className="form-grid" onSubmit={saveAgentModels}>
                 <label>
+                  Provider LLM
+                  <select value={llmProvider} onChange={(e) => setLlmProvider(normalizeLlmProvider(e.target.value))}>
+                    {LLM_PROVIDERS.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {provider}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Modèle principal
                   <input
-                    list="ollama-model-choices"
+                    list="llm-model-choices"
                     value={defaultLlmModel}
                     onChange={(e) => setDefaultLlmModel(e.target.value)}
-                    placeholder="llama3.1"
+                    placeholder={defaultModelForProvider(llmProvider)}
                     required
                   />
                 </label>
-                <datalist id="ollama-model-choices">
+                <datalist id="llm-model-choices">
                   {modelChoices.map((modelName) => (
                     <option key={modelName} value={modelName} />
                   ))}
@@ -705,10 +744,10 @@ export function ConnectorsPage() {
                         </td>
                         <td>
                           <input
-                            list="ollama-model-choices"
+                            list="llm-model-choices"
                             value={agentModels[agentName] ?? ''}
                             onChange={(e) => setAgentModels((prev) => ({ ...prev, [agentName]: e.target.value }))}
-                            placeholder={`hérite: ${defaultLlmModel || 'llama3.1'}`}
+                            placeholder={`hérite: ${defaultLlmModel || defaultModelForProvider(llmProvider)}`}
                             disabled={!MODEL_OVERRIDE_EDITABLE_AGENTS.has(agentName)}
                           />
                         </td>

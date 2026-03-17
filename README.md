@@ -3,7 +3,7 @@
 Plateforme IA multi-agent dédiée au Forex avec:
 - Orchestration multi-agent (analystes, débat bullish/bearish, trader, risk manager, execution manager)
 - API FastAPI (JWT + RBAC sur endpoints REST)
-- Intégration Ollama Cloud (LLM), MetaApi (trading), yfinance (news + contexte)
+- Intégration LLM multi-provider (Ollama, OpenAI, Mistral), MetaApi (trading), yfinance (news + contexte)
 - Séparation simulation / paper / live (live désactivé par défaut)
 - Frontend React TypeScript (thème sombre premium)
 - Exécution asynchrone via Celery + RabbitMQ + Redis
@@ -12,7 +12,7 @@ Plateforme IA multi-agent dédiée au Forex avec:
 - Mémoire long-terme vectorielle (Qdrant + repli SQL cosine, pgvector optionnel)
 - Prompts versionnés en base pour enrichir le débat agents
 - Configuration LLM par agent (switch, modèle effectif, catalogue modèles, prompts modifiables)
-- Trading Control Room (menu `Config`): configuration connecteurs, comptes MetaApi, prompts et télémétrie LLM
+- Trading Control Room (menu `Config`): configuration connecteurs, provider/modèles LLM, comptes MetaApi, prompts et télémétrie LLM
 - Backtesting avancé (Sharpe, Sortino, drawdown, profit factor)
 - Support multi-comptes MetaApi
 - Planification automatique des analyses (cron) avec sélection symbole/timeframe/mode/risque

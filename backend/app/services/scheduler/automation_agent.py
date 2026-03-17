@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.llm.model_selector import AgentModelSelector
-from app.services.llm.ollama_client import OllamaCloudClient
+from app.services.llm.provider_client import LlmClient
 from app.services.prompts.registry import PromptTemplateService
 
 SCHEDULE_PLANNER_AGENT_NAME = 'schedule-planner-agent'
@@ -35,7 +35,7 @@ class SchedulePlannerAgent:
     name = SCHEDULE_PLANNER_AGENT_NAME
 
     def __init__(self) -> None:
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -76,6 +76,7 @@ class SchedulePlannerAgent:
             prompt_info['system_prompt'],
             prompt_info['user_prompt'],
             model=llm_model,
+            db=db,
         )
         return {
             'llm_enabled': True,
@@ -86,4 +87,3 @@ class SchedulePlannerAgent:
             },
             'llm_result': llm_result,
         }
-

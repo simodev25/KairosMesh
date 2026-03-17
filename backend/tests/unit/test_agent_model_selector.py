@@ -80,3 +80,27 @@ def test_agent_model_selector_reads_enabled_overrides() -> None:
         selector = AgentModelSelector()
         assert selector.is_enabled(db, 'news-analyst') is False
         assert selector.is_enabled(db, 'macro-analyst') is True
+
+
+def test_agent_model_selector_supports_provider_override_and_provider_default_model() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        db.add(
+            ConnectorConfig(
+                connector_name='ollama',
+                enabled=True,
+                settings={
+                    'provider': 'openai',
+                },
+            )
+        )
+        db.commit()
+
+        selector = AgentModelSelector()
+        selector.settings.openai_model = 'gpt-4o-mini'
+        selector.settings.llm_provider = 'ollama'
+
+        assert selector.resolve_provider(db) == 'openai'
+        assert selector.resolve(db, 'news-analyst') == 'gpt-4o-mini'

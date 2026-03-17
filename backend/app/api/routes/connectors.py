@@ -1,4 +1,3 @@
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -7,8 +6,8 @@ from app.core.security import Role, require_roles
 from app.db.models.connector_config import ConnectorConfig
 from app.db.session import get_db
 from app.schemas.connector import ConnectorConfigOut, ConnectorConfigUpdate, MarketSymbolsOut, MarketSymbolsUpdate
-from app.services.llm.ollama_client import OllamaCloudClient
 from app.services.llm.model_selector import AgentModelSelector
+from app.services.llm.provider_client import LlmClient
 from app.services.market.symbols import get_market_symbols_config, save_market_symbols_config
 from app.services.market.yfinance_provider import YFinanceMarketProvider
 from app.services.memory.vector_memory import VectorMemoryService
@@ -24,12 +23,23 @@ def list_connectors(
     db: Session = Depends(get_db),
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
 ) -> list[ConnectorConfigOut]:
+    settings = get_settings()
     connectors = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name.in_(SUPPORTED_CONNECTORS)).all()
     existing = {conn.connector_name for conn in connectors}
     for connector_name in SUPPORTED_CONNECTORS:
         if connector_name not in existing:
-            conn = ConnectorConfig(connector_name=connector_name, enabled=True, settings={})
+            connector_settings: dict = {}
+            if connector_name == 'ollama':
+                connector_settings = {'provider': settings.llm_provider}
+            conn = ConnectorConfig(connector_name=connector_name, enabled=True, settings=connector_settings)
             db.add(conn)
+    for conn in connectors:
+        if conn.connector_name != 'ollama':
+            continue
+        current_settings = conn.settings if isinstance(conn.settings, dict) else {}
+        if 'provider' in current_settings:
+            continue
+        conn.settings = {**current_settings, 'provider': settings.llm_provider}
     db.commit()
     connectors = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name.in_(SUPPORTED_CONNECTORS)).all()
     return [ConnectorConfigOut.model_validate(conn) for conn in connectors]
@@ -65,45 +75,10 @@ def update_market_symbols(
 
 @router.get('/ollama/models')
 def list_ollama_models(
+    db: Session = Depends(get_db),
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
 ) -> dict:
-    settings = get_settings()
-    base_url = (settings.ollama_base_url or '').strip().rstrip('/')
-    api_key = (settings.ollama_api_key or '').strip().strip('"').strip("'")
-    timeout = max(min(int(settings.ollama_timeout_seconds), 30), 5)
-
-    candidate_urls = []
-    if base_url:
-        candidate_urls.append(f'{base_url}/api/tags')
-    candidate_urls.append('https://ollama.com/api/tags')
-
-    # Deduplicate while preserving order.
-    unique_urls = list(dict.fromkeys(candidate_urls))
-    headers = {'Accept': 'application/json'}
-    if api_key:
-        headers['Authorization'] = f'Bearer {api_key}'
-
-    errors: list[str] = []
-    with httpx.Client(timeout=timeout) as client:
-        for url in unique_urls:
-            try:
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
-                payload = response.json() if response.content else {}
-                models = payload.get('models', [])
-                names: list[str] = []
-                if isinstance(models, list):
-                    for item in models:
-                        if not isinstance(item, dict):
-                            continue
-                        name = item.get('name') or item.get('model')
-                        if isinstance(name, str) and name.strip():
-                            names.append(name.strip())
-                return {'models': sorted(set(names)), 'source': url}
-            except Exception as exc:  # pragma: no cover - network failures are expected in local/offline runs
-                errors.append(f'{url}: {exc}')
-
-    return {'models': [], 'source': None, 'error': '; '.join(errors[:2])}
+    return LlmClient().list_models(db)
 
 
 @router.put('/{connector_name}', response_model=ConnectorConfigOut)
@@ -134,12 +109,13 @@ def update_connector(
 @router.post('/{connector_name}/test')
 async def test_connector(
     connector_name: str,
+    db: Session = Depends(get_db),
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
 ) -> dict:
     connector_name = connector_name.lower()
     if connector_name == 'ollama':
-        client = OllamaCloudClient()
-        return client.chat('You are a health-check bot.', 'Reply with OK in one word.')
+        client = LlmClient()
+        return client.chat('You are a health-check bot.', 'Reply with OK in one word.', db=db)
     if connector_name == 'metaapi':
         client = MetaApiClient()
         return await client.get_account_information()

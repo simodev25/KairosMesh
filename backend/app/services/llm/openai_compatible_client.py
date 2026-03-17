@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import logging
 import threading
 import time
 from typing import Any
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -22,7 +23,7 @@ from app.observability.metrics import (
 logger = logging.getLogger(__name__)
 
 
-def _is_retryable_ollama_error(exc: BaseException) -> bool:
+def _is_retryable_http_error(exc: BaseException) -> bool:
     if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
@@ -30,68 +31,60 @@ def _is_retryable_ollama_error(exc: BaseException) -> bool:
     return False
 
 
-class OllamaCloudClient:
-    _shared_client: httpx.Client | None = None
-    _shared_client_timeout_seconds: float | None = None
-    _shared_client_lock = threading.Lock()
+class OpenAICompatibleClient:
+    _shared_clients: dict[float, httpx.Client] = {}
+    _shared_clients_lock = threading.Lock()
 
-    def __init__(self) -> None:
+    def __init__(self, provider: str) -> None:
         self.settings = get_settings()
+        self.provider = str(provider or '').strip().lower() or 'openai'
 
     @classmethod
     def _get_http_client(cls, timeout_seconds: float) -> httpx.Client:
         safe_timeout = max(float(timeout_seconds), 1.0)
-        with cls._shared_client_lock:
-            if (
-                cls._shared_client is not None
-                and not cls._shared_client.is_closed
-                and cls._shared_client_timeout_seconds == safe_timeout
-            ):
-                return cls._shared_client
-
-            if cls._shared_client is not None and not cls._shared_client.is_closed:
-                cls._shared_client.close()
-
-            cls._shared_client = httpx.Client(
+        with cls._shared_clients_lock:
+            client = cls._shared_clients.get(safe_timeout)
+            if client is not None and not client.is_closed:
+                return client
+            cls._shared_clients[safe_timeout] = httpx.Client(
                 timeout=safe_timeout,
                 limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
             )
-            cls._shared_client_timeout_seconds = safe_timeout
-            return cls._shared_client
+            return cls._shared_clients[safe_timeout]
+
+    @property
+    def _display_name(self) -> str:
+        if self.provider == 'mistral':
+            return 'Mistral'
+        return 'OpenAI'
 
     def _normalized_api_key(self) -> str:
-        key = (self.settings.ollama_api_key or '').strip()
+        if self.provider == 'mistral':
+            key = (self.settings.mistral_api_key or '').strip()
+        else:
+            key = (self.settings.openai_api_key or '').strip()
         if len(key) >= 2 and key[0] == key[-1] and key[0] in {'"', "'"}:
             key = key[1:-1].strip()
         return key
 
     def _normalized_base_url(self) -> str:
-        base_url = (self.settings.ollama_base_url or '').strip().rstrip('/')
+        raw_base_url = self.settings.mistral_base_url if self.provider == 'mistral' else self.settings.openai_base_url
+        base_url = str(raw_base_url or '').strip().rstrip('/')
         if not base_url:
             return base_url
-
-        # Canonicalize known Ollama cloud hosts to a single endpoint host.
-        parsed = urlparse(base_url)
-        hostname = (parsed.hostname or '').strip().lower()
-        if hostname in {'api.ollama.com', 'www.ollama.com'}:
-            netloc = 'ollama.com'
-            if parsed.port:
-                netloc = f'{netloc}:{parsed.port}'
-            normalized = urlunparse(
-                (
-                    parsed.scheme or 'https',
-                    netloc,
-                    parsed.path.rstrip('/'),
-                    '',
-                    '',
-                    '',
-                )
-            ).rstrip('/')
-            if normalized != base_url:
-                logger.warning('ollama_base_url normalized from %s to %s', base_url, normalized)
-            return normalized
-
+        if not base_url.startswith(('http://', 'https://')):
+            base_url = f'https://{base_url.lstrip("/")}'
         return base_url
+
+    def _default_model(self) -> str:
+        if self.provider == 'mistral':
+            return str(self.settings.mistral_model or '').strip() or 'mistral-small-latest'
+        return str(self.settings.openai_model or '').strip() or 'gpt-4o-mini'
+
+    def _timeout_seconds(self) -> float:
+        if self.provider == 'mistral':
+            return float(self.settings.mistral_timeout_seconds)
+        return float(self.settings.openai_timeout_seconds)
 
     def is_configured(self, base_url: str | None = None) -> bool:
         key = self._normalized_api_key()
@@ -104,8 +97,14 @@ class OllamaCloudClient:
         return bool(base_url)
 
     def _estimate_cost_usd(self, prompt_tokens: int, completion_tokens: int) -> float:
-        input_cost = (prompt_tokens / 1_000_000) * self.settings.ollama_input_cost_per_1m_tokens
-        output_cost = (completion_tokens / 1_000_000) * self.settings.ollama_output_cost_per_1m_tokens
+        if self.provider == 'mistral':
+            input_rate = float(self.settings.mistral_input_cost_per_1m_tokens)
+            output_rate = float(self.settings.mistral_output_cost_per_1m_tokens)
+        else:
+            input_rate = float(self.settings.openai_input_cost_per_1m_tokens)
+            output_rate = float(self.settings.openai_output_cost_per_1m_tokens)
+        input_cost = (prompt_tokens / 1_000_000) * input_rate
+        output_cost = (completion_tokens / 1_000_000) * output_rate
         return float(input_cost + output_cost)
 
     def _persist_log(
@@ -143,23 +142,62 @@ class OllamaCloudClient:
     @retry(
         wait=wait_exponential(multiplier=1, min=1, max=8),
         stop=stop_after_attempt(3),
-        retry=retry_if_exception(_is_retryable_ollama_error),
+        retry=retry_if_exception(_is_retryable_http_error),
         reraise=True,
     )
-    def _call_remote(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
-        client = self._get_http_client(self.settings.ollama_timeout_seconds)
-        response = client.post(url, json=payload, headers=headers)
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        client = self._get_http_client(self._timeout_seconds())
+        response: httpx.Response
+        if method.upper() == 'GET':
+            response = client.get(url, headers=headers)
+        else:
+            response = client.post(url, json=payload or {}, headers=headers)
         response.raise_for_status()
-        return response.json()
+        return response.json() if response.content else {}
 
     @staticmethod
-    def _extract_usage(data: dict[str, Any]) -> tuple[str, int, int]:
-        text = data.get('message', {}).get('content', '')
-        prompt_tokens = int(data.get('prompt_eval_count') or data.get('prompt_tokens') or 0)
-        completion_tokens = int(data.get('eval_count') or data.get('completion_tokens') or 0)
-        return text, prompt_tokens, completion_tokens
+    def _extract_text(data: dict[str, Any]) -> str:
+        choices = data.get('choices')
+        if isinstance(choices, list) and choices:
+            first_choice = choices[0]
+            if isinstance(first_choice, dict):
+                message = first_choice.get('message')
+                if isinstance(message, dict):
+                    content = message.get('content', '')
+                    if isinstance(content, str):
+                        return content
+                    if isinstance(content, list):
+                        parts: list[str] = []
+                        for item in content:
+                            if isinstance(item, dict):
+                                text_part = item.get('text')
+                                if isinstance(text_part, str) and text_part:
+                                    parts.append(text_part)
+                            elif isinstance(item, str) and item:
+                                parts.append(item)
+                        return ''.join(parts)
+                text_field = first_choice.get('text')
+                if isinstance(text_field, str):
+                    return text_field
+        return ''
 
-    def _build_chat_payload(self, model: str, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    @staticmethod
+    def _extract_usage(data: dict[str, Any]) -> tuple[int, int]:
+        usage = data.get('usage', {})
+        if not isinstance(usage, dict):
+            return 0, 0
+        prompt_tokens = int(usage.get('prompt_tokens') or usage.get('input_tokens') or 0)
+        completion_tokens = int(usage.get('completion_tokens') or usage.get('output_tokens') or 0)
+        return prompt_tokens, completion_tokens
+
+    @staticmethod
+    def _build_chat_payload(model: str, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         return {
             'model': model,
             'messages': [
@@ -171,44 +209,46 @@ class OllamaCloudClient:
 
     def list_models(self) -> dict[str, Any]:
         base_url = self._normalized_base_url()
-        api_key = self._normalized_api_key()
-        timeout = max(min(int(self.settings.ollama_timeout_seconds), 30), 5)
+        if not self.is_configured(base_url=base_url):
+            return {
+                'provider': self.provider,
+                'models': [],
+                'source': None,
+                'error': f'Missing {self.provider.upper()}_API_KEY or {self.provider.upper()}_BASE_URL',
+            }
 
-        candidate_urls: list[str] = []
-        if base_url:
-            candidate_urls.append(f'{base_url}/api/tags')
-        candidate_urls.append('https://ollama.com/api/tags')
-
-        unique_urls = list(dict.fromkeys(candidate_urls))
-        headers = {'Accept': 'application/json'}
-        if api_key:
-            headers['Authorization'] = f'Bearer {api_key}'
-
-        errors: list[str] = []
-        with httpx.Client(timeout=timeout) as client:
-            for url in unique_urls:
-                try:
-                    response = client.get(url, headers=headers)
-                    response.raise_for_status()
-                    payload = response.json() if response.content else {}
-                    models = payload.get('models', [])
-                    names: list[str] = []
-                    if isinstance(models, list):
-                        for item in models:
-                            if not isinstance(item, dict):
-                                continue
-                            name = item.get('name') or item.get('model')
-                            if isinstance(name, str) and name.strip():
-                                names.append(name.strip())
-                    return {'provider': 'ollama', 'models': sorted(set(names)), 'source': url}
-                except Exception as exc:  # pragma: no cover - network failures are expected in local/offline runs
-                    errors.append(f'{url}: {exc}')
-
-        return {'provider': 'ollama', 'models': [], 'source': None, 'error': '; '.join(errors[:2])}
+        headers = {
+            'Authorization': f'Bearer {self._normalized_api_key()}',
+            'Accept': 'application/json',
+        }
+        url = f'{base_url}/models'
+        try:
+            payload = self._request_json('GET', url, headers)
+            items = payload.get('data', [])
+            models: list[str] = []
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    model_id = item.get('id')
+                    if isinstance(model_id, str) and model_id.strip():
+                        models.append(model_id.strip())
+            return {
+                'provider': self.provider,
+                'models': sorted(set(models)),
+                'source': url,
+            }
+        except Exception as exc:  # pragma: no cover - network failures are expected in local/offline runs
+            return {
+                'provider': self.provider,
+                'models': [],
+                'source': url,
+                'error': str(exc),
+            }
 
     def chat(self, system_prompt: str, user_prompt: str, model: str | None = None) -> dict[str, Any]:
-        provider = 'ollama-cloud'
-        selected_model = (model or self.settings.ollama_model or '').strip() or self.settings.ollama_model
+        provider = self.provider
+        selected_model = (model or self._default_model() or '').strip() or self._default_model()
         started = time.perf_counter()
         base_url = self._normalized_base_url()
 
@@ -224,11 +264,11 @@ class OllamaCloudClient:
                 completion_tokens=0,
                 cost_usd=0.0,
                 latency_ms=latency * 1000,
-                error='Missing OLLAMA_API_KEY or OLLAMA_BASE_URL',
+                error=f'Missing {provider.upper()}_API_KEY or {provider.upper()}_BASE_URL',
             )
             return {
                 'provider': 'fallback',
-                'text': 'LLM unavailable: missing OLLAMA_API_KEY. Using deterministic fallback.',
+                'text': f'LLM unavailable: missing {provider.upper()} API configuration. Using deterministic fallback.',
                 'degraded': True,
                 'prompt_tokens': 0,
                 'completion_tokens': 0,
@@ -236,16 +276,17 @@ class OllamaCloudClient:
                 'latency_ms': round(latency * 1000, 3),
             }
 
-        url = f"{base_url}/api/chat"
+        url = f'{base_url}/chat/completions'
         payload = self._build_chat_payload(selected_model, system_prompt, user_prompt)
         headers = {
-            'Authorization': f"Bearer {self._normalized_api_key()}",
+            'Authorization': f'Bearer {self._normalized_api_key()}',
             'Content-Type': 'application/json',
         }
 
         try:
-            data = self._call_remote(url, payload, headers)
-            text, prompt_tokens, completion_tokens = self._extract_usage(data)
+            data = self._request_json('POST', url, headers, payload=payload)
+            text = self._extract_text(data)
+            prompt_tokens, completion_tokens = self._extract_usage(data)
             cost_usd = self._estimate_cost_usd(prompt_tokens, completion_tokens)
             latency = time.perf_counter() - started
 
@@ -264,15 +305,6 @@ class OllamaCloudClient:
                 cost_usd=cost_usd,
                 latency_ms=latency * 1000,
             )
-
-            logger.info(
-                'ollama_chat_call_success model=%s chars=%s prompt_tokens=%s completion_tokens=%s latency_ms=%.2f',
-                selected_model,
-                len(text),
-                prompt_tokens,
-                completion_tokens,
-                latency * 1000,
-            )
             return {
                 'provider': provider,
                 'text': text,
@@ -288,21 +320,17 @@ class OllamaCloudClient:
             if isinstance(exc, httpx.HTTPStatusError):
                 status_code = exc.response.status_code
 
-            # If a model override is invalid on Ollama Cloud (404), retry once with env default model.
-            fallback_model = (self.settings.ollama_model or '').strip()
+            fallback_model = self._default_model()
             if status_code == 404 and fallback_model and fallback_model != selected_model:
                 try:
-                    logger.warning(
-                        'ollama model fallback on 404 from %s to %s',
-                        selected_model,
-                        fallback_model,
-                    )
-                    fallback_data = self._call_remote(
+                    fallback_data = self._request_json(
+                        'POST',
                         url,
-                        self._build_chat_payload(fallback_model, system_prompt, user_prompt),
                         headers,
+                        payload=self._build_chat_payload(fallback_model, system_prompt, user_prompt),
                     )
-                    text, prompt_tokens, completion_tokens = self._extract_usage(fallback_data)
+                    text = self._extract_text(fallback_data)
+                    prompt_tokens, completion_tokens = self._extract_usage(fallback_data)
                     cost_usd = self._estimate_cost_usd(prompt_tokens, completion_tokens)
                     latency = time.perf_counter() - started
 
@@ -341,7 +369,7 @@ class OllamaCloudClient:
             latency = time.perf_counter() - started
             llm_calls_total.labels(provider=provider, status='error').inc()
             llm_latency_seconds.labels(provider=provider, model=selected_model, status='error').observe(latency)
-            external_provider_failures_total.labels(provider='ollama').inc()
+            external_provider_failures_total.labels(provider=provider).inc()
 
             self._persist_log(
                 provider=provider,
@@ -354,11 +382,10 @@ class OllamaCloudClient:
                 error=str(exc),
             )
             if status_code in {401, 403}:
-                logger.error('ollama_chat_auth_error model=%s status=%s', selected_model, status_code)
-                message = f'Ollama authentication failed (HTTP {status_code}). Check OLLAMA_API_KEY.'
+                message = f'{self._display_name} authentication failed (HTTP {status_code}). Check API key.'
             else:
-                logger.exception('ollama_chat_call_error model=%s', selected_model)
-                message = f'Ollama call failed after retries: {exc}'
+                logger.exception('%s_chat_call_error model=%s', provider, selected_model)
+                message = f'{self._display_name} call failed after retries: {exc}'
             return {
                 'provider': 'fallback',
                 'text': message,

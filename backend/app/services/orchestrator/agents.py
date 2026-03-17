@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.services.llm.ollama_client import OllamaCloudClient
+from app.services.llm.provider_client import LlmClient
 from app.services.llm.model_selector import AgentModelSelector
 from app.services.prompts.registry import PromptTemplateService
 from app.services.risk.rules import RiskEngine
@@ -62,7 +62,7 @@ class TechnicalAnalystAgent:
     name = 'technical-analyst'
 
     def __init__(self) -> None:
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -142,6 +142,7 @@ class TechnicalAnalystAgent:
             system_prompt,
             user_prompt,
             model=llm_model,
+            db=db,
         )
         llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
         llm_score = {'bullish': 0.15, 'bearish': -0.15, 'neutral': 0.0}[llm_signal]
@@ -169,7 +170,7 @@ class NewsAnalystAgent:
     name = 'news-analyst'
 
     def __init__(self, prompt_service: PromptTemplateService) -> None:
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = prompt_service
 
@@ -216,7 +217,7 @@ class NewsAnalystAgent:
             )
 
         if llm_enabled:
-            llm_res = self.llm.chat(system, user, model=llm_model)
+            llm_res = self.llm.chat(system, user, model=llm_model, db=db)
             signal = _parse_signal_from_text(llm_res.get('text', ''))
             score = {'bullish': 0.2, 'bearish': -0.2, 'neutral': 0.0}[signal]
             degraded = llm_res.get('degraded', False)
@@ -246,7 +247,7 @@ class MacroAnalystAgent:
     name = 'macro-analyst'
 
     def __init__(self) -> None:
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -312,6 +313,7 @@ class MacroAnalystAgent:
             system_prompt,
             user_prompt,
             model=llm_model,
+            db=db,
         )
         llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
         llm_score = {'bullish': 0.05, 'bearish': -0.05, 'neutral': 0.0}[llm_signal]
@@ -332,7 +334,7 @@ class SentimentAgent:
     name = 'sentiment-agent'
 
     def __init__(self) -> None:
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -394,6 +396,7 @@ class SentimentAgent:
             system_prompt,
             user_prompt,
             model=llm_model,
+            db=db,
         )
         llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
         llm_score = {'bullish': 0.05, 'bearish': -0.05, 'neutral': 0.0}[llm_signal]
@@ -415,7 +418,7 @@ class BullishResearcherAgent:
 
     def __init__(self, prompt_service: PromptTemplateService) -> None:
         self.prompt_service = prompt_service
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
 
     def run(self, ctx: AgentContext, agent_outputs: dict[str, dict[str, Any]], db: Session | None = None) -> dict[str, Any]:
@@ -450,7 +453,7 @@ class BullishResearcherAgent:
                     'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                 },
             )
-            llm_out = self.llm.chat(prompt_info['system_prompt'], prompt_info['user_prompt'], model=llm_model)
+            llm_out = self.llm.chat(prompt_info['system_prompt'], prompt_info['user_prompt'], model=llm_model, db=db)
         else:
             llm_out = {'text': ''}
 
@@ -472,7 +475,7 @@ class BearishResearcherAgent:
 
     def __init__(self, prompt_service: PromptTemplateService) -> None:
         self.prompt_service = prompt_service
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
 
     def run(self, ctx: AgentContext, agent_outputs: dict[str, dict[str, Any]], db: Session | None = None) -> dict[str, Any]:
@@ -507,7 +510,7 @@ class BearishResearcherAgent:
                     'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                 },
             )
-            llm_out = self.llm.chat(prompt_info['system_prompt'], prompt_info['user_prompt'], model=llm_model)
+            llm_out = self.llm.chat(prompt_info['system_prompt'], prompt_info['user_prompt'], model=llm_model, db=db)
         else:
             llm_out = {'text': ''}
 
@@ -528,7 +531,7 @@ class TraderAgent:
     name = 'trader-agent'
 
     def __init__(self) -> None:
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -633,6 +636,7 @@ class TraderAgent:
             system_prompt,
             user_prompt,
             model=llm_model,
+            db=db,
         )
         output['execution_note'] = llm_res.get('text', '')
         output['degraded'] = llm_res.get('degraded', False)
@@ -650,7 +654,7 @@ class RiskManagerAgent:
 
     def __init__(self) -> None:
         self.risk_engine = RiskEngine()
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -738,7 +742,7 @@ class RiskManagerAgent:
                 reasons=json.dumps(output.get('reasons', []), ensure_ascii=True),
             )
 
-        llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model)
+        llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
         llm_acceptance = _parse_risk_acceptance_from_text(llm_res.get('text', ''), bool(output.get('accepted')))
         if bool(output.get('accepted')) and not llm_acceptance:
             output['accepted'] = False
@@ -765,7 +769,7 @@ class ExecutionManagerAgent:
     name = 'execution-manager'
 
     def __init__(self) -> None:
-        self.llm = OllamaCloudClient()
+        self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
 
@@ -849,7 +853,7 @@ class ExecutionManagerAgent:
                 take_profit=trader_decision.get('take_profit'),
             )
 
-        llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model)
+        llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
         llm_decision = _parse_trade_decision_from_text(llm_res.get('text', ''))
         llm_reason = 'LLM validated deterministic execution plan.'
         if output['should_execute']:
