@@ -27,6 +27,7 @@ Projet: `forex-multiagent-platform-performance-and-component-review-001`
 | Plan tests integration | TERMINE | 2026-03-17 | Scenarios critiques definis |
 | Plan tests performance | TERMINE | 2026-03-17 | Scenarios, metriques, criteres definis |
 | Rapport final structure | TERMINE | 2026-03-17 | Livrable complet rendu |
+| Refonte documentation operationnelle | TERMINE | 2026-03-17 | README + guides prod/testing/troubleshooting harmonises et completes |
 | Mise en oeuvre des optimisations P0 | EN_COURS | 2026-03-17 | Correctifs P0 majeurs appliques, finalisation en cours |
 
 ## Etat par composant
@@ -88,6 +89,8 @@ Projet: `forex-multiagent-platform-performance-and-component-review-001`
 | 2026-03-17 | Validation technique apres correctifs (`backend pytest`, `frontend build`) | TERMINE |
 | 2026-03-17 | Ajout mode prod Docker + script d'installation + tuning workers Mac M4 Pro | TERMINE |
 | 2026-03-17 | Activation pgvector en prod (`ENABLE_PGVECTOR=true`) + image Postgres compatible | TERMINE |
+| 2026-03-17 | Analyse logs runtime + correction warning PostgreSQL collation (`REINDEX` + `REFRESH COLLATION VERSION`) | TERMINE |
+| 2026-03-17 | Relecture complete docs et refactor runbooks (local/prod/tests/troubleshooting) | TERMINE |
 
 ## Prochaines etapes recommandes
 

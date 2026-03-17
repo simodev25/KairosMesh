@@ -48,6 +48,13 @@ docker compose up --build
 - Grafana: `http://localhost:3000` (`admin/admin`)
 - RabbitMQ UI: `http://localhost:15672` (`guest/guest`)
 
+## Local vs production (résumé)
+
+| Mode | Commande de lancement | Frontend | API | Fichier env principal | Notes |
+|---|---|---|---|---|---|
+| Local dev/test | `docker compose up --build` | `5173` | `8000` | `backend/.env` + `frontend/.env` | services internes exposés (Postgres/Redis/RabbitMQ/Qdrant) |
+| Production Docker (locale) | `./scripts/install-prod-docker.sh` | `4173` | `8000` | `.env.prod` | ports internes non exposés, `pgvector` activable (`ENABLE_PGVECTOR=true`) |
+
 ## Déploiement production Docker
 
 1. Créer l'env production:
@@ -73,6 +80,41 @@ Compte seed local:
 - email: `admin@local.dev`
 - mot de passe: `admin1234`
 - usage local uniquement (dev/test), à changer avant tout environnement exposé.
+
+## Checklist de validation rapide
+
+1. Vérifier la santé API:
+```bash
+curl -sS http://localhost:8000/api/v1/health
+```
+
+2. Vérifier l'authentification:
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@local.dev","password":"admin1234"}'
+```
+
+3. Vérifier CORS preflight (si UI navigateur):
+```bash
+curl -i -X OPTIONS http://localhost:8000/api/v1/auth/login \
+  -H "Origin: http://localhost:5173" \
+  -H "Access-Control-Request-Method: POST"
+```
+
+4. Vérifier l'activité worker:
+```bash
+docker compose logs --tail 50 worker
+```
+
+5. Vérifier qu'aucune erreur critique ne boucle:
+```bash
+docker compose logs --tail 100 backend postgres worker
+```
+
+Runbooks incidents fréquents:
+- `docs/troubleshooting.md`
+- `docs/production-docker-install.md` (section troubleshooting)
 
 ## Sécurité V1 (important)
 
@@ -157,5 +199,6 @@ npm run test:e2e
 - [Monitoring](docs/monitoring.md)
 - [Installation Production Docker](docs/production-docker-install.md)
 - [Tests](docs/testing.md)
+- [Suivi Performance et Revue](docs/performance-review-tracker.md)
 - [Limites](docs/limits.md)
 - [Troubleshooting](docs/troubleshooting.md)

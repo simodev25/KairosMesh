@@ -34,6 +34,14 @@ Puis modifier au minimum:
 - `METAAPI_TOKEN` / `METAAPI_ACCOUNT_ID` (si trading MetaApi)
 - `GF_SECURITY_ADMIN_PASSWORD` (si monitoring)
 
+Validation conseillee avant installation:
+- `POSTGRES_PASSWORD` et `DATABASE_URL` doivent contenir le meme mot de passe.
+- aucun placeholder ne doit rester (`change-me`, `replace_me`, etc.).
+
+```bash
+grep -E '^(POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DB|DATABASE_URL|CORS_ORIGINS|ENABLE_PGVECTOR)=' .env.prod
+```
+
 ## 2) Lancer l'installation / deploiement
 
 Sans monitoring:
@@ -93,6 +101,16 @@ Etat des conteneurs:
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod ps
 ```
 
+Checks rapides recommandes:
+
+```bash
+curl -sS http://localhost:8000/api/v1/health
+curl -sS -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@local.dev","password":"admin1234"}'
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod logs --tail 80 backend worker
+```
+
 ## 5) Commandes d'exploitation
 
 Voir les logs:
@@ -119,3 +137,92 @@ Redemarrer avec rebuild:
 - Le service Postgres prod utilise `pgvector/pgvector:pg16`, donc `ENABLE_PGVECTOR=true` est supporte.
 - Le frontend est servi via `vite preview` sur le port `4173`.
 - Pour un environnement internet public, ajouter un reverse proxy TLS (Nginx/Traefik/Caddy).
+
+## Troubleshooting
+
+### `install-prod-docker.sh` bloque sur `Waiting for backend health endpoint...`
+
+Cause la plus frequente:
+- migration non appliquee ou erreur runtime backend au demarrage.
+
+Diagnostic:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod logs --tail 120 backend
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod run --rm backend alembic current
+```
+
+Correctif:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod run --rm backend alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod restart backend worker beat
+```
+
+### PostgreSQL `password authentication failed for user "forex"`
+
+Cause frequente:
+- volume Postgres existant avec ancien mot de passe, puis changement de `.env.prod`.
+
+Correctif non destructif:
+1. Aligner `DATABASE_URL` et `POSTGRES_PASSWORD` dans `.env.prod`.
+2. Mettre a jour le role DB si necessaire:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod \
+  exec -T postgres psql -U forex -d postgres -c "ALTER ROLE forex WITH PASSWORD '<POSTGRES_PASSWORD>';"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod restart backend worker beat
+```
+
+Reset destructif (dev/test uniquement):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod down -v
+./scripts/install-prod-docker.sh
+```
+
+### CORS bloque entre UI et API (ports `5173` / `4173`)
+
+Contexte:
+- en test local, l'UI peut tourner sur `5173`;
+- en mode prod docker local, l'UI tourne sur `4173`.
+
+Regler `CORS_ORIGINS` pour couvrir les deux si besoin:
+
+```dotenv
+CORS_ORIGINS=http://localhost:5173,http://localhost:4173
+```
+
+Puis:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod restart backend
+```
+
+Verification preflight:
+
+```bash
+curl -i -X OPTIONS http://localhost:8000/api/v1/auth/login \
+  -H "Origin: http://localhost:4173" \
+  -H "Access-Control-Request-Method: POST"
+```
+
+### Warning PostgreSQL `collation version mismatch`
+
+Si les logs affichent en boucle:
+- `database "..." has a collation version mismatch`
+
+Executer:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod exec -T postgres psql -U forex -d forex_platform -c "REINDEX DATABASE forex_platform;"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod exec -T postgres psql -U forex -d postgres -c "ALTER DATABASE forex_platform REFRESH COLLATION VERSION;"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod exec -T postgres psql -U forex -d postgres -c "ALTER DATABASE template1 REFRESH COLLATION VERSION;"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod exec -T postgres psql -U forex -d postgres -c "ALTER DATABASE postgres REFRESH COLLATION VERSION;"
+```
+
+Puis redemarrer les services applicatifs:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod restart backend worker beat
+```

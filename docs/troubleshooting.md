@@ -1,5 +1,108 @@
 # Troubleshooting
 
+## Triage rapide des logs
+
+Signaux généralement normaux:
+- `HTTP/1.1 200 OK` sur MetaApi, Qdrant, Ollama.
+- `Task ... succeeded` côté worker Celery.
+- `mingle: all alone` si un seul worker est lancé.
+
+Signaux à traiter en priorité:
+- `password authentication failed for user "forex"` (désalignement secrets DB).
+- `database "... has a collation version mismatch"` (maintenance DB).
+- `HTTP 401` sur Ollama/MetaApi (token/header/URL).
+- `Waiting for backend health endpoint...` qui dure (backend/migrations non prêts).
+
+## Script d'installation bloqué sur `Waiting for backend health endpoint...`
+
+Diagnostic:
+
+```bash
+docker compose logs --tail 150 backend
+docker compose exec backend alembic current
+```
+
+Correctif:
+
+```bash
+docker compose exec backend alembic upgrade head
+docker compose restart backend worker beat
+```
+
+## PostgreSQL `password authentication failed for user "forex"`
+
+Cause fréquente:
+- volume Postgres existant avec ancien mot de passe, après modification des variables `.env`/`.env.prod`.
+
+Correctif non destructif:
+1. Vérifier que `DATABASE_URL` utilise le même secret que `POSTGRES_PASSWORD`.
+2. Mettre à jour le mot de passe du rôle en base.
+
+```bash
+docker compose exec -T postgres psql -U forex -d postgres -c "ALTER ROLE forex WITH PASSWORD '<POSTGRES_PASSWORD>';"
+docker compose restart backend worker beat
+```
+
+Correctif destructif (dev/test uniquement):
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+## PostgreSQL `collation version mismatch`
+
+Symptôme:
+- warning répété sur `forex_platform`/`template1`/`postgres`.
+
+Correctif:
+
+```bash
+docker compose stop backend worker beat
+docker compose exec -T postgres psql -U forex -d forex_platform -c "REINDEX DATABASE forex_platform;"
+docker compose exec -T postgres psql -U forex -d postgres -c "ALTER DATABASE forex_platform REFRESH COLLATION VERSION;"
+docker compose exec -T postgres psql -U forex -d postgres -c "ALTER DATABASE template1 REFRESH COLLATION VERSION;"
+docker compose exec -T postgres psql -U forex -d postgres -c "ALTER DATABASE postgres REFRESH COLLATION VERSION;"
+docker compose start backend worker beat
+```
+
+Vérification:
+
+```bash
+docker compose exec -T postgres psql -U forex -d postgres -c "SELECT datname, datcollversion FROM pg_database WHERE datname IN ('forex_platform','template1','postgres');"
+```
+
+## Login navigateur bloqué (CORS / origine)
+
+Signes:
+- requête `OPTIONS` ou `POST /api/v1/auth/login` bloquée dans le navigateur;
+- présence de `strict-origin-when-cross-origin` dans les headers (ce header seul n'est pas une erreur).
+
+Fix:
+- autoriser explicitement les origines utilisées par le frontend:
+  - local: `http://localhost:5173`
+  - mode prod docker local: `http://localhost:4173`
+
+Exemple:
+
+```dotenv
+CORS_ORIGINS=http://localhost:5173,http://localhost:4173
+```
+
+Puis:
+
+```bash
+docker compose restart backend
+```
+
+Test preflight:
+
+```bash
+curl -i -X OPTIONS http://localhost:8000/api/v1/auth/login \
+  -H "Origin: http://localhost:5173" \
+  -H "Access-Control-Request-Method: POST"
+```
+
 ## `Temps running` affiche `+1h` dans l'UI
 
 Symptôme:
