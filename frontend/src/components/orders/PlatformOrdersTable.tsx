@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import type { ExecutionOrder } from '../../types';
 import { TableSkeletonRows } from './TableSkeletonRows';
-import { displaySymbol, failureCode, failureReason, formatExecutionDate } from './formatters';
+import { displaySymbol, failureCode, failureReason, formatExecutionDate, platformOrderTicket } from './formatters';
 
 interface PlatformOrdersTableProps {
   bootstrapLoading: boolean;
@@ -35,6 +35,7 @@ export function PlatformOrdersTable({
           <tr>
             <th>ID</th>
             <th>Run</th>
+            <th>Ticket</th>
             <th>Symbol</th>
             <th>Side</th>
             <th>Mode</th>
@@ -47,10 +48,10 @@ export function PlatformOrdersTable({
         </thead>
         <tbody>
           {bootstrapLoading ? (
-            <TableSkeletonRows prefix="platform-orders" columns={10} rows={5} />
+            <TableSkeletonRows prefix="platform-orders" columns={11} rows={5} />
           ) : orders.length === 0 ? (
             <tr>
-              <td colSpan={10}>Aucun ordre plateforme pour le moment.</td>
+              <td colSpan={11}>Aucun ordre plateforme pour le moment.</td>
             </tr>
           ) : pagedOrders.map((order) => {
             const failed = String(order.status).toLowerCase() === 'failed';
@@ -60,6 +61,7 @@ export function PlatformOrdersTable({
                 <tr>
                   <td>{order.id}</td>
                   <td>{order.run_id}</td>
+                  <td>{platformOrderTicket(order)}</td>
                   <td>{displaySymbol(order.symbol)}</td>
                   <td>{order.side}</td>
                   <td>{order.mode}</td>
@@ -82,7 +84,7 @@ export function PlatformOrdersTable({
                 </tr>
                 {failed && expanded && (
                   <tr>
-                    <td colSpan={10}>
+                    <td colSpan={11}>
                       <p className="model-source">
                         Raison: <code>{failureReason(order)}</code> | Code: <code>{failureCode(order)}</code>
                       </p>

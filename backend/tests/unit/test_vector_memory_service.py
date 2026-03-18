@@ -72,3 +72,45 @@ def test_qdrant_search_is_scoped_by_pair_and_timeframe(monkeypatch) -> None:
         must_filters = list(getattr(query_filter, 'must', []))
         assert any(getattr(item, 'key', None) == 'pair' and getattr(item.match, 'value', None) == 'EURUSD' for item in must_filters)
         assert any(getattr(item, 'key', None) == 'timeframe' and getattr(item.match, 'value', None) == 'H1' for item in must_filters)
+
+
+def test_search_deduplicates_identical_memory_summaries() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        db.add_all(
+            [
+                MemoryEntry(
+                    pair='EURUSD',
+                    timeframe='M15',
+                    source_type='run_outcome',
+                    summary='EURUSD M15 -> SELL confidence=0.8 net_score=-0.5',
+                    embedding=[0.1] * 64,
+                    payload={},
+                ),
+                MemoryEntry(
+                    pair='EURUSD',
+                    timeframe='M15',
+                    source_type='run_outcome',
+                    summary='EURUSD M15 -> SELL confidence=0.8 net_score=-0.5',
+                    embedding=[0.1] * 64,
+                    payload={},
+                ),
+            ]
+        )
+        db.commit()
+
+        service = VectorMemoryService()
+        service._qdrant = None
+
+        results = service.search(
+            db=db,
+            pair='EURUSD',
+            timeframe='M15',
+            query='eurusd m15 bearish trend',
+            limit=5,
+        )
+
+        assert len(results) == 1
+        assert results[0]['summary'] == 'EURUSD M15 -> SELL confidence=0.8 net_score=-0.5'

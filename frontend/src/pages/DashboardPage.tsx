@@ -74,6 +74,23 @@ function formatNullableDate(value?: string | null): string {
   return formatExecutionDate(value);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function formatRunDecisionSummary(run: Run): string {
+  const decision = asRecord(run.decision);
+  if (!decision) return '-';
+
+  const traderDecision = typeof decision.decision === 'string' ? decision.decision : '-';
+  const execution = asRecord(decision.execution);
+  const executionStatus = typeof execution?.status === 'string' ? execution.status : '';
+
+  if (!executionStatus) return traderDecision;
+  if (traderDecision === '-' || traderDecision === executionStatus) return executionStatus;
+  return `${traderDecision} / ${executionStatus}`;
+}
+
 export function DashboardPage() {
   const { token } = useAuth();
   const { pairs } = useMarketSymbols(token);
@@ -669,7 +686,7 @@ export function DashboardPage() {
               <th>Status</th>
               <th>Date d&apos;exécution</th>
               <th>Temps running</th>
-              <th>Decision</th>
+              <th>Décision / exécution</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -685,7 +702,7 @@ export function DashboardPage() {
                 </td>
                 <td>{formatExecutionDate(run.created_at)}</td>
                 <td>{runElapsed(run, nowMs)}</td>
-                <td>{(run.decision?.decision as string) ?? '-'}</td>
+                <td>{formatRunDecisionSummary(run)}</td>
                 <td>
                   <Link to={`/runs/${run.id}`}>Détail</Link>
                 </td>

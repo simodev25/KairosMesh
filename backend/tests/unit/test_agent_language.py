@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.models.prompt_template import PromptTemplate
-from app.services.orchestrator.agents import AgentContext, NewsAnalystAgent
+from app.services.orchestrator.agents import AgentContext, NewsAnalystAgent, TechnicalAnalystAgent
 from app.services.prompts.registry import PromptTemplateService
 
 
@@ -80,3 +80,43 @@ def test_news_agent_ignores_empty_titles() -> None:
     assert out['signal'] == 'neutral'
     assert out['score'] == 0.0
     assert out['reason'] == 'No Yahoo Finance news'
+
+
+def test_technical_agent_respects_explicit_neutral_llm_output(monkeypatch) -> None:
+    agent = TechnicalAnalystAgent()
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(agent.model_selector, 'resolve', lambda *_args, **_kwargs: 'llama3.1')
+    monkeypatch.setattr(
+        agent.llm,
+        'chat',
+        lambda *_args, **_kwargs: {
+            'text': (
+                "**Biais: neutral**\n\n"
+                "Trend bearish mais RSI en zone de survente sans confirmation. HOLD."
+            ),
+            'degraded': False,
+        },
+    )
+
+    ctx = AgentContext(
+        pair='EURUSD',
+        timeframe='M15',
+        mode='simulation',
+        risk_percent=1.0,
+        market_snapshot={
+            'degraded': False,
+            'pair': 'EURUSD',
+            'timeframe': 'M15',
+            'last_price': 1.1460,
+            'trend': 'bearish',
+            'rsi': 28.0,
+            'macd_diff': -0.0003,
+            'atr': 0.0008,
+        },
+        news_context={'news': []},
+        memory_context=[],
+    )
+
+    out = agent.run(ctx, db=None)
+    assert out['signal'] == 'neutral'
+    assert out['score'] == -0.15

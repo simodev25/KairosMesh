@@ -9,6 +9,13 @@ class RiskAssessment:
 
 
 class RiskEngine:
+    @staticmethod
+    def _pip_size(pair: str | None) -> float:
+        normalized = str(pair or '').upper().split('.', 1)[0]
+        if normalized.endswith('JPY'):
+            return 0.01
+        return 0.0001
+
     def evaluate(
         self,
         mode: str,
@@ -16,6 +23,7 @@ class RiskEngine:
         risk_percent: float,
         price: float,
         stop_loss: float | None,
+        pair: str | None = None,
         equity: float = 10000.0,
     ) -> RiskAssessment:
         reasons: list[str] = []
@@ -39,7 +47,8 @@ class RiskEngine:
 
         risk_amount = equity * (risk_percent / 100)
         pip_value_per_lot = 10.0
-        sl_pips = max(stop_distance * 10000, 0.1)
+        pip_size = self._pip_size(pair)
+        sl_pips = max(stop_distance / pip_size, 0.1)
         suggested_volume = max(min(risk_amount / (sl_pips * pip_value_per_lot), 2.0), 0.01)
 
         accepted = len(reasons) == 0

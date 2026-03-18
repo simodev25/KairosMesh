@@ -63,6 +63,23 @@ class VectorMemoryService:
         bn = math.sqrt(sum(y * y for y in b)) or 1.0
         return dot / (an * bn)
 
+    @staticmethod
+    def _dedupe_search_results(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for item in items:
+            summary = str(item.get('summary', '') or '').strip()
+            source_type = str(item.get('source_type', '') or '').strip()
+            pair = str(item.get('pair', '') or '').strip()
+            key = (pair, source_type, summary)
+            if not summary or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+            if len(deduped) >= limit:
+                break
+        return deduped
+
     def store_memory(
         self,
         db: Session,
@@ -172,7 +189,7 @@ class VectorMemoryService:
                     by_id = {entry.id: entry for entry in entries}
                     ordered = [by_id[mid] for mid in memory_ids if mid in by_id]
                     score_by_id = {int(item.id): float(item.score) for item in results}
-                    return [
+                    results = [
                         {
                             'id': entry.id,
                             'pair': entry.pair,
@@ -183,6 +200,7 @@ class VectorMemoryService:
                         }
                         for entry in ordered
                     ]
+                    return self._dedupe_search_results(results, limit)
             except Exception as exc:  # pragma: no cover
                 logger.warning('qdrant search failed: %s', exc)
 
@@ -202,7 +220,7 @@ class VectorMemoryService:
         scored.sort(key=lambda item: item[0], reverse=True)
         top = scored[:limit]
 
-        return [
+        results = [
             {
                 'id': entry.id,
                 'pair': entry.pair,
@@ -213,3 +231,4 @@ class VectorMemoryService:
             }
             for score, entry in top
         ]
+        return self._dedupe_search_results(results, limit)

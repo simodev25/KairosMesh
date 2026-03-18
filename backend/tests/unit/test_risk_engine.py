@@ -25,3 +25,18 @@ def test_risk_engine_rejects_missing_stop_loss() -> None:
     )
     assert result.accepted is False
     assert 'Stop loss is mandatory.' in result.reasons
+
+
+def test_risk_engine_uses_jpy_pip_size_for_position_sizing() -> None:
+    engine = RiskEngine()
+    result = engine.evaluate(
+        mode='live',
+        decision='SELL',
+        risk_percent=1.0,
+        price=211.97999572753906,
+        stop_loss=212.20569,
+        pair='GBPJPY.PRO',
+    )
+
+    assert result.accepted is True
+    assert result.suggested_volume > 0.01

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from weakref import WeakKeyDictionary
 
 from sqlalchemy.orm import Session
 
@@ -39,14 +40,14 @@ class AgentModelSelector:
     """Resolve per-agent LLM model overrides from connector settings."""
 
     _cache_ttl_seconds = 5.0
-    _settings_cache: dict[int, tuple[float, dict]] = {}
+    _settings_cache = WeakKeyDictionary()
 
     def __init__(self) -> None:
         self.settings = get_settings()
 
     @classmethod
     def clear_cache(cls) -> None:
-        cls._settings_cache.clear()
+        cls._settings_cache = WeakKeyDictionary()
 
     @classmethod
     def _load_llm_settings(cls, db: Session | None) -> dict:
@@ -54,8 +55,7 @@ class AgentModelSelector:
             return {}
 
         now = time.monotonic()
-        key = id(db)
-        cached = cls._settings_cache.get(key)
+        cached = cls._settings_cache.get(db)
         if cached and now - cached[0] <= cls._cache_ttl_seconds:
             return cached[1]
 
@@ -65,14 +65,14 @@ class AgentModelSelector:
             .first()
         )
         settings = connector.settings if connector is not None and isinstance(connector.settings, dict) else {}
-        cls._settings_cache[key] = (now, settings)
+        cls._settings_cache[db] = (now, settings)
 
         if len(cls._settings_cache) > 128:
-            cls._settings_cache = {
-                cache_key: cache_value
-                for cache_key, cache_value in cls._settings_cache.items()
-                if now - cache_value[0] <= cls._cache_ttl_seconds
-            }
+            fresh_cache = WeakKeyDictionary()
+            for cache_key, cache_value in cls._settings_cache.items():
+                if now - cache_value[0] <= cls._cache_ttl_seconds:
+                    fresh_cache[cache_key] = cache_value
+            cls._settings_cache = fresh_cache
         return settings
 
     @classmethod

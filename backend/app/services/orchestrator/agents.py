@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,16 +25,40 @@ class AgentContext:
 
 
 def _parse_signal_from_text(text: str) -> str:
-    lowered = text.lower()
-    if any(keyword in lowered for keyword in ['bullish', 'haussier', 'hausse']):
+    patterns = (
+        re.compile(r'(?:biais|bias|signal|sentiment|direction)\s*[:=-]?\s*(?:\*+)?\s*(bullish|bearish|neutral)\b', re.IGNORECASE),
+        re.compile(r'^\s*(?:\*+)?\s*(bullish|bearish|neutral)\b', re.IGNORECASE | re.MULTILINE),
+    )
+    for pattern in patterns:
+        match = pattern.search(text or '')
+        if match:
+            return str(match.group(1)).strip().lower()
+
+    lowered = (text or '').lower()
+    has_neutral = any(keyword in lowered for keyword in ['neutral', 'neutre', 'hold', 'attendre'])
+    has_bullish = any(keyword in lowered for keyword in ['bullish', 'haussier', 'hausse'])
+    has_bearish = any(keyword in lowered for keyword in ['bearish', 'baissier', 'baisse'])
+
+    if has_neutral and has_bullish == has_bearish:
+        return 'neutral'
+    if has_bullish and not has_bearish:
         return 'bullish'
-    if any(keyword in lowered for keyword in ['bearish', 'baissier', 'baisse']):
+    if has_bearish and not has_bullish:
         return 'bearish'
     return 'neutral'
 
 
 def _parse_trade_decision_from_text(text: str) -> str:
-    lowered = text.lower()
+    patterns = (
+        re.compile(r'(?:d[ée]cision|ex[ée]cution|trade|side)\s*[:=-]?\s*(?:\*+)?\s*(buy|sell|hold)\b', re.IGNORECASE),
+        re.compile(r'^\s*(?:\*+)?\s*(buy|sell|hold)\b', re.IGNORECASE | re.MULTILINE),
+    )
+    for pattern in patterns:
+        match = pattern.search(text or '')
+        if match:
+            return str(match.group(1)).strip().upper()
+
+    lowered = (text or '').lower()
     if any(keyword in lowered for keyword in ['hold', 'attendre', 'no trade', 'ne pas trader', 'skip']):
         return 'HOLD'
     if any(keyword in lowered for keyword in ['sell', 'vente', 'vendre']):
@@ -44,12 +69,118 @@ def _parse_trade_decision_from_text(text: str) -> str:
 
 
 def _parse_risk_acceptance_from_text(text: str, default_value: bool) -> bool:
-    lowered = text.lower()
+    lowered = (text or '').lower()
     if any(keyword in lowered for keyword in ['reject', 'refuse', 'rejeter', 'deny', 'bloquer', 'block trade']):
         return False
     if any(keyword in lowered for keyword in ['approve', 'accept', 'accepter', 'allow', 'autoriser', 'valider']):
         return True
     return default_value
+
+
+def _merge_llm_signal(base_score: float, llm_signal: str, *, threshold: float, llm_bias: float) -> tuple[float, str]:
+    llm_score = {'bullish': llm_bias, 'bearish': -llm_bias, 'neutral': 0.0}[llm_signal]
+    base_score = float(base_score)
+
+    if llm_signal == 'neutral':
+        merged_score = base_score * 0.5
+    elif base_score == 0.0:
+        merged_score = llm_score
+    elif (base_score > 0 and llm_signal == 'bullish') or (base_score < 0 and llm_signal == 'bearish'):
+        merged_score = base_score + llm_score
+    else:
+        merged_score = (base_score + llm_score) / 2.0
+
+    merged_score = round(float(merged_score), 3)
+    return merged_score, _score_to_signal(merged_score, threshold)
+
+
+def _format_price(value: Any) -> str:
+    if value is None:
+        return 'n/a'
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f'{numeric:.5f}'.rstrip('0').rstrip('.')
+
+
+def _build_execution_note(
+    *,
+    pair: str,
+    timeframe: str,
+    decision: str,
+    entry: Any,
+    stop_loss: Any,
+    take_profit: Any,
+    confidence: Any,
+) -> str:
+    confidence_value = 0.0
+    try:
+        confidence_value = float(confidence or 0.0)
+    except (TypeError, ValueError):
+        confidence_value = 0.0
+
+    if decision not in {'BUY', 'SELL'}:
+        return (
+            f"**{pair} - {timeframe}**\n"
+            f"**Decision : HOLD**\n"
+            f"**Confiance** : {round(confidence_value, 3)}\n"
+            "**Motif** : avantage directionnel insuffisant pour un trade executable."
+        )
+
+    return (
+        f"**{pair} - {timeframe}**\n"
+        f"**Decision : {decision}**\n"
+        f"**Entry** : {_format_price(entry)}\n"
+        f"**Stop-loss** : {_format_price(stop_loss)}\n"
+        f"**Take-profit** : {_format_price(take_profit)}\n"
+        f"**Confiance** : {round(confidence_value, 3)}"
+    )
+
+
+def _extract_labeled_price(text: str, labels: tuple[str, ...]) -> float | None:
+    for label in labels:
+        pattern = re.compile(rf'{re.escape(label)}\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)', re.IGNORECASE)
+        match = pattern.search(text or '')
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                return None
+    return None
+
+
+def _matches_price(text_value: float | None, expected_value: Any, *, tolerance: float = 1e-6) -> bool:
+    if text_value is None or expected_value is None:
+        return True
+    try:
+        return abs(float(expected_value) - float(text_value)) <= tolerance
+    except (TypeError, ValueError):
+        return False
+
+
+def _execution_note_is_consistent(
+    text: str,
+    *,
+    decision: str,
+    stop_loss: Any,
+    take_profit: Any,
+) -> bool:
+    if not str(text or '').strip():
+        return False
+
+    expected_decision = decision if decision in {'BUY', 'SELL'} else 'HOLD'
+    if _parse_trade_decision_from_text(text) != expected_decision:
+        return False
+
+    parsed_stop = _extract_labeled_price(text, ('stop-loss', 'stop loss', 'sl'))
+    parsed_take_profit = _extract_labeled_price(text, ('take-profit', 'take profit', 'tp'))
+    if not _matches_price(parsed_stop, stop_loss):
+        return False
+    if not _matches_price(parsed_take_profit, take_profit):
+        return False
+
+    return True
 
 
 def _resolve_llm_model(ctx: AgentContext, selector: AgentModelSelector, db: Session | None, agent_name: str) -> str:
@@ -282,9 +413,12 @@ class TechnicalAnalystAgent:
             db=db,
         )
         llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
-        llm_score = {'bullish': 0.15, 'bearish': -0.15, 'neutral': 0.0}[llm_signal]
-        merged_score = round(float(output['score']) + llm_score, 3)
-        merged_signal = 'bullish' if merged_score > 0.15 else 'bearish' if merged_score < -0.15 else 'neutral'
+        merged_score, merged_signal = _merge_llm_signal(
+            float(output['score']),
+            llm_signal,
+            threshold=0.15,
+            llm_bias=0.15,
+        )
 
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         output.update(
@@ -489,9 +623,12 @@ class MacroAnalystAgent:
             db=db,
         )
         llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
-        llm_score = {'bullish': 0.05, 'bearish': -0.05, 'neutral': 0.0}[llm_signal]
-        output['score'] = round(float(output.get('score', 0.0)) + llm_score, 3)
-        output['signal'] = 'bullish' if output['score'] > 0.05 else 'bearish' if output['score'] < -0.05 else 'neutral'
+        output['score'], output['signal'] = _merge_llm_signal(
+            float(output.get('score', 0.0)),
+            llm_signal,
+            threshold=0.05,
+            llm_bias=0.05,
+        )
         output['llm_summary'] = llm_res.get('text', '')
         output['degraded'] = llm_res.get('degraded', False)
         output['prompt_meta'] = {
@@ -591,9 +728,12 @@ class SentimentAgent:
             db=db,
         )
         llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
-        llm_score = {'bullish': 0.05, 'bearish': -0.05, 'neutral': 0.0}[llm_signal]
-        output['score'] = round(float(output.get('score', 0.0)) + llm_score, 3)
-        output['signal'] = 'bullish' if output['score'] > 0.05 else 'bearish' if output['score'] < -0.05 else 'neutral'
+        output['score'], output['signal'] = _merge_llm_signal(
+            float(output.get('score', 0.0)),
+            llm_signal,
+            threshold=0.05,
+            llm_bias=0.05,
+        )
         output['llm_summary'] = llm_res.get('text', '')
         output['degraded'] = llm_res.get('degraded', False)
         output['prompt_meta'] = {
@@ -877,8 +1017,10 @@ class TraderAgent:
 
         fallback_system = "Tu es un assistant trader Forex. Résume la justification finale en note d'exécution compacte."
         fallback_user = (
-            "Pair: {pair}\nTimeframe: {timeframe}\nDecision: {decision}\nBullish: {bullish_args}\n"
-            "Bearish: {bearish_args}\nNotes de risque: {risk_notes}\nNet score: {net_score}\nCombined score: {combined_score}"
+            "Pair: {pair}\nTimeframe: {timeframe}\nDecision: {decision}\nEntry: {entry}\nStop loss: {stop_loss}\n"
+            "Take profit: {take_profit}\nConfidence: {confidence}\nBullish: {bullish_args}\n"
+            "Bearish: {bearish_args}\nNotes de risque: {risk_notes}\nNet score: {net_score}\nCombined score: {combined_score}\n"
+            "Rédige uniquement une note compacte fidèle aux paramètres fournis. N'invente ni nouveaux niveaux, ni nouvelle décision."
         )
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         if db is not None:
@@ -891,6 +1033,10 @@ class TraderAgent:
                     'pair': ctx.pair,
                     'timeframe': ctx.timeframe,
                     'decision': decision,
+                    'entry': last_price,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'confidence': round(float(confidence), 3),
                     'bullish_args': json.dumps(bullish.get('arguments', []), ensure_ascii=True),
                     'bearish_args': json.dumps(bearish.get('arguments', []), ensure_ascii=True),
                     'risk_notes': json.dumps(
@@ -914,6 +1060,10 @@ class TraderAgent:
                 pair=ctx.pair,
                 timeframe=ctx.timeframe,
                 decision=decision,
+                entry=last_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                confidence=round(float(confidence), 3),
                 bullish_args=json.dumps(bullish.get('arguments', []), ensure_ascii=True),
                 bearish_args=json.dumps(bearish.get('arguments', []), ensure_ascii=True),
                 risk_notes=json.dumps(
@@ -934,7 +1084,25 @@ class TraderAgent:
             model=llm_model,
             db=db,
         )
-        output['execution_note'] = llm_res.get('text', '')
+        deterministic_note = _build_execution_note(
+            pair=ctx.pair,
+            timeframe=ctx.timeframe,
+            decision=decision,
+            entry=last_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            confidence=round(float(confidence), 3),
+        )
+        llm_note = llm_res.get('text', '')
+        if _execution_note_is_consistent(
+            llm_note,
+            decision=decision,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        ):
+            output['execution_note'] = llm_note
+        else:
+            output['execution_note'] = deterministic_note
         output['degraded'] = llm_res.get('degraded', False)
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         output['prompt_meta'] = {
@@ -978,6 +1146,7 @@ class RiskManagerAgent:
             risk_percent=ctx.risk_percent,
             price=entry,
             stop_loss=stop_loss,
+            pair=ctx.pair,
         )
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)

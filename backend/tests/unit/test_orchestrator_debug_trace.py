@@ -11,7 +11,7 @@ from app.db.models.user import User
 from app.services.orchestrator.engine import ForexOrchestrator
 
 
-def _seed_run(db: Session) -> AnalysisRun:
+def _seed_run(db: Session, *, mode: str = 'simulation') -> AnalysisRun:
     user = User(email='debug@local.dev', hashed_password='x', role='admin', is_active=True)
     db.add(user)
     db.commit()
@@ -20,7 +20,7 @@ def _seed_run(db: Session) -> AnalysisRun:
     run = AnalysisRun(
         pair='EURUSD',
         timeframe='H1',
-        mode='simulation',
+        mode=mode,
         status='pending',
         trace={},
         created_by_id=user.id,
@@ -129,3 +129,74 @@ def test_orchestrator_writes_debug_trade_trace_json(monkeypatch, tmp_path: Path)
         assert payload['context']['price_history'][0]['close'] == 1.102
         assert payload['analysis_bundle']['execution_result']['status'] == 'skipped'
         assert any(step['agent_name'] == 'execution-manager' for step in payload['agent_steps'])
+
+
+def test_orchestrator_fails_live_run_when_llm_output_is_degraded(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db, mode='live')
+        orchestrator = ForexOrchestrator()
+
+        monkeypatch.setattr(orchestrator.prompt_service, 'seed_defaults', lambda _db: None)
+        monkeypatch.setattr(orchestrator.market_provider, 'get_market_snapshot', lambda *_args, **_kwargs: {
+            'degraded': False,
+            'pair': 'EURUSD',
+            'timeframe': 'H1',
+            'last_price': 1.102,
+            'atr': 0.001,
+            'trend': 'bullish',
+        })
+        monkeypatch.setattr(orchestrator.market_provider, 'get_news_context', lambda *_args, **_kwargs: {
+            'degraded': False,
+            'pair': 'EURUSD',
+            'news': [],
+        })
+        monkeypatch.setattr(orchestrator.memory_service, 'search', lambda **_kwargs: [])
+        monkeypatch.setattr(orchestrator.memory_service, 'add_run_memory', lambda *_args, **_kwargs: None)
+
+        execution_called = {'value': False}
+
+        def fake_analyze_context(*_args, **_kwargs):
+            return {
+                'analysis_outputs': {
+                    'technical-analyst': {'signal': 'bullish', 'score': 0.2, 'degraded': True},
+                    'news-analyst': {'signal': 'neutral', 'score': 0.0},
+                    'macro-analyst': {'signal': 'bullish', 'score': 0.1},
+                    'sentiment-agent': {'signal': 'bullish', 'score': 0.1},
+                },
+                'bullish': {'arguments': ['Trend aligns'], 'confidence': 0.7},
+                'bearish': {'arguments': [], 'confidence': 0.0},
+                'trader_decision': {
+                    'decision': 'BUY',
+                    'entry': 1.102,
+                    'stop_loss': 1.1,
+                    'take_profit': 1.106,
+                    'confidence': 0.6,
+                },
+                'risk': {
+                    'accepted': True,
+                    'suggested_volume': 0.1,
+                    'reasons': ['Risk checks passed'],
+                },
+            }
+
+        def fake_execution_manager(*_args, **_kwargs):
+            execution_called['value'] = True
+            return {
+                'decision': 'BUY',
+                'should_execute': True,
+                'side': 'BUY',
+                'volume': 0.1,
+                'reason': 'Should never be reached',
+            }
+
+        monkeypatch.setattr(orchestrator, 'analyze_context', fake_analyze_context)
+        monkeypatch.setattr(orchestrator.execution_manager_agent, 'run', fake_execution_manager)
+
+        failed_run = asyncio.run(orchestrator.execute(db, run, risk_percent=1.0))
+
+        assert failed_run.status == 'failed'
+        assert 'degraded LLM response from technical-analyst' in str(failed_run.error)
+        assert execution_called['value'] is False

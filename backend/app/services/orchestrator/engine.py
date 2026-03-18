@@ -232,6 +232,14 @@ class ForexOrchestrator:
             logger.exception('failed to persist debug trade payload run_id=%s', run_id)
             return None
 
+    @staticmethod
+    def _collect_degraded_agents(named_outputs: dict[str, dict[str, Any] | None]) -> list[str]:
+        degraded_agents: list[str] = []
+        for agent_name, output in named_outputs.items():
+            if isinstance(output, dict) and output.get('degraded'):
+                degraded_agents.append(agent_name)
+        return degraded_agents
+
     def analyze_context(
         self,
         context: AgentContext,
@@ -450,6 +458,22 @@ class ForexOrchestrator:
             trader_decision = analysis_bundle['trader_decision']
             risk_output = analysis_bundle['risk']
 
+            if str(run.mode or '').strip().lower() == 'live':
+                degraded_agents = self._collect_degraded_agents(
+                    {
+                        **analysis_outputs,
+                        self.bullish_researcher.name: bullish,
+                        self.bearish_researcher.name: bearish,
+                        self.trader_agent.name: trader_decision,
+                        self.risk_manager_agent.name: risk_output,
+                    }
+                )
+                if degraded_agents:
+                    degraded_list = ', '.join(sorted(dict.fromkeys(degraded_agents)))
+                    raise RuntimeError(
+                        f'Live mode aborted: degraded LLM response from {degraded_list}.'
+                    )
+
             if metaapi_account_ref is None:
                 metaapi_account_ref = int((run.trace or {}).get('requested_metaapi_account_ref', 0) or 0) or None
 
@@ -503,6 +527,15 @@ class ForexOrchestrator:
                         'status': execution_output.get('status'),
                     },
                 )
+
+            if str(run.mode or '').strip().lower() == 'live':
+                degraded_agents = self._collect_degraded_agents(
+                    {self.execution_manager_agent.name: execution_output}
+                )
+                if degraded_agents:
+                    raise RuntimeError(
+                        'Live mode aborted: degraded LLM response from execution-manager.'
+                    )
 
             run.decision = {
                 **trader_decision,

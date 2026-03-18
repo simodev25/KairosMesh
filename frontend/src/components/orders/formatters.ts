@@ -106,3 +106,26 @@ export function failureCode(order: ExecutionOrder): string {
   if (stringCode && numericCode) return `${stringCode} (${numericCode})`;
   return stringCode ?? numericCode ?? '-';
 }
+
+export function platformOrderTicket(order: ExecutionOrder): string {
+  const payload = asRecord(order.response_payload);
+  const result = asRecord(payload?.result);
+
+  const candidates = [
+    result?.ticket,
+    payload?.ticket,
+    result?.orderId,
+    payload?.orderId,
+    result?.positionId,
+    payload?.positionId,
+    result?.tradeId,
+    payload?.tradeId,
+  ];
+
+  for (const value of candidates) {
+    const text = value == null ? '' : String(value).trim();
+    if (text) return text;
+  }
+
+  return '-';
+}
