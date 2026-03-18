@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     mistral_timeout_seconds: int = Field(default=30, alias='MISTRAL_TIMEOUT_SECONDS')
     mistral_input_cost_per_1m_tokens: float = Field(default=0.0, alias='MISTRAL_INPUT_COST_PER_1M_TOKENS')
     mistral_output_cost_per_1m_tokens: float = Field(default=0.0, alias='MISTRAL_OUTPUT_COST_PER_1M_TOKENS')
+    agent_skills_bootstrap_file: str = Field(default='', alias='AGENT_SKILLS_BOOTSTRAP_FILE')
+    agent_skills_bootstrap_mode: str = Field(default='merge', alias='AGENT_SKILLS_BOOTSTRAP_MODE')
+    agent_skills_bootstrap_apply_once: bool = Field(default=True, alias='AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE')
 
     metaapi_token: str = Field(default='', alias='METAAPI_TOKEN')
     metaapi_account_id: str = Field(default='', alias='METAAPI_ACCOUNT_ID')

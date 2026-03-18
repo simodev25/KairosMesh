@@ -91,6 +91,34 @@ Via API:
 - Vous pouvez y coller des instructions issues de `skills.sh` (copiées depuis un `SKILL.md`) pour spécialiser chaque agent sans redéploiement.
 - Exemple pour récupérer des skills depuis le registre: `npx skills add vercel-labs/agent-skills --list`.
 
+## Bootstrap skills au démarrage
+
+Vous pouvez injecter automatiquement des skills au `startup` backend via un fichier JSON:
+
+- `AGENT_SKILLS_BOOTSTRAP_FILE=/app/config/agent-skills.json`
+- `AGENT_SKILLS_BOOTSTRAP_MODE=merge` (`merge` ou `replace`)
+- `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE=true` (idempotence par fingerprint)
+
+Par défaut, l'image backend embarque `backend/config/agent-skills.json` et Docker l'expose en `/app/config/agent-skills.json`.
+
+Formats supportés:
+
+1. Direct:
+
+```json
+{
+  "agent_skills": {
+    "news-analyst": ["Prioriser l'impact Forex", "Citer les incertitudes"],
+    "trader-agent": ["Favoriser HOLD en cas de conflit fort"]
+  }
+}
+```
+
+2. Payload de proposition (avec `skills` + `agent_mapping`):
+
+- Le bootstrap reconstruit automatiquement `agent_skills` depuis les `description` et `evidence.notable_points`.
+- Les agents déterministes (`risk-manager`, `execution-manager`) sont ignorés.
+
 ## Prompts versionnés
 
 - Tous les agents analytiques de la chaîne V1 ont un prompt versionné.

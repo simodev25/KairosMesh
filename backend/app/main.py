@@ -27,6 +27,7 @@ from app.db.models.user import User
 from app.db.session import SessionLocal, engine, get_db
 from app.observability.metrics import backend_http_request_duration_seconds, backend_http_requests_total
 from app.services.prompts.registry import PromptTemplateService
+from app.services.llm.skill_bootstrap import bootstrap_agent_skills_into_settings
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,25 @@ async def lifespan(_: FastAPI):
                         connector_settings = exists.settings if isinstance(exists.settings, dict) else {}
                         if 'provider' not in connector_settings:
                             exists.settings = {**connector_settings, 'provider': settings.llm_provider}
+
+                ollama_connector = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'ollama').first()
+                if ollama_connector is not None:
+                    current_ollama_settings = ollama_connector.settings if isinstance(ollama_connector.settings, dict) else {}
+                    updated_ollama_settings, changed, status = bootstrap_agent_skills_into_settings(
+                        current_settings=current_ollama_settings,
+                        bootstrap_file=settings.agent_skills_bootstrap_file,
+                        mode=settings.agent_skills_bootstrap_mode,
+                        apply_once=settings.agent_skills_bootstrap_apply_once,
+                    )
+                    if changed:
+                        ollama_connector.settings = updated_ollama_settings
+                        logger.info('Agent skills bootstrap applied from %s', settings.agent_skills_bootstrap_file)
+                    elif status not in {'disabled', 'already-applied', 'no-op'}:
+                        logger.warning(
+                            'Agent skills bootstrap skipped with status=%s source=%s',
+                            status,
+                            settings.agent_skills_bootstrap_file,
+                        )
 
                 if settings.metaapi_account_id and not db.query(MetaApiAccount).count():
                     db.add(

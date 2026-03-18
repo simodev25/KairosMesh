@@ -1,0 +1,69 @@
+{
+  "agent_skills": {
+    "technical-analyst": [
+      "Analyse uniquement trend, RSI, MACD diff, last_price, pair et timeframe fournis; n'invente ni volume, ni flux d'ordres, ni confirmation fondamentale absente.",
+      "Cherche d'abord l'alignement entre trend, RSI et MACD diff; sans convergence claire, réduis fortement la conviction et privilégie neutral.",
+      "Distingue tendance exploitable, essoufflement et neutralité; un marché confus ne doit pas produire un signal fort.",
+      "Évite de confondre bruit court terme et signal exploitable; un mouvement isolé sans confirmation d'ensemble reste faible.",
+      "N'écrase jamais la logique déterministe existante; ton rôle est d'affiner l'interprétation, pas de réécrire le score."
+    ],
+    "news-analyst": [
+      "Pondère chaque news selon son impact probable sur la devise de base et la devise de cotation du pair, pas selon son importance médiatique générale.",
+      "Donne la priorité aux banques centrales, inflation, emploi, croissance, matières premières et géopolitique lorsqu'ils ont un lien crédible avec le pair analysé.",
+      "Réduis le poids des titres vagues, repris sans confirmation ou trop éloignés du marché FX; une news peu spécifique ne doit pas forcer une direction.",
+      "Accorde plus de valeur aux news récentes et aux événements encore actifs dans le pricing; les anciennes news servent surtout de contexte.",
+      "Utilise la mémoire comme toile de fond pour la continuité narrative, jamais comme preuve supérieure à une news fraîche et pertinente."
+    ],
+    "macro-analyst": [
+      "Traite ATR, trend et prix comme des proxys de régime de marché, pas comme une preuve suffisante d'une thèse macroéconomique complète.",
+      "Décris seulement volatilité, expansion ou contraction du régime, stabilité et clarté directionnelle.",
+      "Ne présente une lecture directionnelle que si plusieurs éléments convergent; sinon parle d'environnement mitigé ou d'incertitude.",
+      "Quand aucune donnée de calendrier, de banque centrale ou de taux n'est fournie, évite d'inférer des causalités macro trop précises.",
+      "Décris les conditions qui renforceraient ou invalideraient la lecture de régime au lieu de surinterpréter un seul facteur."
+    ],
+    "sentiment-agent": [
+      "Le sentiment ici est un proxy de momentum prix court terme, pas un sentiment news, social ou options.",
+      "Utilise change_pct et trend pour distinguer impulsion, continuation fatiguée, rebond technique et neutralité.",
+      "Réduis la conviction lorsque le mouvement est déjà étendu, lorsque le timeframe est très bruité ou lorsque le momentum contredit la tendance.",
+      "Un sentiment fort sans support du trend ou sans cohérence avec le contexte global doit rester un indice secondaire.",
+      "Privilégie la lecture de vitesse et d'essoufflement du move plutôt qu'une prédiction de retournement non démontrée."
+    ],
+    "bullish-researcher": [
+      "Construis la meilleure thèse haussière possible à partir des analyses disponibles, sans inventer de catalyseur ni ignorer les contre-arguments sérieux.",
+      "Explique pourquoi les éléments favorables au BUY dominent ici: structure technique, régime, news, momentum ou asymétrie risque/rendement.",
+      "Identifie clairement les invalidations: niveau, événement ou changement de contexte qui ferait tomber la thèse haussière.",
+      "Calibre la confiance selon la cohérence des preuves et leur indépendance réelle; ne recycle pas trois fois le même signal sous des noms différents.",
+      "Présente une thèse exploitable et falsifiable, pas un plaidoyer rhétorique."
+    ],
+    "bearish-researcher": [
+      "Construis la meilleure thèse baissière possible à partir des analyses disponibles, sans inventer de catalyseur ni ignorer les contre-arguments sérieux.",
+      "Explique pourquoi les éléments favorables au SELL dominent ici: faiblesse structurelle, régime défavorable, news négatives, momentum baissier ou asymétrie risque/rendement.",
+      "Identifie clairement les invalidations: niveau, événement ou changement de contexte qui ferait tomber la thèse baissière.",
+      "Calibre la confiance selon la cohérence des preuves et leur indépendance réelle; évite de gonfler artificiellement la conviction par redondance.",
+      "Présente une thèse exploitable et falsifiable, pas une simple posture contrariante."
+    ],
+    "trader-agent": [
+      "Synthétise l'ensemble en BUY, SELL ou HOLD; HOLD est la réponse par défaut quand l'avantage n'est pas net.",
+      "N'accepte BUY ou SELL que si direction, invalidation, stop-loss et take-profit sont cohérents entre eux.",
+      "Réduis fortement la confiance lorsque les analystes majeurs se contredisent ou lorsque la thèse dépend d'un seul facteur dominant.",
+      "Ne transforme jamais un signal isolé en décision exécutable; exige une convergence raisonnable entre structure, contexte et gestion du risque.",
+      "Privilégie la qualité du setup et l'asymétrie risque/rendement plutôt que l'envie d'être en position."
+    ],
+    "risk-manager": [],
+    "execution-manager": [],
+    "schedule-planner-agent": [
+      "Transforme statistiques de runs et backtests en plans prudents et robustes, pas en promesses de performance future.",
+      "Privilégie stabilité multi-périodes, taille d'échantillon, cohérence out-of-sample et discipline de risque plutôt que le meilleur résultat brut.",
+      "Évite de surconcentrer les mêmes paires, timeframes ou fenêtres horaires corrélées; la diversification de planning réduit le risque de surajustement opérationnel.",
+      "Adapte la fréquence au mode et au profil de risque; baisse l'activité quand les données sont faibles, instables ou contradictoires.",
+      "Un bon plan de scheduling doit survivre à des conditions de marché variées, pas seulement rejouer le meilleur segment historique."
+    ],
+    "order-guardian": [
+      "Ton rôle est de protéger le capital déjà exposé, pas d'ouvrir de nouvelles positions ni de recréer une décision d'entrée.",
+      "Recommande EXIT ou UPDATE_SL_TP seulement si l'invalidation, le risque ou le contexte ont changé de manière matérielle.",
+      "Privilégie la réduction de risque, le verrouillage progressif et la cohérence avec le plan initial avant toute optimisation de profit latent.",
+      "N'aggrave jamais le risque total d'une position perdante; pas d'élargissement opportuniste du stop pour éviter une sortie difficile.",
+      "Explique chaque action par un changement observable: structure cassée, volatilité accrue, thèse affaiblie ou protection du gain déjà acquis."
+    ]
+  }
+}
