@@ -54,16 +54,18 @@ Ce fichier résume chaque agent de l’orchestrateur (ordre `FOREX` workflow) et
 - Sorties: decision, confidence, net_score, debate_score, combined_score, stop_loss, take_profit, rationale détaillée, execution_note, prompt_meta.
 
 ## risk-manager
-- Objectif: valider ou rejeter la proposition (exposition) de façon déterministe.
+- Objectif: valider ou rejeter la proposition (exposition) en priorité via règles de risque.
 - Entrées: mode, decision, risk_percent, price, stop_loss.
-- Déterministe uniquement (LLM forcé OFF): utilise `RiskEngine.evaluate` pour accepted, reasons, suggested_volume.
-- Sorties: accepted, suggested_volume, reasons, prompt_meta (llm_disabled).
+- Déterministe par défaut: utilise `RiskEngine.evaluate` pour accepted, reasons, suggested_volume.
+- LLM (off par défaut, activable): peut réviser APPROVE/REJECT; en mode `live`, un rejet déterministe ne peut pas être surclassé par le LLM.
+- Sorties: accepted, suggested_volume, reasons, llm_summary (si activé), prompt_meta.
 
 ## execution-manager
 - Objectif: décider l’exécution finale (simulation/paper/live).
 - Entrées: trader_decision (decision/volumes/levels), risk_output (accepted + volume).
-- Déterministe (LLM OFF): `should_execute` vrai si risk accepted et decision BUY/SELL. Renvoie side, volume sinon reason.
-- Sorties: decision, should_execute, side, volume, reason, prompt_meta (llm_disabled).
+- Déterministe par défaut: `should_execute` vrai si risk accepted et decision BUY/SELL.
+- LLM (off par défaut, activable): peut ajuster BUY/SELL/HOLD; en mode `live`, l'exécution exige confirmation LLM de la décision déterministe.
+- Sorties: decision, should_execute, side, volume, reason, llm_summary (si activé), prompt_meta.
 
 ## schedule-planner-agent
 - Objectif: générer des plans cron actifs (automatisation).

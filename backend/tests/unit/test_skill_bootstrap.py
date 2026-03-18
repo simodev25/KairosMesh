@@ -41,7 +41,7 @@ def test_extract_agent_skills_from_proposal_payload() -> None:
     assert any('risk-management' in line for line in result['news-analyst'])
     assert any('macro-view' in line for line in result['news-analyst'])
     assert any('Contexte agent:' in line for line in result['news-analyst'])
-    assert 'risk-manager' not in result
+    assert 'risk-manager' in result
 
 
 def test_bootstrap_agent_skills_merge_and_apply_once(tmp_path) -> None:

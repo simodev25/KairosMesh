@@ -58,6 +58,110 @@ def _resolve_llm_model(ctx: AgentContext, selector: AgentModelSelector, db: Sess
     return selector.resolve(db, agent_name)
 
 
+def _resolve_runtime_skills(selector: AgentModelSelector, db: Session | None, agent_name: str) -> list[str]:
+    if db is None:
+        return []
+    return selector.resolve_skills(db, agent_name)
+
+
+def _skill_text(skills: list[str]) -> str:
+    return ' '.join(skills).strip().lower()
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _score_to_signal(score: float, threshold: float) -> str:
+    if score > threshold:
+        return 'bullish'
+    if score < -threshold:
+        return 'bearish'
+    return 'neutral'
+
+
+def _apply_deterministic_skill_guardrail(
+    score: float,
+    *,
+    base_threshold: float,
+    skills: list[str],
+) -> tuple[float, str, bool]:
+    if not skills:
+        signal = _score_to_signal(score, base_threshold)
+        return round(float(score), 3), signal, False
+
+    text = _skill_text(skills)
+    threshold = base_threshold
+    adjusted_score = float(score)
+
+    if _contains_any(
+        text,
+        (
+            'convergence',
+            'alignement',
+            'incertitude',
+            'confus',
+            'neutral',
+            'neutre',
+            'prudence',
+        ),
+    ):
+        threshold = base_threshold + 0.05
+
+    if _contains_any(
+        text,
+        (
+            'reduis',
+            'réduis',
+            'privilégie',
+            'hold',
+            'indice secondaire',
+            'faux signal',
+        ),
+    ):
+        adjusted_score *= 0.75
+
+    adjusted_score = round(adjusted_score, 3)
+    signal = _score_to_signal(adjusted_score, threshold)
+    changed = adjusted_score != round(float(score), 3) or signal != _score_to_signal(score, base_threshold)
+    return adjusted_score, signal, changed
+
+
+def _deterministic_headline_sentiment(headlines: str) -> tuple[str, float]:
+    text = headlines.lower()
+    positive_keywords = (
+        'rally',
+        'rebound',
+        'strength',
+        'hawkish',
+        'surge',
+        'gain',
+        'hausse',
+        'rebond',
+        'progression',
+    )
+    negative_keywords = (
+        'selloff',
+        'drop',
+        'fall',
+        'weak',
+        'dovish',
+        'recession',
+        'risk-off',
+        'baisse',
+        'chute',
+        'faiblesse',
+    )
+    pos = sum(1 for keyword in positive_keywords if keyword in text)
+    neg = sum(1 for keyword in negative_keywords if keyword in text)
+    balance = pos - neg
+    if balance > 0:
+        return 'bullish', min(0.15, 0.05 * balance)
+    if balance < 0:
+        return 'bearish', max(-0.15, -0.05 * abs(balance))
+    return 'neutral', 0.0
+
+
 class TechnicalAnalystAgent:
     name = 'technical-analyst'
 
@@ -88,11 +192,13 @@ class TechnicalAnalystAgent:
             score -= 0.2
 
         signal = 'bullish' if score > 0.15 else 'bearish' if score < -0.15 else 'neutral'
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
+        llm_enabled = self.model_selector.is_enabled(db, self.name)
         output: dict[str, Any] = {
             'signal': signal,
             'score': round(score, 3),
             'indicators': m,
-            'llm_enabled': self.model_selector.is_enabled(db, self.name),
+            'llm_enabled': llm_enabled,
         }
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         output['prompt_meta'] = {
@@ -100,9 +206,19 @@ class TechnicalAnalystAgent:
             'prompt_version': 0,
             'llm_model': llm_model,
             'llm_enabled': bool(output['llm_enabled']),
+            'skills_count': len(runtime_skills),
         }
 
         if not output['llm_enabled']:
+            adjusted_score, adjusted_signal, changed = _apply_deterministic_skill_guardrail(
+                float(output['score']),
+                base_threshold=0.15,
+                skills=runtime_skills,
+            )
+            output['score'] = adjusted_score
+            output['signal'] = adjusted_signal
+            if changed:
+                output['reason'] = 'Skill guardrails applied (deterministic mode)'
             return output
 
         fallback_system = 'Tu es un analyste technique Forex. Réponds en français.'
@@ -160,6 +276,7 @@ class TechnicalAnalystAgent:
                     'prompt_version': prompt_info.get('version', 0),
                     'llm_model': llm_model,
                     'llm_enabled': True,
+                    'skills_count': len(runtime_skills),
                 },
             }
         )
@@ -190,6 +307,7 @@ class NewsAnalystAgent:
         )
 
         llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         if db is not None and llm_enabled:
@@ -223,10 +341,12 @@ class NewsAnalystAgent:
             degraded = llm_res.get('degraded', False)
             summary = llm_res.get('text', '')
         else:
-            signal = 'neutral'
-            score = 0.0
+            signal, score = _deterministic_headline_sentiment(headlines)
+            if runtime_skills:
+                score *= 0.8
+            score = round(float(score), 3)
             degraded = False
-            summary = 'LLM disabled for news-analyst. Deterministic neutral fallback.'
+            summary = 'LLM disabled for news-analyst. Deterministic skill-aware fallback.'
 
         return {
             'signal': signal,
@@ -239,6 +359,7 @@ class NewsAnalystAgent:
                 'prompt_version': prompt_info.get('version', 0),
                 'llm_model': llm_model,
                 'llm_enabled': llm_enabled,
+                'skills_count': len(runtime_skills),
             },
         }
 
@@ -267,6 +388,7 @@ class MacroAnalystAgent:
             output = {'signal': 'neutral', 'score': 0.0, 'reason': 'No macro edge'}
 
         llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         output['llm_enabled'] = llm_enabled
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         output['prompt_meta'] = {
@@ -274,8 +396,18 @@ class MacroAnalystAgent:
             'prompt_version': 0,
             'llm_model': llm_model,
             'llm_enabled': llm_enabled,
+            'skills_count': len(runtime_skills),
         }
         if not llm_enabled:
+            adjusted_score, adjusted_signal, changed = _apply_deterministic_skill_guardrail(
+                float(output.get('score', 0.0)),
+                base_threshold=0.05,
+                skills=runtime_skills,
+            )
+            output['score'] = adjusted_score
+            output['signal'] = adjusted_signal
+            if changed:
+                output['reason'] = 'Skill guardrails applied (deterministic mode)'
             return output
 
         fallback_system = 'Tu es un analyste macro Forex. Réponds en français.'
@@ -326,6 +458,7 @@ class MacroAnalystAgent:
             'prompt_version': prompt_info.get('version', 0),
             'llm_model': llm_model,
             'llm_enabled': llm_enabled,
+            'skills_count': len(runtime_skills),
         }
         return output
 
@@ -352,6 +485,7 @@ class SentimentAgent:
             output = {'signal': 'neutral', 'score': 0.0, 'reason': 'Flat momentum'}
 
         llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         output['llm_enabled'] = llm_enabled
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         output['prompt_meta'] = {
@@ -359,8 +493,18 @@ class SentimentAgent:
             'prompt_version': 0,
             'llm_model': llm_model,
             'llm_enabled': llm_enabled,
+            'skills_count': len(runtime_skills),
         }
         if not llm_enabled:
+            adjusted_score, adjusted_signal, changed = _apply_deterministic_skill_guardrail(
+                float(output.get('score', 0.0)),
+                base_threshold=0.05,
+                skills=runtime_skills,
+            )
+            output['score'] = adjusted_score
+            output['signal'] = adjusted_signal
+            if changed:
+                output['reason'] = 'Skill guardrails applied (deterministic mode)'
             return output
 
         fallback_system = 'Tu es un analyste sentiment Forex. Réponds en français.'
@@ -409,6 +553,7 @@ class SentimentAgent:
             'prompt_version': prompt_info.get('version', 0),
             'llm_model': llm_model,
             'llm_enabled': llm_enabled,
+            'skills_count': len(runtime_skills),
         }
         return output
 
@@ -550,12 +695,30 @@ class TraderAgent:
         debate_score = round(debate_balance * 0.3, 3)
         combined_score = round(net_score + debate_score, 3)
         strong_conflict = abs(debate_balance) <= 0.1 and abs(net_score) < 0.35
+        llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
+        decision_buy_threshold = 0.2
+        decision_sell_threshold = -0.2
+        if runtime_skills and not llm_enabled:
+            skill_text = _skill_text(runtime_skills)
+            if _contains_any(
+                skill_text,
+                (
+                    'hold',
+                    'convergence',
+                    'signal isol',
+                    'qualité du setup',
+                    'qualite du setup',
+                ),
+            ):
+                decision_buy_threshold = 0.3
+                decision_sell_threshold = -0.3
 
         decision = 'HOLD'
         if not strong_conflict:
-            if combined_score > 0.2:
+            if combined_score > decision_buy_threshold:
                 decision = 'BUY'
-            elif combined_score < -0.2:
+            elif combined_score < decision_sell_threshold:
                 decision = 'SELL'
 
         confidence = min(abs(combined_score) + max(abs(debate_balance) - 0.05, 0.0) * 0.2, 1.0)
@@ -599,18 +762,20 @@ class TraderAgent:
                 'debate_score': debate_score,
                 'combined_score': combined_score,
                 'signal_conflict': strong_conflict,
+                'decision_buy_threshold': decision_buy_threshold,
+                'decision_sell_threshold': decision_sell_threshold,
                 'bullish_llm_debate': bullish.get('llm_debate', ''),
                 'bearish_llm_debate': bearish.get('llm_debate', ''),
                 'memory_refs': [m.get('summary', '') for m in ctx.memory_context[:3]],
             },
         }
-        llm_enabled = self.model_selector.is_enabled(db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         output['prompt_meta'] = {
             'prompt_id': None,
             'prompt_version': 0,
             'llm_enabled': llm_enabled,
             'llm_model': llm_model,
+            'skills_count': len(runtime_skills),
         }
         if not llm_enabled:
             return output
@@ -681,6 +846,7 @@ class TraderAgent:
             'prompt_version': prompt_info.get('version', 0),
             'llm_enabled': llm_enabled,
             'llm_model': llm_model,
+            'skills_count': len(runtime_skills),
         }
         return output
 
@@ -690,6 +856,9 @@ class RiskManagerAgent:
 
     def __init__(self) -> None:
         self.risk_engine = RiskEngine()
+        self.llm = LlmClient()
+        self.model_selector = AgentModelSelector()
+        self.prompt_service = PromptTemplateService()
 
     def run(
         self,
@@ -708,6 +877,8 @@ class RiskManagerAgent:
             price=entry,
             stop_loss=stop_loss,
         )
+        llm_enabled = self.model_selector.is_enabled(db, self.name)
+        llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name) if llm_enabled else None
 
         output: dict[str, Any] = {
             'accepted': risk.accepted,
@@ -716,10 +887,89 @@ class RiskManagerAgent:
             'prompt_meta': {
                 'prompt_id': None,
                 'prompt_version': 0,
-                'llm_enabled': False,
-                'llm_model': None,
+                'llm_enabled': llm_enabled,
+                'llm_model': llm_model,
             },
         }
+        if not llm_enabled:
+            return output
+
+        fallback_system = (
+            'Tu es un risk manager Forex. '
+            'Tu valides ou rejettes la proposition de risque avec discipline.'
+        )
+        fallback_user = (
+            'Pair: {pair}\nTimeframe: {timeframe}\nMode: {mode}\nDecision: {decision}\n'
+            'Entry: {entry}\nStop loss: {stop_loss}\nTake profit: {take_profit}\n'
+            'Risk %: {risk_percent}\n'
+            'Sortie déterministe: accepted={accepted}, suggested_volume={suggested_volume}, reasons={reasons}\n'
+            'Retour attendu: APPROVE ou REJECT puis justification concise.'
+        )
+        prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
+        if db is not None:
+            prompt_info = self.prompt_service.render(
+                db=db,
+                agent_name=self.name,
+                fallback_system=fallback_system,
+                fallback_user=fallback_user,
+                variables={
+                    'pair': ctx.pair,
+                    'timeframe': ctx.timeframe,
+                    'mode': ctx.mode,
+                    'decision': decision,
+                    'entry': entry,
+                    'stop_loss': trader_decision.get('stop_loss'),
+                    'take_profit': trader_decision.get('take_profit'),
+                    'risk_percent': ctx.risk_percent,
+                    'accepted': risk.accepted,
+                    'suggested_volume': risk.suggested_volume,
+                    'reasons': json.dumps(risk.reasons, ensure_ascii=True),
+                },
+            )
+            system_prompt = prompt_info['system_prompt']
+            user_prompt = prompt_info['user_prompt']
+        else:
+            system_prompt = fallback_system
+            user_prompt = fallback_user.format(
+                pair=ctx.pair,
+                timeframe=ctx.timeframe,
+                mode=ctx.mode,
+                decision=decision,
+                entry=entry,
+                stop_loss=trader_decision.get('stop_loss'),
+                take_profit=trader_decision.get('take_profit'),
+                risk_percent=ctx.risk_percent,
+                accepted=risk.accepted,
+                suggested_volume=risk.suggested_volume,
+                reasons=json.dumps(risk.reasons, ensure_ascii=True),
+            )
+
+        llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
+        llm_accept = _parse_risk_acceptance_from_text(llm_res.get('text', ''), risk.accepted)
+        live_mode = str(ctx.mode or '').strip().lower() == 'live'
+        if live_mode and llm_accept and not risk.accepted:
+            llm_accept = False
+
+        reasons = list(risk.reasons)
+        reasons.append(f"LLM review: {'APPROVE' if llm_accept else 'REJECT'}")
+        if live_mode and not risk.accepted and _parse_risk_acceptance_from_text(llm_res.get('text', ''), risk.accepted):
+            reasons.append('Live mode guardrail: deterministic risk rejection cannot be overridden by LLM.')
+
+        output.update(
+            {
+                'accepted': llm_accept,
+                'reasons': reasons,
+                'suggested_volume': risk.suggested_volume if llm_accept else 0.0,
+                'llm_summary': llm_res.get('text', ''),
+                'degraded': llm_res.get('degraded', False),
+                'prompt_meta': {
+                    'prompt_id': prompt_info.get('prompt_id'),
+                    'prompt_version': prompt_info.get('version', 0),
+                    'llm_enabled': True,
+                    'llm_model': llm_model,
+                },
+            }
+        )
         return output
 
 
@@ -727,7 +977,9 @@ class ExecutionManagerAgent:
     name = 'execution-manager'
 
     def __init__(self) -> None:
-        pass
+        self.llm = LlmClient()
+        self.model_selector = AgentModelSelector()
+        self.prompt_service = PromptTemplateService()
 
     def run(
         self,
@@ -739,6 +991,8 @@ class ExecutionManagerAgent:
         decision = str(trader_decision.get('decision', 'HOLD')).strip().upper() or 'HOLD'
         deterministic_allowed = bool(risk_output.get('accepted')) and decision in {'BUY', 'SELL'}
         suggested_volume = float(risk_output.get('suggested_volume', 0.0) or 0.0)
+        llm_enabled = self.model_selector.is_enabled(db, self.name)
+        llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name) if llm_enabled else None
 
         if deterministic_allowed:
             reason = 'Trade eligible based on trader decision + risk checks.'
@@ -756,8 +1010,98 @@ class ExecutionManagerAgent:
             'prompt_meta': {
                 'prompt_id': None,
                 'prompt_version': 0,
-                'llm_enabled': False,
-                'llm_model': None,
+                'llm_enabled': llm_enabled,
+                'llm_model': llm_model,
             },
         }
+        if not llm_enabled:
+            return output
+
+        fallback_system = (
+            'Tu es un execution manager Forex. '
+            'Tu confirmes BUY/SELL ou imposes HOLD si la prudence l’exige.'
+        )
+        fallback_user = (
+            'Pair: {pair}\nTimeframe: {timeframe}\nMode: {mode}\nDecision trader: {decision}\n'
+            'Risk accepted: {risk_accepted}\nSuggested volume: {suggested_volume}\n'
+            'Stop loss: {stop_loss}\nTake profit: {take_profit}\n'
+            'Retour attendu: BUY, SELL ou HOLD puis justification concise.'
+        )
+        prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
+        if db is not None:
+            prompt_info = self.prompt_service.render(
+                db=db,
+                agent_name=self.name,
+                fallback_system=fallback_system,
+                fallback_user=fallback_user,
+                variables={
+                    'pair': ctx.pair,
+                    'timeframe': ctx.timeframe,
+                    'mode': ctx.mode,
+                    'decision': decision,
+                    'risk_accepted': bool(risk_output.get('accepted')),
+                    'suggested_volume': suggested_volume,
+                    'stop_loss': trader_decision.get('stop_loss'),
+                    'take_profit': trader_decision.get('take_profit'),
+                },
+            )
+            system_prompt = prompt_info['system_prompt']
+            user_prompt = prompt_info['user_prompt']
+        else:
+            system_prompt = fallback_system
+            user_prompt = fallback_user.format(
+                pair=ctx.pair,
+                timeframe=ctx.timeframe,
+                mode=ctx.mode,
+                decision=decision,
+                risk_accepted=bool(risk_output.get('accepted')),
+                suggested_volume=suggested_volume,
+                stop_loss=trader_decision.get('stop_loss'),
+                take_profit=trader_decision.get('take_profit'),
+            )
+
+        llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
+        llm_decision = _parse_trade_decision_from_text(llm_res.get('text', ''))
+        live_mode = str(ctx.mode or '').strip().lower() == 'live'
+        risk_accepted = bool(risk_output.get('accepted'))
+
+        if not risk_accepted:
+            final_decision = 'HOLD'
+            should_execute = False
+            side = None
+            final_reason = 'Risk checks blocked execution.'
+        elif live_mode:
+            if llm_decision == decision and llm_decision in {'BUY', 'SELL'}:
+                final_decision = llm_decision
+                should_execute = True
+                side = llm_decision
+                final_reason = 'LLM confirmed deterministic execution decision.'
+            else:
+                final_decision = 'HOLD'
+                should_execute = False
+                side = None
+                final_reason = 'Live mode guardrail: execution requires LLM confirmation of deterministic decision.'
+        else:
+            final_decision = llm_decision
+            should_execute = llm_decision in {'BUY', 'SELL'}
+            side = llm_decision if should_execute else None
+            final_reason = 'Execution decision updated by LLM review.' if should_execute else 'LLM requested HOLD.'
+
+        output.update(
+            {
+                'decision': final_decision,
+                'should_execute': should_execute,
+                'side': side,
+                'volume': suggested_volume if should_execute else 0.0,
+                'reason': final_reason,
+                'llm_summary': llm_res.get('text', ''),
+                'degraded': llm_res.get('degraded', False),
+                'prompt_meta': {
+                    'prompt_id': prompt_info.get('prompt_id'),
+                    'prompt_version': prompt_info.get('version', 0),
+                    'llm_enabled': True,
+                    'llm_model': llm_model,
+                },
+            }
+        )
         return output

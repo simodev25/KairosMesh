@@ -82,7 +82,7 @@ def test_agent_model_selector_reads_enabled_overrides() -> None:
         assert selector.is_enabled(db, 'macro-analyst') is True
 
 
-def test_agent_model_selector_forces_deterministic_agents_off() -> None:
+def test_agent_model_selector_allows_risk_and_execution_overrides() -> None:
     engine = create_engine('sqlite:///:memory:')
     Base.metadata.create_all(bind=engine)
 
@@ -102,8 +102,8 @@ def test_agent_model_selector_forces_deterministic_agents_off() -> None:
         db.commit()
 
         selector = AgentModelSelector()
-        assert selector.is_enabled(db, 'risk-manager') is False
-        assert selector.is_enabled(db, 'execution-manager') is False
+        assert selector.is_enabled(db, 'risk-manager') is True
+        assert selector.is_enabled(db, 'execution-manager') is True
 
 
 def test_agent_model_selector_supports_provider_override_and_provider_default_model() -> None:

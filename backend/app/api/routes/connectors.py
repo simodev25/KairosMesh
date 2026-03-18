@@ -18,7 +18,6 @@ from app.services.trading.metaapi_client import MetaApiClient
 router = APIRouter(prefix='/connectors', tags=['connectors'])
 
 SUPPORTED_CONNECTORS = ['ollama', 'metaapi', 'yfinance', 'qdrant']
-DETERMINISTIC_ONLY_AGENTS = {'risk-manager', 'execution-manager'}
 
 
 def _normalize_agent_skills(raw_skills: object) -> dict[str, list[str]]:
@@ -65,8 +64,6 @@ def _sanitize_ollama_settings(raw_settings: dict) -> dict:
     settings = dict(raw_settings or {})
     raw_enabled = settings.get('agent_llm_enabled')
     enabled = dict(raw_enabled) if isinstance(raw_enabled, dict) else {}
-    for agent_name in DETERMINISTIC_ONLY_AGENTS:
-        enabled[agent_name] = False
     settings['agent_llm_enabled'] = enabled
     settings['agent_skills'] = _normalize_agent_skills(settings.get('agent_skills'))
     return settings

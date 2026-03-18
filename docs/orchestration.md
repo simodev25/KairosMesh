@@ -31,14 +31,13 @@ Source de vérité: `backend/app/services/orchestrator/engine.py` (`WORKFLOW_STE
 | `bullish-researcher` | Thèse haussière + invalidations | On | Oui | `N3` |
 | `bearish-researcher` | Thèse baissière + invalidations | On | Oui | `N3` |
 | `trader-agent` | Décision `BUY/SELL/HOLD` + SL/TP | Off | Oui | `N2` |
-| `risk-manager` | Validation/volume selon risque | Off (déterministe) | Non | `N2` |
-| `execution-manager` | Exécution simulation/paper/live | Off (déterministe) | Non | `N3` |
+| `risk-manager` | Validation/volume selon risque | Off (activable) | Oui | `N2` |
+| `execution-manager` | Exécution simulation/paper/live | Off (activable) | Oui | `N3` |
 
 ## Pourquoi certains agents sont "réservés"
 
-- `risk-manager` et `execution-manager` restent déterministes en V1.
-- Ils manipulent des contrôles critiques (risque/exécution) et ne doivent pas dépendre d'un LLM pour valider/refuser un ordre.
-- Ils sont donc actifs dans le workflow, mais "non switchables LLM" dans la UI.
+- `risk-manager` et `execution-manager` restent `Off` par défaut car ils manipulent des contrôles critiques.
+- Ils peuvent être activés en LLM, avec garde-fous runtime plus stricts en mode `live`.
 
 ## Comment activer/désactiver LLM par agent
 
@@ -106,8 +105,8 @@ Comportement:
 - `merge`: fusionne les skills du JSON avec ceux déjà présents en base.
 - `replace`: remplace entièrement `agent_skills` par ceux du JSON.
 - `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE=true`: évite de réappliquer le même payload (fingerprint identique).
-- `risk-manager` et `execution-manager` sont ignorés par le bootstrap.
 - Le backend enregistre la méta d'application dans `connector_configs.settings.agent_skills_bootstrap_meta`.
+- En mode `LLM off`, certains agents appliquent aussi des `skill guardrails` déterministes (ex: seuils plus stricts, fallback news plus prudent) pour que les skills influencent le runtime réel.
 
 Désactivation:
 
@@ -134,7 +133,6 @@ Formats supportés:
 2. Payload de proposition (avec `skills` + `agent_mapping`):
 
 - Le bootstrap reconstruit automatiquement `agent_skills` depuis les `description` et `evidence.notable_points`.
-- Les agents déterministes (`risk-manager`, `execution-manager`) sont ignorés.
 
 ## Prompts versionnés
 

@@ -25,10 +25,10 @@ const ORCHESTRATION_AGENTS = [
   'schedule-planner-agent',
 ];
 const MODEL_EDIT_AGENTS = [...ORCHESTRATION_AGENTS, 'order-guardian'];
-const PROMPT_EDITABLE_AGENTS = [...MODEL_EDIT_AGENTS];
-const NON_SWITCHABLE_LLM_AGENTS = new Set(['risk-manager', 'execution-manager']);
+const NON_SWITCHABLE_LLM_AGENTS = new Set<string>();
+const PROMPT_EDITABLE_AGENTS = MODEL_EDIT_AGENTS.filter((agentName) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName));
 const SWITCHABLE_LLM_AGENTS = new Set(MODEL_EDIT_AGENTS.filter((agentName) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName)));
-const MODEL_OVERRIDE_EDITABLE_AGENTS = new Set(MODEL_EDIT_AGENTS);
+const MODEL_OVERRIDE_EDITABLE_AGENTS = new Set(SWITCHABLE_LLM_AGENTS);
 const DEFAULT_AGENT_LLM_ENABLED: Record<string, boolean> = {
   'technical-analyst': false,
   'news-analyst': true,
@@ -263,7 +263,9 @@ export function ConnectorsPage() {
       const value = rawMap[agentName];
       next[agentName] = typeof value === 'string' ? value : '';
       const skillsValue = rawSkills[agentName];
-      if (Array.isArray(skillsValue)) {
+      if (NON_SWITCHABLE_LLM_AGENTS.has(agentName)) {
+        nextSkills[agentName] = [];
+      } else if (Array.isArray(skillsValue)) {
         nextSkills[agentName] = skillsValue.map((item) => String(item).trim()).filter((item) => item.length > 0);
       } else if (typeof skillsValue === 'string') {
         nextSkills[agentName] = parseSkillsInput(skillsValue);
@@ -375,6 +377,11 @@ export function ConnectorsPage() {
   }, [promptAgent, activePromptByAgent]);
 
   useEffect(() => {
+    if (PROMPT_EDITABLE_AGENTS.includes(promptAgent)) return;
+    setPromptAgent(PROMPT_EDITABLE_AGENTS[0] ?? 'news-analyst');
+  }, [promptAgent]);
+
+  useEffect(() => {
     if (memoryPairOptions.length === 0) return;
     if (!memoryPairOptions.includes(memoryPair)) {
       setMemoryPair(memoryPairOptions[0]);
@@ -420,7 +427,8 @@ export function ConnectorsPage() {
     );
     const cleanedSkills = Object.fromEntries(
       Object.entries(agentSkills)
-        .map(([agentName, skills]) => [agentName, parseSkillsInput((skills ?? []).join(','))])
+        .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
+        .map(([agentName, skills]) => [agentName, parseSkillsInput((skills ?? []).join(','))] as const)
         .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
     );
     const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
@@ -503,7 +511,8 @@ export function ConnectorsPage() {
 
     const cleanedSkills = Object.fromEntries(
       Object.entries(agentSkills)
-        .map(([agentName, skills]) => [agentName, parseSkillsInput((skills ?? []).join(','))])
+        .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
+        .map(([agentName, skills]) => [agentName, parseSkillsInput((skills ?? []).join(','))] as const)
         .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
     );
     const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
@@ -814,47 +823,58 @@ export function ConnectorsPage() {
                       <tr key={agentName}>
                         <td>{agentName}</td>
                         <td>
-                          <input
-                            className="ui-switch"
-                            type="checkbox"
-                            checked={SWITCHABLE_LLM_AGENTS.has(agentName) ? Boolean(agentLlmEnabled[agentName]) : false}
-                            onChange={(e) => {
-                              if (!SWITCHABLE_LLM_AGENTS.has(agentName)) return;
-                              setAgentLlmEnabled((prev) => ({ ...prev, [agentName]: e.target.checked }));
-                            }}
-                            disabled={!SWITCHABLE_LLM_AGENTS.has(agentName)}
-                            title={!SWITCHABLE_LLM_AGENTS.has(agentName) ? 'Deterministic only' : undefined}
-                          />
+                          {SWITCHABLE_LLM_AGENTS.has(agentName) ? (
+                            <input
+                              className="ui-switch"
+                              type="checkbox"
+                              checked={Boolean(agentLlmEnabled[agentName])}
+                              onChange={(e) => {
+                                setAgentLlmEnabled((prev) => ({ ...prev, [agentName]: e.target.checked }));
+                              }}
+                            />
+                          ) : (
+                            <code>déterministe</code>
+                          )}
                         </td>
                         <td>
-                          <input
-                            list="llm-model-choices"
-                            value={agentModels[agentName] ?? ''}
-                            onChange={(e) => setAgentModels((prev) => ({ ...prev, [agentName]: e.target.value }))}
-                            placeholder={`hérite: ${defaultLlmModel || defaultModelForProvider(llmProvider)}`}
-                            disabled={!MODEL_OVERRIDE_EDITABLE_AGENTS.has(agentName)}
-                          />
+                          {MODEL_OVERRIDE_EDITABLE_AGENTS.has(agentName) ? (
+                            <input
+                              list="llm-model-choices"
+                              value={agentModels[agentName] ?? ''}
+                              onChange={(e) => setAgentModels((prev) => ({ ...prev, [agentName]: e.target.value }))}
+                              placeholder={`hérite: ${defaultLlmModel || defaultModelForProvider(llmProvider)}`}
+                              disabled={!MODEL_OVERRIDE_EDITABLE_AGENTS.has(agentName)}
+                            />
+                          ) : (
+                            <code>non applicable</code>
+                          )}
                         </td>
                         <td>
-                          <code>{(agentSkills[agentName] ?? []).length} règle(s)</code>
+                          {NON_SWITCHABLE_LLM_AGENTS.has(agentName)
+                            ? <code>verrouillé</code>
+                            : <code>{(agentSkills[agentName] ?? []).length} règle(s)</code>}
                         </td>
                         <td>
-                          <code>{effectiveModelFor(agentName)}</code>
+                          {NON_SWITCHABLE_LLM_AGENTS.has(agentName) ? <code>-</code> : <code>{effectiveModelFor(agentName)}</code>}
                         </td>
                         <td>
-                          <button
-                            type="button"
-                            className="btn-ghost btn-small"
-                            onClick={() => {
-                              setPromptAgent(agentName);
-                              setActiveConfigTab('models');
-                              requestAnimationFrame(() => {
-                                document.getElementById('agent-prompts-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                              });
-                            }}
-                          >
-                            Éditer prompt + skills
-                          </button>
+                          {NON_SWITCHABLE_LLM_AGENTS.has(agentName) ? (
+                            <code>-</code>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-small"
+                              onClick={() => {
+                                setPromptAgent(agentName);
+                                setActiveConfigTab('models');
+                                requestAnimationFrame(() => {
+                                  document.getElementById('agent-prompts-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                });
+                              }}
+                            >
+                              Éditer prompt + skills
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
