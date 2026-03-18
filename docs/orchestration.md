@@ -101,6 +101,23 @@ Vous pouvez injecter automatiquement des skills au `startup` backend via un fich
 
 Par défaut, l'image backend embarque `backend/config/agent-skills.json` et Docker l'expose en `/app/config/agent-skills.json`.
 
+Comportement:
+
+- `merge`: fusionne les skills du JSON avec ceux déjà présents en base.
+- `replace`: remplace entièrement `agent_skills` par ceux du JSON.
+- `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE=true`: évite de réappliquer le même payload (fingerprint identique).
+- `risk-manager` et `execution-manager` sont ignorés par le bootstrap.
+- Le backend enregistre la méta d'application dans `connector_configs.settings.agent_skills_bootstrap_meta`.
+
+Désactivation:
+
+- laisser `AGENT_SKILLS_BOOTSTRAP_FILE` vide.
+
+Vérification API:
+
+- `GET /api/v1/connectors` puis lire `ollama.settings.agent_skills`.
+- En cas d'application réussie, `ollama.settings.agent_skills_bootstrap_meta` est présent.
+
 Formats supportés:
 
 1. Direct:

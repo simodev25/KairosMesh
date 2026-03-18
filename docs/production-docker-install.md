@@ -34,12 +34,23 @@ Puis modifier au minimum:
 - `METAAPI_TOKEN` / `METAAPI_ACCOUNT_ID` (si trading MetaApi)
 - `GF_SECURITY_ADMIN_PASSWORD` (si monitoring)
 
+Paramètres skills recommandés:
+- `AGENT_SKILLS_BOOTSTRAP_FILE=/app/config/agent-skills.json`
+- `AGENT_SKILLS_BOOTSTRAP_MODE=merge`
+- `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE=true`
+
 Validation conseillee avant installation:
 - `POSTGRES_PASSWORD` et `DATABASE_URL` doivent contenir le meme mot de passe.
 - aucun placeholder ne doit rester (`change-me`, `replace_me`, etc.).
 
 ```bash
 grep -E '^(POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DB|DATABASE_URL|CORS_ORIGINS|ENABLE_PGVECTOR)=' .env.prod
+```
+
+Contrôle optionnel des variables skills:
+
+```bash
+grep -E '^(AGENT_SKILLS_BOOTSTRAP_FILE|AGENT_SKILLS_BOOTSTRAP_MODE|AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE)=' .env.prod
 ```
 
 ## 2) Lancer l'installation / deploiement
@@ -111,6 +122,22 @@ curl -sS -X POST http://localhost:8000/api/v1/auth/login \
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod logs --tail 80 backend worker
 ```
 
+Vérifier l'injection des skills:
+
+```bash
+TOKEN="$(curl -sS -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@local.dev","password":"admin1234"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')"
+
+curl -sS http://localhost:8000/api/v1/connectors \
+  -H "Authorization: Bearer ${TOKEN}"
+```
+
+Puis vérifier:
+- `ollama.settings.agent_skills`
+- `ollama.settings.agent_skills_bootstrap_meta`
+
 ## 5) Commandes d'exploitation
 
 Voir les logs:
@@ -137,6 +164,7 @@ Redemarrer avec rebuild:
 - Le service Postgres prod utilise `pgvector/pgvector:pg16`, donc `ENABLE_PGVECTOR=true` est supporte.
 - Le frontend est servi via `vite preview` sur le port `4173`.
 - Pour un environnement internet public, ajouter un reverse proxy TLS (Nginx/Traefik/Caddy).
+- Le fichier skills par défaut est embarqué dans l'image backend (`/app/config/agent-skills.json`).
 
 ## Troubleshooting
 

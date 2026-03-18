@@ -48,6 +48,34 @@ docker compose up --build
 - Grafana: `http://localhost:3000` (`admin/admin`)
 - RabbitMQ UI: `http://localhost:15672` (`guest/guest`)
 
+## Skills bootstrappés au démarrage
+
+- L'image backend embarque un fichier par défaut: `backend/config/agent-skills.json`.
+- Dans le conteneur, il est lu depuis: `/app/config/agent-skills.json`.
+- Au startup backend, le contenu est injecté automatiquement dans `connector_configs.settings.agent_skills`.
+
+Variables principales:
+
+- `AGENT_SKILLS_BOOTSTRAP_FILE=/app/config/agent-skills.json`
+- `AGENT_SKILLS_BOOTSTRAP_MODE=merge` (`merge` ou `replace`)
+- `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE=true` (idempotence par fingerprint)
+
+Override rapide (exemple local):
+
+```bash
+AGENT_SKILLS_BOOTSTRAP_FILE=/app/config/my-skills.json \
+AGENT_SKILLS_BOOTSTRAP_MODE=replace \
+docker compose up -d --build backend
+```
+
+Note: pour un fichier custom, place-le dans `backend/config/` (ex: `backend/config/my-skills.json`) puis rebuild backend.
+
+Désactiver complètement:
+
+```bash
+AGENT_SKILLS_BOOTSTRAP_FILE= docker compose up -d --build backend
+```
+
 ## Local vs production (résumé)
 
 | Mode | Commande de lancement | Frontend | API | Fichier env principal | Notes |
