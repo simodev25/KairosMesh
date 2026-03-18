@@ -142,7 +142,8 @@ def test_agent_model_selector_resolves_agent_skills() -> None:
                 settings={
                     'agent_skills': {
                         'news-analyst': ['Prioriser sources fiables', 'Citer incertitude', 'Citer incertitude'],
-                        'trader-agent': 'Décision exécutable, Respect du risque',
+                        'trader-agent': 'Décision exécutable\nRespect du risque',
+                        'risk-manager': 'Valider le risque, sans découper la phrase',
                     },
                 },
             )
@@ -152,4 +153,5 @@ def test_agent_model_selector_resolves_agent_skills() -> None:
         selector = AgentModelSelector()
         assert selector.resolve_skills(db, 'news-analyst') == ['Prioriser sources fiables', 'Citer incertitude']
         assert selector.resolve_skills(db, 'trader-agent') == ['Décision exécutable', 'Respect du risque']
+        assert selector.resolve_skills(db, 'risk-manager') == ['Valider le risque, sans découper la phrase']
         assert selector.resolve_skills(db, 'macro-analyst') == []

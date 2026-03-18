@@ -164,6 +164,12 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = Field(default=True, alias='SCHEDULER_ENABLED')
     scheduler_batch_size: int = Field(default=20, ge=1, le=500, alias='SCHEDULER_BATCH_SIZE')
     orchestrator_parallel_workers: int = Field(default=4, ge=1, le=16, alias='ORCHESTRATOR_PARALLEL_WORKERS')
+    debug_trade_json_enabled: bool = Field(default=False, alias='DEBUG_TRADE_JSON_ENABLED')
+    debug_trade_json_dir: str = Field(default='./debug-traces', alias='DEBUG_TRADE_JSON_DIR')
+    debug_trade_json_include_prompts: bool = Field(default=True, alias='DEBUG_TRADE_JSON_INCLUDE_PROMPTS')
+    debug_trade_json_include_price_history: bool = Field(default=True, alias='DEBUG_TRADE_JSON_INCLUDE_PRICE_HISTORY')
+    debug_trade_json_price_history_limit: int = Field(default=200, ge=20, le=5000, alias='DEBUG_TRADE_JSON_PRICE_HISTORY_LIMIT')
+    debug_trade_json_inline_in_run_trace: bool = Field(default=False, alias='DEBUG_TRADE_JSON_INLINE_IN_RUN_TRACE')
 
     @field_validator('cors_origins', mode='before')
     @classmethod

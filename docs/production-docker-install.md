@@ -39,6 +39,12 @@ Paramètres skills recommandés:
 - `AGENT_SKILLS_BOOTSTRAP_MODE=merge`
 - `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE=true`
 
+Paramètres debug JSON trade (optionnels):
+- `DEBUG_TRADE_JSON_ENABLED=false`
+- `DEBUG_TRADE_JSON_DIR=./debug-traces`
+- `DEBUG_TRADE_JSON_INCLUDE_PROMPTS=true`
+- `DEBUG_TRADE_JSON_INCLUDE_PRICE_HISTORY=true`
+
 Validation conseillee avant installation:
 - `POSTGRES_PASSWORD` et `DATABASE_URL` doivent contenir le meme mot de passe.
 - aucun placeholder ne doit rester (`change-me`, `replace_me`, etc.).
@@ -51,6 +57,12 @@ Contrôle optionnel des variables skills:
 
 ```bash
 grep -E '^(AGENT_SKILLS_BOOTSTRAP_FILE|AGENT_SKILLS_BOOTSTRAP_MODE|AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE)=' .env.prod
+```
+
+Contrôle optionnel des variables debug trade JSON:
+
+```bash
+grep -E '^(DEBUG_TRADE_JSON_ENABLED|DEBUG_TRADE_JSON_DIR|DEBUG_TRADE_JSON_INCLUDE_PROMPTS|DEBUG_TRADE_JSON_INCLUDE_PRICE_HISTORY|DEBUG_TRADE_JSON_PRICE_HISTORY_LIMIT|DEBUG_TRADE_JSON_INLINE_IN_RUN_TRACE)=' .env.prod
 ```
 
 ## 2) Lancer l'installation / deploiement

@@ -412,6 +412,59 @@ class YFinanceMarketProvider:
         finally:
             self._cache_release_lock(history_cache_key, cache_lock_token)
 
+    def get_recent_candles(self, pair: str, timeframe: str, limit: int = 200) -> list[dict[str, Any]]:
+        pair_key = self._normalize_pair(pair) or str(pair or '').strip().upper()
+        timeframe_key = str(timeframe or '').strip().upper() or 'H1'
+        safe_limit = max(int(limit or 1), 1)
+        cache_key = self._cache_key(
+            'recent',
+            pair_key,
+            timeframe_key,
+            self._timeframe_cache_bucket(timeframe_key),
+            safe_limit,
+        )
+        cached_payload = self._cache_get_json(cache_key, resource='snapshot')
+        if cached_payload is not None and isinstance(cached_payload.get('candles'), list):
+            return list(cached_payload.get('candles') or [])
+
+        def as_float(value: Any) -> float | None:
+            try:
+                if pd.isna(value):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        frame = self._prepare_frame(pair, timeframe)
+        if frame.empty:
+            self._cache_set_json(
+                cache_key,
+                {'pair': pair, 'timeframe': timeframe, 'candles': []},
+                self._snapshot_ttl_seconds(timeframe_key),
+            )
+            return []
+
+        candles: list[dict[str, Any]] = []
+        for index, row in frame.tail(safe_limit).iterrows():
+            ts = index.isoformat() if hasattr(index, 'isoformat') else str(index)
+            candles.append(
+                {
+                    'ts': ts,
+                    'open': as_float(row.get('Open')),
+                    'high': as_float(row.get('High')),
+                    'low': as_float(row.get('Low')),
+                    'close': as_float(row.get('Close')),
+                    'volume': as_float(row.get('Volume')),
+                }
+            )
+
+        self._cache_set_json(
+            cache_key,
+            {'pair': pair, 'timeframe': timeframe, 'candles': candles},
+            self._snapshot_ttl_seconds(timeframe_key),
+        )
+        return candles
+
     def get_news_context(self, pair: str, limit: int = 5) -> dict[str, Any]:
         pair_key = self._normalize_pair(pair) or str(pair or '').strip().upper()
         safe_limit = max(int(limit or 1), 1)
@@ -438,15 +491,20 @@ class YFinanceMarketProvider:
                         continue
 
                     selected = []
-                    for item in news_items[:limit]:
+                    for item in news_items:
+                        title = str(item.get('title', '') or '').strip()
+                        if not title:
+                            continue
                         selected.append(
                             {
-                                'title': item.get('title', ''),
-                                'publisher': item.get('publisher', ''),
-                                'link': item.get('link', ''),
+                                'title': title,
+                                'publisher': str(item.get('publisher', '') or '').strip(),
+                                'link': str(item.get('link', '') or '').strip(),
                                 'published': item.get('providerPublishTime'),
                             }
                         )
+                        if len(selected) >= safe_limit:
+                            break
 
                     if selected:
                         resolved = {'degraded': False, 'pair': pair, 'symbol': symbol, 'news': selected}

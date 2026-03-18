@@ -61,3 +61,22 @@ def test_news_agent_detects_french_bearish_sentiment(monkeypatch) -> None:
     assert out['score'] == -0.2
     assert isinstance(captured['model'], str)
     assert bool(captured['model'])
+
+
+def test_news_agent_ignores_empty_titles() -> None:
+    service = PromptTemplateService()
+    agent = NewsAnalystAgent(service)
+    ctx = AgentContext(
+        pair='EURUSD',
+        timeframe='H1',
+        mode='simulation',
+        risk_percent=1.0,
+        market_snapshot={'trend': 'neutral'},
+        news_context={'news': [{'title': ''}, {'title': '   '} ]},
+        memory_context=[],
+    )
+
+    out = agent.run(ctx, db=None)
+    assert out['signal'] == 'neutral'
+    assert out['score'] == 0.0
+    assert out['reason'] == 'No Yahoo Finance news'

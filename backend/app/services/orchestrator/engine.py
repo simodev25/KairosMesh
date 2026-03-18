@@ -1,6 +1,9 @@
 import logging
+import json
 import threading
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -109,6 +112,125 @@ class ForexOrchestrator:
         elapsed = time.perf_counter() - started
         orchestrator_step_duration_seconds.labels(agent=agent_name).observe(elapsed)
         return output
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(key): ForexOrchestrator._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [ForexOrchestrator._json_safe(item) for item in value]
+        if hasattr(value, 'isoformat'):
+            try:
+                return value.isoformat()
+            except Exception:
+                pass
+        if hasattr(value, 'item'):
+            try:
+                return ForexOrchestrator._json_safe(value.item())
+            except Exception:
+                pass
+        return str(value)
+
+    def _collect_run_steps(self, db: Session, run_id: int) -> list[dict[str, Any]]:
+        steps = (
+            db.query(AgentStep)
+            .filter(AgentStep.run_id == run_id)
+            .order_by(AgentStep.id.asc())
+            .all()
+        )
+        return [
+            {
+                'id': step.id,
+                'agent_name': step.agent_name,
+                'status': step.status,
+                'created_at': step.created_at.isoformat() if step.created_at else None,
+                'input_payload': self._json_safe(step.input_payload),
+                'output_payload': self._json_safe(step.output_payload),
+                'error': step.error,
+            }
+            for step in steps
+        ]
+
+    def _build_debug_trade_payload(
+        self,
+        *,
+        db: Session,
+        run: AnalysisRun,
+        risk_percent: float,
+        metaapi_account_ref: int | None,
+        market: dict[str, Any],
+        news: dict[str, Any],
+        memory_context: list[dict[str, Any]],
+        price_history: list[dict[str, Any]],
+        analysis_outputs: dict[str, dict[str, Any]],
+        bullish: dict[str, Any],
+        bearish: dict[str, Any],
+        trader_decision: dict[str, Any],
+        risk_output: dict[str, Any],
+        execution_output: dict[str, Any],
+        execution_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        step_payloads = self._collect_run_steps(db, run.id)
+        agent_prompt_skills: dict[str, dict[str, Any]] = {}
+        for step in step_payloads:
+            output_payload = step.get('output_payload')
+            if not isinstance(output_payload, dict):
+                continue
+            prompt_meta = output_payload.get('prompt_meta')
+            if isinstance(prompt_meta, dict):
+                agent_prompt_skills[step['agent_name']] = self._json_safe(prompt_meta)
+
+        return {
+            'schema_version': 1,
+            'generated_at': datetime.now(timezone.utc).isoformat(),
+            'run': {
+                'id': run.id,
+                'pair': run.pair,
+                'timeframe': run.timeframe,
+                'mode': run.mode,
+                'status': run.status,
+                'risk_percent': risk_percent,
+                'metaapi_account_ref': metaapi_account_ref,
+                'created_at': run.created_at.isoformat() if run.created_at else None,
+                'updated_at': run.updated_at.isoformat() if run.updated_at else None,
+            },
+            'context': {
+                'market_snapshot': self._json_safe(market),
+                'price_history': self._json_safe(price_history),
+                'news_context': self._json_safe(news),
+                'memory_context': self._json_safe(memory_context),
+            },
+            'workflow': list(self.WORKFLOW_STEPS),
+            'agent_steps': step_payloads,
+            'agent_prompt_skills': agent_prompt_skills,
+            'analysis_bundle': {
+                'analysis_outputs': self._json_safe(analysis_outputs),
+                'bullish': self._json_safe(bullish),
+                'bearish': self._json_safe(bearish),
+                'trader_decision': self._json_safe(trader_decision),
+                'risk': self._json_safe(risk_output),
+                'execution_manager': self._json_safe(execution_output),
+                'execution_result': self._json_safe(execution_result),
+            },
+            'final_decision': self._json_safe(run.decision),
+        }
+
+    def _write_debug_trade_payload(self, run_id: int, payload: dict[str, Any]) -> str | None:
+        try:
+            directory = Path(self.settings.debug_trade_json_dir or './debug-traces').expanduser()
+            directory.mkdir(parents=True, exist_ok=True)
+            suffix = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+            file_path = directory / f'run-{run_id}-{suffix}.json'
+            file_path.write_text(
+                json.dumps(self._json_safe(payload), ensure_ascii=False, indent=2),
+                encoding='utf-8',
+            )
+            return str(file_path.resolve())
+        except Exception:
+            logger.exception('failed to persist debug trade payload run_id=%s', run_id)
+            return None
 
     def analyze_context(
         self,
@@ -309,6 +431,16 @@ class ForexOrchestrator:
             news_context=news,
             memory_context=memory_context,
         )
+        price_history: list[dict[str, Any]] = []
+        if self.settings.debug_trade_json_enabled and self.settings.debug_trade_json_include_price_history:
+            try:
+                price_history = self.market_provider.get_recent_candles(
+                    run.pair,
+                    run.timeframe,
+                    limit=self.settings.debug_trade_json_price_history_limit,
+                )
+            except Exception:
+                logger.exception('debug price history fetch failed run_id=%s', run_id)
 
         try:
             analysis_bundle = self.analyze_context(context=context, db=db, run=run, record_steps=True, emit_step_logs=True)
@@ -378,7 +510,8 @@ class ForexOrchestrator:
                 'execution': execution_result,
                 'execution_manager': execution_output,
             }
-            run.trace = {
+            run.status = 'completed'
+            trace_payload = {
                 'market': market,
                 'news': news,
                 'analysis_outputs': analysis_outputs,
@@ -388,7 +521,37 @@ class ForexOrchestrator:
                 'requested_metaapi_account_ref': metaapi_account_ref,
                 'workflow': list(self.WORKFLOW_STEPS),
             }
-            run.status = 'completed'
+            if self.settings.debug_trade_json_enabled:
+                debug_payload = self._build_debug_trade_payload(
+                    db=db,
+                    run=run,
+                    risk_percent=risk_percent,
+                    metaapi_account_ref=metaapi_account_ref,
+                    market=market,
+                    news=news,
+                    memory_context=memory_context,
+                    price_history=price_history,
+                    analysis_outputs=analysis_outputs,
+                    bullish=bullish,
+                    bearish=bearish,
+                    trader_decision=trader_decision,
+                    risk_output=risk_output,
+                    execution_output=execution_output,
+                    execution_result=execution_result,
+                )
+                debug_file = self._write_debug_trade_payload(run.id, debug_payload)
+                trace_payload['debug_trace_meta'] = {
+                    'enabled': True,
+                    'generated_at': debug_payload.get('generated_at'),
+                    'steps_count': len(debug_payload.get('agent_steps', [])),
+                    'inline_in_run_trace': self.settings.debug_trade_json_inline_in_run_trace,
+                    'file_written': bool(debug_file),
+                }
+                if debug_file:
+                    trace_payload['debug_trace_file'] = debug_file
+                if self.settings.debug_trade_json_inline_in_run_trace:
+                    trace_payload['debug_trace'] = debug_payload
+            run.trace = trace_payload
             db.commit()
             db.refresh(run)
 

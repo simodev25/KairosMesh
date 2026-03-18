@@ -22,8 +22,9 @@ def test_sanitize_ollama_settings_normalizes_agent_skills() -> None:
     source = {
         'provider': 'ollama',
         'agent_skills': {
-            'news-analyst': 'Prioriser impact macro\nciter incertitude, prioriser impact macro',
+            'news-analyst': 'Prioriser impact macro\nciter incertitude\nprioriser impact macro',
             'trader-agent': ['Décision claire', 'Décision claire', 'Respecter SL/TP'],
+            'risk-manager': "Valider le risque, sans casser la phrase.",
             '': ['ignore'],
             'macro-analyst': 123,
         },
@@ -32,5 +33,6 @@ def test_sanitize_ollama_settings_normalizes_agent_skills() -> None:
     result = _sanitize_ollama_settings(source)
     assert result['agent_skills']['news-analyst'] == ['Prioriser impact macro', 'citer incertitude']
     assert result['agent_skills']['trader-agent'] == ['Décision claire', 'Respecter SL/TP']
+    assert result['agent_skills']['risk-manager'] == ["Valider le risque, sans casser la phrase."]
     assert '' not in result['agent_skills']
     assert 'macro-analyst' not in result['agent_skills']

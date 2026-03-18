@@ -76,6 +76,22 @@ Désactiver complètement:
 AGENT_SKILLS_BOOTSTRAP_FILE= docker compose up -d --build backend
 ```
 
+## Debug JSON par trade
+
+Pour exporter un JSON complet par run (historique prix, étapes agents, `prompt_meta`, skills, décision):
+
+- `DEBUG_TRADE_JSON_ENABLED=true`
+- `DEBUG_TRADE_JSON_DIR=./debug-traces`
+- `DEBUG_TRADE_JSON_INCLUDE_PROMPTS=true`
+- `DEBUG_TRADE_JSON_INCLUDE_PRICE_HISTORY=true`
+- `DEBUG_TRADE_JSON_PRICE_HISTORY_LIMIT=200`
+- `DEBUG_TRADE_JSON_INLINE_IN_RUN_TRACE=false`
+
+Résultat:
+
+- Un fichier `run-<id>-<timestamp>.json` est écrit dans `DEBUG_TRADE_JSON_DIR`.
+- `analysis_runs.trace.debug_trace_meta` et `analysis_runs.trace.debug_trace_file` référencent l'export.
+
 ## Local vs production (résumé)
 
 | Mode | Commande de lancement | Frontend | API | Fichier env principal | Notes |

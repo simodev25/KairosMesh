@@ -172,3 +172,20 @@ Formats supportés:
 - `agent_steps`: input/output de chaque étape.
 - `execution_orders`: ordres et retours broker/simulation.
 - `llm_call_logs`: modèle réellement utilisé, latence, tokens, coût estimé.
+
+## Mode debug JSON des trades
+
+Pour tracer la vie complète d'un trade (historique prix, étapes agents, prompt_meta, skills, décision finale), activer:
+
+- `DEBUG_TRADE_JSON_ENABLED=true`
+- `DEBUG_TRADE_JSON_DIR=./debug-traces` (dans Docker: chemin sous `/app/`)
+- `DEBUG_TRADE_JSON_INCLUDE_PROMPTS=true` (inclut system/user prompt résolus dans `prompt_meta`)
+- `DEBUG_TRADE_JSON_INCLUDE_PRICE_HISTORY=true`
+- `DEBUG_TRADE_JSON_PRICE_HISTORY_LIMIT=200`
+- `DEBUG_TRADE_JSON_INLINE_IN_RUN_TRACE=false` (si `true`, injecte le JSON complet dans `analysis_runs.trace`)
+
+Comportement:
+
+- Un fichier JSON par run est écrit dans `DEBUG_TRADE_JSON_DIR`.
+- `analysis_runs.trace.debug_trace_meta` contient le statut d'export.
+- `analysis_runs.trace.debug_trace_file` pointe vers le fichier généré.

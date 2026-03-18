@@ -86,3 +86,8 @@ Ce fichier résume chaque agent de l’orchestrateur (ordre `FOREX` workflow) et
 - Étape 4: risk-manager.
 - Étape 5: execution-manager (simulation/paper/live selon mode).
 - Les skills (agent_skills) sont insérés automatiquement dans le system prompt avant chaque appel LLM.
+
+## Debug runtime JSON
+- Quand `DEBUG_TRADE_JSON_ENABLED=true`, `prompt_meta` inclut les skills effectivement résolus par agent.
+- Si `DEBUG_TRADE_JSON_INCLUDE_PROMPTS=true`, `prompt_meta` inclut aussi le `system_prompt` et le `user_prompt` réellement utilisés.
+- Ces informations sont consolidées run par run dans le fichier JSON debug exporté par l'orchestrateur.

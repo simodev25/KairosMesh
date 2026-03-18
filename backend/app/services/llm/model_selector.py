@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 from sqlalchemy.orm import Session
@@ -134,7 +135,26 @@ class AgentModelSelector:
         raw_value = raw_map.get(agent_name)
         raw_items: list[str]
         if isinstance(raw_value, str):
-            raw_items = [part.strip() for part in raw_value.replace('\n', ',').split(',')]
+            text = raw_value.strip()
+            if not text:
+                return []
+            if text.startswith('['):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        raw_items = [str(item).strip() for item in parsed]
+                    else:
+                        raw_items = [text]
+                except json.JSONDecodeError:
+                    raw_items = [part.strip() for part in text.splitlines()]
+            elif '\n' in text:
+                raw_items = [part.strip() for part in text.splitlines()]
+            elif '||' in text:
+                raw_items = [part.strip() for part in text.split('||')]
+            elif ';' in text:
+                raw_items = [part.strip() for part in text.split(';')]
+            else:
+                raw_items = [text]
         elif isinstance(raw_value, (list, tuple, set)):
             raw_items = [str(item).strip() for item in raw_value]
         else:

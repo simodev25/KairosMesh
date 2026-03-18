@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.services.llm.provider_client import LlmClient
 from app.services.llm.model_selector import AgentModelSelector
 from app.services.prompts.registry import PromptTemplateService
@@ -70,6 +71,25 @@ def _skill_text(skills: list[str]) -> str:
 
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in text for keyword in keywords)
+
+
+def _enrich_prompt_meta_debug(
+    prompt_meta: dict[str, Any],
+    *,
+    runtime_skills: list[str],
+    system_prompt: str | None = None,
+    user_prompt: str | None = None,
+) -> None:
+    settings = get_settings()
+    if not settings.debug_trade_json_enabled:
+        return
+    prompt_meta['skills'] = list(runtime_skills)
+    if not settings.debug_trade_json_include_prompts:
+        return
+    if system_prompt is not None:
+        prompt_meta['system_prompt'] = system_prompt
+    if user_prompt is not None:
+        prompt_meta['user_prompt'] = user_prompt
 
 
 def _score_to_signal(score: float, threshold: float) -> str:
@@ -208,6 +228,7 @@ class TechnicalAnalystAgent:
             'llm_enabled': bool(output['llm_enabled']),
             'skills_count': len(runtime_skills),
         }
+        _enrich_prompt_meta_debug(output['prompt_meta'], runtime_skills=runtime_skills)
 
         if not output['llm_enabled']:
             adjusted_score, adjusted_signal, changed = _apply_deterministic_skill_guardrail(
@@ -265,6 +286,7 @@ class TechnicalAnalystAgent:
         merged_score = round(float(output['score']) + llm_score, 3)
         merged_signal = 'bullish' if merged_score > 0.15 else 'bearish' if merged_score < -0.15 else 'neutral'
 
+        resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         output.update(
             {
                 'signal': merged_signal,
@@ -276,9 +298,15 @@ class TechnicalAnalystAgent:
                     'prompt_version': prompt_info.get('version', 0),
                     'llm_model': llm_model,
                     'llm_enabled': True,
-                    'skills_count': len(runtime_skills),
+                    'skills_count': len(resolved_skills),
                 },
             }
+        )
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=resolved_skills,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
         )
         return output
 
@@ -293,10 +321,14 @@ class NewsAnalystAgent:
 
     def run(self, ctx: AgentContext, db: Session | None = None) -> dict[str, Any]:
         news = ctx.news_context.get('news', [])
-        if not news:
+        valid_news = [
+            item for item in news
+            if isinstance(item, dict) and str(item.get('title', '') or '').strip()
+        ]
+        if not valid_news:
             return {'signal': 'neutral', 'score': 0.0, 'reason': 'No Yahoo Finance news'}
 
-        headlines = '\n'.join(f"- {item['title']}" for item in news[:5])
+        headlines = '\n'.join(f"- {item['title']}" for item in valid_news[:5])
         fallback_system = (
             'Tu es un analyste news Forex. Retourne un sentiment court pour la paire de base: '
             'bullish, bearish ou neutral. Réponds en français pour les explications.'
@@ -348,20 +380,28 @@ class NewsAnalystAgent:
             degraded = False
             summary = 'LLM disabled for news-analyst. Deterministic skill-aware fallback.'
 
-        return {
+        resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
+        output = {
             'signal': signal,
             'score': score,
             'summary': summary,
-            'news_count': len(news),
+            'news_count': len(valid_news),
             'degraded': degraded,
             'prompt_meta': {
                 'prompt_id': prompt_info.get('prompt_id'),
                 'prompt_version': prompt_info.get('version', 0),
                 'llm_model': llm_model,
                 'llm_enabled': llm_enabled,
-                'skills_count': len(runtime_skills),
+                'skills_count': len(resolved_skills),
             },
         }
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=resolved_skills,
+            system_prompt=system,
+            user_prompt=user,
+        )
+        return output
 
 
 class MacroAnalystAgent:
@@ -398,6 +438,7 @@ class MacroAnalystAgent:
             'llm_enabled': llm_enabled,
             'skills_count': len(runtime_skills),
         }
+        _enrich_prompt_meta_debug(output['prompt_meta'], runtime_skills=runtime_skills)
         if not llm_enabled:
             adjusted_score, adjusted_signal, changed = _apply_deterministic_skill_guardrail(
                 float(output.get('score', 0.0)),
@@ -458,8 +499,14 @@ class MacroAnalystAgent:
             'prompt_version': prompt_info.get('version', 0),
             'llm_model': llm_model,
             'llm_enabled': llm_enabled,
-            'skills_count': len(runtime_skills),
+            'skills_count': len(prompt_info.get('skills', runtime_skills)),
         }
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=list(prompt_info.get('skills', runtime_skills)),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
         return output
 
 
@@ -495,6 +542,7 @@ class SentimentAgent:
             'llm_enabled': llm_enabled,
             'skills_count': len(runtime_skills),
         }
+        _enrich_prompt_meta_debug(output['prompt_meta'], runtime_skills=runtime_skills)
         if not llm_enabled:
             adjusted_score, adjusted_signal, changed = _apply_deterministic_skill_guardrail(
                 float(output.get('score', 0.0)),
@@ -553,8 +601,14 @@ class SentimentAgent:
             'prompt_version': prompt_info.get('version', 0),
             'llm_model': llm_model,
             'llm_enabled': llm_enabled,
-            'skills_count': len(runtime_skills),
+            'skills_count': len(prompt_info.get('skills', runtime_skills)),
         }
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=list(prompt_info.get('skills', runtime_skills)),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
         return output
 
 
@@ -581,10 +635,19 @@ class BullishResearcherAgent:
             'Pair: {pair}\nTimeframe: {timeframe}\nSignals: {signals_json}\n'
             "Mémoire long-terme:\n{memory_context}\nProduit des arguments haussiers concis et des risques d'invalidation."
         )
+        fallback_user_rendered = fallback_user.format(
+            pair=ctx.pair,
+            timeframe=ctx.timeframe,
+            signals_json=json.dumps(agent_outputs, ensure_ascii=True),
+            memory_context='\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
+        )
 
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
+        system_prompt = fallback_system
+        user_prompt = fallback_user_rendered
         if db is not None and llm_enabled:
             prompt_info = self.prompt_service.render(
                 db=db,
@@ -598,11 +661,14 @@ class BullishResearcherAgent:
                     'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                 },
             )
-            llm_out = self.llm.chat(prompt_info['system_prompt'], prompt_info['user_prompt'], model=llm_model, db=db)
+            system_prompt = prompt_info['system_prompt']
+            user_prompt = prompt_info['user_prompt']
+            llm_out = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
         else:
             llm_out = {'text': ''}
 
-        return {
+        resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
+        output = {
             'arguments': arguments or ['Aucun argument haussier fort.'],
             'confidence': confidence,
             'llm_debate': llm_out.get('text', ''),
@@ -611,8 +677,16 @@ class BullishResearcherAgent:
                 'prompt_version': prompt_info.get('version', 0),
                 'llm_model': llm_model,
                 'llm_enabled': llm_enabled,
+                'skills_count': len(resolved_skills),
             },
         }
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=resolved_skills,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+        return output
 
 
 class BearishResearcherAgent:
@@ -638,10 +712,19 @@ class BearishResearcherAgent:
             'Pair: {pair}\nTimeframe: {timeframe}\nSignals: {signals_json}\n'
             "Mémoire long-terme:\n{memory_context}\nProduit des arguments baissiers concis et des risques d'invalidation."
         )
+        fallback_user_rendered = fallback_user.format(
+            pair=ctx.pair,
+            timeframe=ctx.timeframe,
+            signals_json=json.dumps(agent_outputs, ensure_ascii=True),
+            memory_context='\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
+        )
 
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
+        system_prompt = fallback_system
+        user_prompt = fallback_user_rendered
         if db is not None and llm_enabled:
             prompt_info = self.prompt_service.render(
                 db=db,
@@ -655,11 +738,14 @@ class BearishResearcherAgent:
                     'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                 },
             )
-            llm_out = self.llm.chat(prompt_info['system_prompt'], prompt_info['user_prompt'], model=llm_model, db=db)
+            system_prompt = prompt_info['system_prompt']
+            user_prompt = prompt_info['user_prompt']
+            llm_out = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
         else:
             llm_out = {'text': ''}
 
-        return {
+        resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
+        output = {
             'arguments': arguments or ['Aucun argument baissier fort.'],
             'confidence': confidence,
             'llm_debate': llm_out.get('text', ''),
@@ -668,8 +754,16 @@ class BearishResearcherAgent:
                 'prompt_version': prompt_info.get('version', 0),
                 'llm_model': llm_model,
                 'llm_enabled': llm_enabled,
+                'skills_count': len(resolved_skills),
             },
         }
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=resolved_skills,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+        return output
 
 
 class TraderAgent:
@@ -777,6 +871,7 @@ class TraderAgent:
             'llm_model': llm_model,
             'skills_count': len(runtime_skills),
         }
+        _enrich_prompt_meta_debug(output['prompt_meta'], runtime_skills=runtime_skills)
         if not llm_enabled:
             return output
 
@@ -841,13 +936,20 @@ class TraderAgent:
         )
         output['execution_note'] = llm_res.get('text', '')
         output['degraded'] = llm_res.get('degraded', False)
+        resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         output['prompt_meta'] = {
             'prompt_id': prompt_info.get('prompt_id'),
             'prompt_version': prompt_info.get('version', 0),
             'llm_enabled': llm_enabled,
             'llm_model': llm_model,
-            'skills_count': len(runtime_skills),
+            'skills_count': len(resolved_skills),
         }
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=resolved_skills,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
         return output
 
 
@@ -878,6 +980,7 @@ class RiskManagerAgent:
             stop_loss=stop_loss,
         )
         llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name) if llm_enabled else None
 
         output: dict[str, Any] = {
@@ -889,8 +992,10 @@ class RiskManagerAgent:
                 'prompt_version': 0,
                 'llm_enabled': llm_enabled,
                 'llm_model': llm_model,
+                'skills_count': len(runtime_skills),
             },
         }
+        _enrich_prompt_meta_debug(output['prompt_meta'], runtime_skills=runtime_skills)
         if not llm_enabled:
             return output
 
@@ -967,8 +1072,15 @@ class RiskManagerAgent:
                     'prompt_version': prompt_info.get('version', 0),
                     'llm_enabled': True,
                     'llm_model': llm_model,
+                    'skills_count': len(prompt_info.get('skills', runtime_skills)),
                 },
             }
+        )
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=list(prompt_info.get('skills', runtime_skills)),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
         )
         return output
 
@@ -992,6 +1104,7 @@ class ExecutionManagerAgent:
         deterministic_allowed = bool(risk_output.get('accepted')) and decision in {'BUY', 'SELL'}
         suggested_volume = float(risk_output.get('suggested_volume', 0.0) or 0.0)
         llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name) if llm_enabled else None
 
         if deterministic_allowed:
@@ -1012,8 +1125,10 @@ class ExecutionManagerAgent:
                 'prompt_version': 0,
                 'llm_enabled': llm_enabled,
                 'llm_model': llm_model,
+                'skills_count': len(runtime_skills),
             },
         }
+        _enrich_prompt_meta_debug(output['prompt_meta'], runtime_skills=runtime_skills)
         if not llm_enabled:
             return output
 
@@ -1101,7 +1216,14 @@ class ExecutionManagerAgent:
                     'prompt_version': prompt_info.get('version', 0),
                     'llm_enabled': True,
                     'llm_model': llm_model,
+                    'skills_count': len(prompt_info.get('skills', runtime_skills)),
                 },
             }
+        )
+        _enrich_prompt_meta_debug(
+            output['prompt_meta'],
+            runtime_skills=list(prompt_info.get('skills', runtime_skills)),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
         )
         return output
