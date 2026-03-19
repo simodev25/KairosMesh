@@ -187,6 +187,7 @@ class ForexOrchestrator:
         market: dict[str, Any],
         news: dict[str, Any],
         memory_context: list[dict[str, Any]],
+        memory_signal: dict[str, Any],
         price_history: list[dict[str, Any]],
         analysis_outputs: dict[str, dict[str, Any]],
         bullish: dict[str, Any],
@@ -225,6 +226,7 @@ class ForexOrchestrator:
                 'price_history': self._json_safe(price_history),
                 'news_context': self._json_safe(news),
                 'memory_context': self._json_safe(memory_context),
+                'memory_signal': self._json_safe(memory_signal),
             },
             'workflow': list(self.WORKFLOW_STEPS),
             'agent_steps': step_payloads,
@@ -455,7 +457,12 @@ class ForexOrchestrator:
 
         trader_decision = execute_step(
             self.trader_agent.name,
-            {'analysis_outputs': analysis_outputs, 'bullish': bullish, 'bearish': bearish},
+            {
+                'analysis_outputs': analysis_outputs,
+                'bullish': bullish,
+                'bearish': bearish,
+                'memory_signal': context.memory_signal,
+            },
             lambda: self.trader_agent.run(context, analysis_outputs, bullish, bearish, db=db),
         )
 
@@ -490,7 +497,17 @@ class ForexOrchestrator:
         market = self.market_provider.get_market_snapshot(run.pair, run.timeframe)
         news = self.market_provider.get_news_context(run.pair)
         memory_context_enabled = self.model_selector.resolve_memory_context_enabled(db)
+        decision_mode = self.model_selector.resolve_decision_mode(db)
+        memory_retrieval_context = self.memory_service.build_retrieval_context(
+            market,
+            decision_mode=decision_mode,
+        )
         memory_context: list[dict[str, Any]] = []
+        memory_signal: dict[str, Any] = self.memory_service.empty_memory_signal(
+            'memory_context_disabled',
+            retrieved_count=0,
+            decision_mode=decision_mode,
+        )
         if memory_context_enabled:
             memory_context = self.memory_service.search(
                 db=db,
@@ -498,6 +515,12 @@ class ForexOrchestrator:
                 timeframe=run.timeframe,
                 query=f'{run.pair} {run.timeframe} trend {market.get("trend", "unknown")}',
                 limit=5,
+                retrieval_context=memory_retrieval_context,
+            )
+            memory_signal = self.memory_service.compute_memory_signal(
+                memory_context,
+                market_snapshot=market,
+                decision_mode=decision_mode,
             )
 
         context = AgentContext(
@@ -508,6 +531,7 @@ class ForexOrchestrator:
             market_snapshot=market,
             news_context=news,
             memory_context=memory_context,
+            memory_signal=memory_signal,
         )
         price_history: list[dict[str, Any]] = []
         if self.settings.debug_trade_json_enabled and self.settings.debug_trade_json_include_price_history:
@@ -625,6 +649,8 @@ class ForexOrchestrator:
                 'bearish': bearish,
                 'memory_context': memory_context,
                 'memory_context_enabled': memory_context_enabled,
+                'memory_signal': memory_signal,
+                'memory_retrieval_context': memory_retrieval_context,
                 'requested_metaapi_account_ref': metaapi_account_ref,
                 'workflow': list(self.WORKFLOW_STEPS),
             }
@@ -637,6 +663,7 @@ class ForexOrchestrator:
                     market=market,
                     news=news,
                     memory_context=memory_context,
+                    memory_signal=memory_signal,
                     price_history=price_history,
                     analysis_outputs=analysis_outputs,
                     bullish=bullish,

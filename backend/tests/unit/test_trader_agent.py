@@ -7,6 +7,7 @@ def _context(
     macd_diff: float = 0.02,
     atr: float = 0.001,
     last_price: float = 1.1234,
+    memory_signal: dict | None = None,
 ) -> AgentContext:
     return AgentContext(
         pair='EURUSD',
@@ -23,6 +24,7 @@ def _context(
         },
         news_context={'news': []},
         memory_context=[],
+        memory_signal=memory_signal or {},
     )
 
 
@@ -470,3 +472,130 @@ def test_trader_agent_exposes_gate_fields_on_root_payload() -> None:
     assert result['quality_gate_ok'] == result['rationale']['quality_gate_ok']
     assert result['decision_gates'] == result['rationale']['decision_gates']
     assert result['technical_alignment_support'] is True
+
+
+def test_trader_agent_applies_memory_adjustments_with_caps() -> None:
+    agent = TraderAgent()
+    ctx = _context(
+        trend='bullish',
+        macd_diff=0.03,
+        memory_signal={
+            'used': True,
+            'retrieved_count': 5,
+            'eligible_count': 4,
+            'direction': 'bullish',
+            'directional_edge': 0.9,
+            'confidence': 0.9,
+            'score_adjustment': 0.5,
+            'confidence_adjustment': 0.4,
+            'risk_blocks': {'buy': False, 'sell': False},
+            'top_case_refs': [{'id': 1, 'summary': 'sample'}],
+        },
+    )
+    outputs = {
+        'technical-analyst': {'signal': 'bullish', 'score': 0.34},
+        'macro-analyst': {'signal': 'bullish', 'score': 0.1},
+        'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.7}
+    bearish = {'arguments': ['y'], 'confidence': 0.0}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['decision'] == 'BUY'
+    assert result['memory_signal']['used'] is True
+    assert result['memory_signal']['ignored_reason'] is None
+    assert result['memory_score_adjustment_applied'] == 0.08
+    assert result['memory_confidence_adjustment_applied'] == 0.05
+    assert abs(result['memory_signal']['score_adjustment_applied']) <= 0.08
+    assert abs(result['memory_signal']['confidence_adjustment_applied']) <= 0.05
+
+
+def test_trader_agent_memory_cannot_turn_hold_into_trade() -> None:
+    agent = TraderAgent()
+    ctx = _context(
+        trend='neutral',
+        macd_diff=0.0,
+        memory_signal={
+            'used': True,
+            'score_adjustment': 0.08,
+            'confidence_adjustment': 0.05,
+            'risk_blocks': {'buy': False, 'sell': False},
+        },
+    )
+    outputs = {
+        'technical-analyst': {'signal': 'neutral', 'score': 0.0},
+        'macro-analyst': {'signal': 'neutral', 'score': 0.0},
+        'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.0}
+    bearish = {'arguments': ['y'], 'confidence': 0.0}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['decision'] == 'HOLD'
+    assert result['memory_score_adjustment_applied'] == 0.0
+    assert result['memory_confidence_adjustment_applied'] == 0.0
+    assert result['memory_signal']['ignored_reason'] == 'pre_memory_decision_hold'
+
+
+def test_trader_agent_memory_risk_block_can_only_block_trade() -> None:
+    agent = TraderAgent()
+    ctx = _context(
+        trend='bullish',
+        macd_diff=0.02,
+        memory_signal={
+            'used': True,
+            'score_adjustment': 0.04,
+            'confidence_adjustment': 0.02,
+            'risk_blocks': {'buy': True, 'sell': False},
+        },
+    )
+    outputs = {
+        'technical-analyst': {'signal': 'bullish', 'score': 0.35},
+        'macro-analyst': {'signal': 'bullish', 'score': 0.1},
+        'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.7}
+    bearish = {'arguments': ['y'], 'confidence': 0.0}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['memory_risk_block'] is True
+    assert result['execution_allowed'] is False
+    assert result['decision'] == 'HOLD'
+    assert 'memory_risk_block' in result['decision_gates']
+
+
+def test_trader_agent_memory_does_not_bypass_major_contradiction_block() -> None:
+    agent = TraderAgent()
+    agent.model_selector.settings.decision_mode = 'conservative'
+    ctx = _context(
+        trend='bullish',
+        macd_diff=-0.08,
+        atr=0.2,
+        memory_signal={
+            'used': True,
+            'score_adjustment': 0.08,
+            'confidence_adjustment': 0.05,
+            'risk_blocks': {'buy': False, 'sell': False},
+        },
+    )
+    outputs = {
+        'technical-analyst': {'signal': 'bullish', 'score': 0.4},
+        'macro-analyst': {'signal': 'bullish', 'score': 0.1},
+        'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.7}
+    bearish = {'arguments': ['y'], 'confidence': 0.0}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['major_contradiction_block'] is True
+    assert result['execution_allowed'] is False
+    assert result['decision'] == 'HOLD'
+    assert 'major_contradiction_execution_block' in result['decision_gates']

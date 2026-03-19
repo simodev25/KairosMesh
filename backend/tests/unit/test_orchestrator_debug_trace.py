@@ -161,8 +161,10 @@ def test_orchestrator_writes_debug_trade_trace_json(monkeypatch, tmp_path: Path)
         assert payload['run']['id'] == completed_run.id
         assert payload['run']['status'] == 'completed'
         assert payload['context']['price_history'][0]['close'] == 1.102
+        assert 'memory_signal' in payload['context']
         assert payload['analysis_bundle']['execution_result']['status'] == 'skipped'
         assert any(step['agent_name'] == 'execution-manager' for step in payload['agent_steps'])
+        assert 'memory_signal' in completed_run.trace
 
 
 def test_orchestrator_fails_live_run_when_llm_output_is_degraded(monkeypatch) -> None:
@@ -380,3 +382,4 @@ def test_orchestrator_skips_memory_context_search_when_disabled(monkeypatch) -> 
         assert search_called['value'] is False
         assert completed_run.trace.get('memory_context') == []
         assert completed_run.trace.get('memory_context_enabled') is False
+        assert completed_run.trace.get('memory_signal', {}).get('used') is False

@@ -27,11 +27,24 @@ def search_memory(
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
 ) -> dict:
     service = VectorMemoryService()
+    retrieval_context = service.build_retrieval_context(
+        payload.market_snapshot,
+        decision_mode=payload.decision_mode,
+    )
     results = service.search(
         db=db,
         pair=payload.pair.upper(),
         timeframe=payload.timeframe.upper(),
         query=payload.query,
         limit=payload.limit,
+        retrieval_context=retrieval_context,
     )
-    return {'results': results}
+    if not payload.include_signal:
+        return {'results': results}
+
+    memory_signal = service.compute_memory_signal(
+        results,
+        market_snapshot=payload.market_snapshot,
+        decision_mode=payload.decision_mode,
+    )
+    return {'results': results, 'memory_signal': memory_signal}
