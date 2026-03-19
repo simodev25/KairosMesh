@@ -144,6 +144,20 @@ function normalizeDecisionMode(value: unknown): DecisionMode {
   return 'conservative';
 }
 
+function normalizeBooleanSetting(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  }
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  return fallback;
+}
+
 function defaultModelForProvider(provider: LlmProvider): string {
   if (provider === 'openai') return 'gpt-4o-mini';
   if (provider === 'mistral') return 'mistral-small-latest';
@@ -246,6 +260,7 @@ export function ConnectorsPage() {
   const [defaultLlmModel, setDefaultLlmModel] = useState('llama3.1');
   const [llmProvider, setLlmProvider] = useState<LlmProvider>('ollama');
   const [decisionMode, setDecisionMode] = useState<DecisionMode>('conservative');
+  const [memoryContextEnabled, setMemoryContextEnabled] = useState(false);
   const [agentModels, setAgentModels] = useState<Record<string, string>>(
     Object.fromEntries(MODEL_EDIT_AGENTS.map((agent) => [agent, ''])),
   );
@@ -289,6 +304,7 @@ export function ConnectorsPage() {
     const provider = normalizeLlmProvider(settings.provider);
     const resolvedDecisionMode = normalizeDecisionMode(settings.decision_mode);
     const configuredDefault = typeof settings.default_model === 'string' ? settings.default_model.trim() : '';
+    const resolvedMemoryContextEnabled = normalizeBooleanSetting(settings.memory_context_enabled, false);
     const rawMap = settings.agent_models && typeof settings.agent_models === 'object'
       ? (settings.agent_models as Record<string, unknown>)
       : {};
@@ -327,6 +343,7 @@ export function ConnectorsPage() {
 
     setLlmProvider(provider);
     setDecisionMode(resolvedDecisionMode);
+    setMemoryContextEnabled(resolvedMemoryContextEnabled);
     setDefaultLlmModel(configuredDefault || defaultModelForProvider(provider));
     setAgentModels(next);
     setAgentSkills(nextSkills);
@@ -489,6 +506,7 @@ export function ConnectorsPage() {
           agent_models: cleanedModels,
           agent_llm_enabled: cleanedEnabled,
           agent_skills: cleanedSkills,
+          memory_context_enabled: memoryContextEnabled,
         },
       });
       await loadAll();
@@ -518,6 +536,7 @@ export function ConnectorsPage() {
         settings: {
           ...existingSettings,
           decision_mode: decisionMode,
+          memory_context_enabled: memoryContextEnabled,
         },
       });
       await loadAll();
@@ -1054,12 +1073,24 @@ export function ConnectorsPage() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Utiliser `memory_context` dans les prompts
+                  <input
+                    className="ui-switch"
+                    type="checkbox"
+                    checked={memoryContextEnabled}
+                    onChange={(e) => setMemoryContextEnabled(e.target.checked)}
+                  />
+                </label>
                 <div>
                   {DECISION_MODE_OPTIONS.map((option) => (
                     <p key={option.value} className="model-source">
                       <strong>{option.label}:</strong> {option.description}
                     </p>
                   ))}
+                  <p className="model-source">
+                    Quand désactivé, les agents ne reçoivent plus le `memory_context` (par défaut: désactivé).
+                  </p>
                 </div>
                 <button className="btn-primary" disabled={decisionModeSaving}>
                   {decisionModeSaving ? 'Enregistrement...' : 'Enregistrer le mode de décision'}

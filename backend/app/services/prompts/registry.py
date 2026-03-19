@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from string import Formatter
 from typing import Any
 
 from sqlalchemy import func
@@ -8,10 +9,14 @@ from sqlalchemy.orm import Session
 from app.db.models.prompt_template import PromptTemplate
 from app.services.llm.model_selector import AgentModelSelector
 
-LANGUAGE_DIRECTIVE = (
-    "Réponds en français. "
-    "Conserve uniquement les labels techniques attendus (BUY/SELL/HOLD et bullish/bearish/neutral) si nécessaire."
+LANGUAGE_DIRECTIVE_BASE = 'Réponds en français.'
+LANGUAGE_DIRECTIVE_TRADING_LABELS = (
+    'Réponds en français. '
+    'Conserve uniquement les labels techniques attendus (BUY/SELL/HOLD et bullish/bearish/neutral) si nécessaire.'
 )
+LANGUAGE_DIRECTIVE_RISK = 'Réponds en français. Utilise strictement APPROVE ou REJECT quand demandé.'
+LANGUAGE_DIRECTIVE_EXECUTION = 'Réponds en français. Utilise strictement BUY, SELL ou HOLD quand demandé.'
+LANGUAGE_DIRECTIVE_JSON = 'Réponds en français. Fournis uniquement du JSON valide quand demandé.'
 
 DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     'technical-analyst': {
@@ -78,7 +83,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
             "Pair: {pair}\nTimeframe: {timeframe}\nMode: {mode}\nDecision: {decision}\nEntry: {entry}\n"
             "Stop loss: {stop_loss}\nTake profit: {take_profit}\nRisk %: {risk_percent}\n"
             "Sortie déterministe: accepted={accepted}, suggested_volume={suggested_volume}, reasons={reasons}\n"
-            "Retour attendu: APPROVE ou REJECT puis justification concise."
+            'Retour attendu: JSON strict {{"decision":"APPROVE|REJECT","justification":"..."}} sans texte additionnel.'
         ),
     },
     'execution-manager': {
@@ -90,7 +95,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
             "Pair: {pair}\nTimeframe: {timeframe}\nMode: {mode}\nDecision trader: {decision}\n"
             "Risk accepted: {risk_accepted}\nSuggested volume: {suggested_volume}\n"
             "Stop loss: {stop_loss}\nTake profit: {take_profit}\n"
-            "Retour attendu: BUY, SELL ou HOLD, puis justification concise."
+            'Retour attendu: JSON strict {{"decision":"BUY|SELL|HOLD","justification":"..."}} sans texte additionnel.'
         ),
     },
     'order-guardian': {
@@ -129,7 +134,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
 
 class SafeDict(dict):
     def __missing__(self, key: str) -> str:
-        return '{' + key + '}'
+        return f'<MISSING:{key}>'
 
 
 class PromptTemplateService:
@@ -137,11 +142,46 @@ class PromptTemplateService:
         self.model_selector = AgentModelSelector()
 
     @staticmethod
-    def _enforce_language(system_prompt: str) -> str:
+    def _language_directive_for_agent(agent_name: str) -> str:
+        if agent_name == 'risk-manager':
+            return LANGUAGE_DIRECTIVE_RISK
+        if agent_name == 'execution-manager':
+            return LANGUAGE_DIRECTIVE_EXECUTION
+        if agent_name == 'schedule-planner-agent':
+            return LANGUAGE_DIRECTIVE_JSON
+        if agent_name in {
+            'technical-analyst',
+            'news-analyst',
+            'macro-analyst',
+            'sentiment-agent',
+            'bullish-researcher',
+            'bearish-researcher',
+            'trader-agent',
+        }:
+            return LANGUAGE_DIRECTIVE_TRADING_LABELS
+        return LANGUAGE_DIRECTIVE_BASE
+
+    @classmethod
+    def _enforce_language(cls, system_prompt: str, agent_name: str) -> str:
         lower = system_prompt.lower()
         if 'réponds en français' in lower or 'respond in french' in lower:
             return system_prompt
-        return f'{system_prompt}\n\n{LANGUAGE_DIRECTIVE}'
+        directive = cls._language_directive_for_agent(agent_name)
+        return f'{system_prompt}\n\n{directive}'
+
+    @staticmethod
+    def _required_template_variables(template: str) -> list[str]:
+        keys: list[str] = []
+        seen: set[str] = set()
+        for _, field_name, _, _ in Formatter().parse(template):
+            if not field_name:
+                continue
+            root = field_name.split('.', 1)[0].split('[', 1)[0].strip()
+            if not root or root in seen:
+                continue
+            seen.add(root)
+            keys.append(root)
+        return keys
 
     @staticmethod
     def _append_skills_block(system_prompt: str, skills: list[str]) -> str:
@@ -246,8 +286,16 @@ class PromptTemplateService:
 
         skills = self.model_selector.resolve_skills(db, agent_name)
         system_prompt = self._append_skills_block(system_prompt, skills)
-        user_prompt = user_template.format_map(SafeDict(**variables))
-        system_prompt = self._enforce_language(system_prompt)
+        required_vars = self._required_template_variables(user_template)
+        missing_variables = [key for key in required_vars if key not in variables]
+        render_variables = dict(variables)
+        for key in missing_variables:
+            render_variables[key] = f'<MISSING:{key}>'
+        user_prompt = user_template.format_map(SafeDict(**render_variables))
+        if missing_variables:
+            missing_payload = ', '.join(missing_variables)
+            user_prompt = f'{user_prompt}\n\n[WARN_PROMPT_MISSING_VARS] {missing_payload}'
+        system_prompt = self._enforce_language(system_prompt, agent_name)
 
         return {
             'prompt_id': prompt_id,
@@ -255,4 +303,5 @@ class PromptTemplateService:
             'system_prompt': system_prompt,
             'user_prompt': user_prompt,
             'skills': skills,
+            'missing_variables': missing_variables,
         }

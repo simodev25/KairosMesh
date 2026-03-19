@@ -84,6 +84,23 @@ def _normalize_agent_skills(raw_skills: object) -> dict[str, list[str]]:
     return normalized
 
 
+def _normalize_bool_setting(value: object, *, fallback: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'1', 'true', 'yes', 'on'}:
+            return True
+        if normalized in {'0', 'false', 'no', 'off'}:
+            return False
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    return fallback
+
+
 def _sanitize_ollama_settings(raw_settings: dict) -> dict:
     settings = dict(raw_settings or {})
     raw_enabled = settings.get('agent_llm_enabled')
@@ -93,6 +110,10 @@ def _sanitize_ollama_settings(raw_settings: dict) -> dict:
     settings['decision_mode'] = normalize_decision_mode(
         settings.get('decision_mode'),
         fallback=DEFAULT_DECISION_MODE,
+    )
+    settings['memory_context_enabled'] = _normalize_bool_setting(
+        settings.get('memory_context_enabled'),
+        fallback=False,
     )
     return settings
 
@@ -125,6 +146,7 @@ def list_connectors(
                 connector_settings = {
                     'provider': settings.llm_provider,
                     'decision_mode': normalize_decision_mode(settings.decision_mode),
+                    'memory_context_enabled': False,
                 }
             conn = ConnectorConfig(connector_name=connector_name, enabled=True, settings=connector_settings)
             db.add(conn)
@@ -137,6 +159,7 @@ def list_connectors(
                 **current_settings,
                 'provider': current_settings.get('provider', settings.llm_provider),
                 'decision_mode': current_settings.get('decision_mode', settings.decision_mode),
+                'memory_context_enabled': current_settings.get('memory_context_enabled', False),
             }
         )
         if normalized_settings != current_settings:

@@ -31,6 +31,40 @@ def _seed_run(db: Session, *, mode: str = 'simulation') -> AnalysisRun:
     return run
 
 
+def test_compact_analysis_outputs_for_debate_drops_prompt_noise() -> None:
+    payload = {
+        'technical-analyst': {
+            'signal': 'bullish',
+            'score': 0.25,
+            'reason': 'trend aligned',
+            'indicators': {
+                'trend': 'bullish',
+                'rsi': 62.0,
+                'macd_diff': 0.001,
+                'last_price': 1.12,
+                'atr': 0.0008,
+                'ema_fast': 1.11,
+            },
+            'prompt_meta': {'system_prompt': 'very long', 'user_prompt': 'very long too'},
+        },
+        'news-analyst': {
+            'signal': 'neutral',
+            'score': 0.0,
+            'reason': 'No Yahoo Finance news',
+            'prompt_meta': {'prompt_id': 1},
+        },
+    }
+
+    compact = ForexOrchestrator._compact_analysis_outputs_for_debate(payload)
+
+    assert compact['technical-analyst']['signal'] == 'bullish'
+    assert compact['technical-analyst']['score'] == 0.25
+    assert compact['technical-analyst']['indicators']['trend'] == 'bullish'
+    assert 'ema_fast' not in compact['technical-analyst']['indicators']
+    assert 'prompt_meta' not in compact['technical-analyst']
+    assert 'prompt_meta' not in compact['news-analyst']
+
+
 def test_orchestrator_writes_debug_trade_trace_json(monkeypatch, tmp_path: Path) -> None:
     engine = create_engine('sqlite:///:memory:')
     Base.metadata.create_all(bind=engine)
@@ -200,3 +234,149 @@ def test_orchestrator_fails_live_run_when_llm_output_is_degraded(monkeypatch) ->
         assert failed_run.status == 'failed'
         assert 'degraded LLM response from technical-analyst' in str(failed_run.error)
         assert execution_called['value'] is False
+
+
+def test_orchestrator_allows_live_hold_when_no_trade_candidate_despite_degradation(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db, mode='live')
+        orchestrator = ForexOrchestrator()
+
+        monkeypatch.setattr(orchestrator.prompt_service, 'seed_defaults', lambda _db: None)
+        monkeypatch.setattr(orchestrator.market_provider, 'get_market_snapshot', lambda *_args, **_kwargs: {
+            'degraded': False,
+            'pair': 'EURUSD',
+            'timeframe': 'H1',
+            'last_price': 1.102,
+            'atr': 0.001,
+            'trend': 'bullish',
+        })
+        monkeypatch.setattr(orchestrator.market_provider, 'get_news_context', lambda *_args, **_kwargs: {
+            'degraded': False,
+            'pair': 'EURUSD',
+            'news': [],
+        })
+        monkeypatch.setattr(orchestrator.memory_service, 'search', lambda **_kwargs: [])
+        monkeypatch.setattr(orchestrator.memory_service, 'add_run_memory', lambda *_args, **_kwargs: None)
+
+        def fake_analyze_context(*_args, **_kwargs):
+            return {
+                'analysis_outputs': {
+                    'technical-analyst': {'signal': 'neutral', 'score': 0.0, 'degraded': True},
+                    'news-analyst': {'signal': 'neutral', 'score': 0.0},
+                    'macro-analyst': {'signal': 'neutral', 'score': 0.0},
+                    'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+                },
+                'bullish': {'arguments': ['No edge'], 'confidence': 0.0, 'degraded': True},
+                'bearish': {'arguments': ['No edge'], 'confidence': 0.0, 'degraded': True},
+                'trader_decision': {
+                    'decision': 'HOLD',
+                    'entry': 1.102,
+                    'stop_loss': None,
+                    'take_profit': None,
+                    'confidence': 0.1,
+                    'degraded': True,
+                },
+                'risk': {
+                    'accepted': True,
+                    'suggested_volume': 0.0,
+                    'reasons': ['No trade requested (HOLD).'],
+                    'degraded': False,
+                },
+            }
+
+        monkeypatch.setattr(orchestrator, 'analyze_context', fake_analyze_context)
+        monkeypatch.setattr(
+            orchestrator.execution_manager_agent,
+            'run',
+            lambda *_args, **_kwargs: {
+                'decision': 'HOLD',
+                'should_execute': False,
+                'side': None,
+                'volume': 0.0,
+                'reason': 'No execution for decision=HOLD.',
+                'degraded': False,
+            },
+        )
+
+        completed_run = asyncio.run(orchestrator.execute(db, run, risk_percent=1.0))
+
+        assert completed_run.status == 'completed'
+        assert completed_run.error is None
+
+
+def test_orchestrator_skips_memory_context_search_when_disabled(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db, mode='simulation')
+        orchestrator = ForexOrchestrator()
+
+        monkeypatch.setattr(orchestrator.prompt_service, 'seed_defaults', lambda _db: None)
+        monkeypatch.setattr(orchestrator.model_selector, 'resolve_memory_context_enabled', lambda *_args, **_kwargs: False)
+        monkeypatch.setattr(orchestrator.market_provider, 'get_market_snapshot', lambda *_args, **_kwargs: {
+            'degraded': False,
+            'pair': 'EURUSD',
+            'timeframe': 'H1',
+            'last_price': 1.102,
+            'atr': 0.001,
+            'trend': 'neutral',
+        })
+        monkeypatch.setattr(orchestrator.market_provider, 'get_news_context', lambda *_args, **_kwargs: {
+            'degraded': False,
+            'pair': 'EURUSD',
+            'news': [],
+        })
+
+        search_called = {'value': False}
+
+        def fail_search(**_kwargs):
+            search_called['value'] = True
+            raise AssertionError('memory_service.search should not be called when memory context is disabled')
+
+        monkeypatch.setattr(orchestrator.memory_service, 'search', fail_search)
+        monkeypatch.setattr(orchestrator.memory_service, 'add_run_memory', lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            orchestrator,
+            'analyze_context',
+            lambda *_args, **_kwargs: {
+                'analysis_outputs': {'technical-analyst': {'signal': 'neutral', 'score': 0.0}},
+                'bullish': {'arguments': ['No edge'], 'confidence': 0.0},
+                'bearish': {'arguments': ['No edge'], 'confidence': 0.0},
+                'trader_decision': {
+                    'decision': 'HOLD',
+                    'entry': 1.102,
+                    'stop_loss': None,
+                    'take_profit': None,
+                    'confidence': 0.1,
+                },
+                'risk': {
+                    'accepted': True,
+                    'suggested_volume': 0.0,
+                    'reasons': ['No trade requested (HOLD).'],
+                },
+            },
+        )
+        monkeypatch.setattr(
+            orchestrator.execution_manager_agent,
+            'run',
+            lambda *_args, **_kwargs: {
+                'decision': 'HOLD',
+                'should_execute': False,
+                'side': None,
+                'volume': 0.0,
+                'reason': 'No execution for decision=HOLD.',
+                'degraded': False,
+                'prompt_meta': {'llm_enabled': False, 'skills_count': 0, 'skills': []},
+            },
+        )
+
+        completed_run = asyncio.run(orchestrator.execute(db, run, risk_percent=1.0))
+
+        assert completed_run.status == 'completed'
+        assert search_called['value'] is False
+        assert completed_run.trace.get('memory_context') == []
+        assert completed_run.trace.get('memory_context_enabled') is False

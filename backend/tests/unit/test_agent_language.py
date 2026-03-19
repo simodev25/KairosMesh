@@ -120,3 +120,36 @@ def test_technical_agent_respects_explicit_neutral_llm_output(monkeypatch) -> No
     out = agent.run(ctx, db=None)
     assert out['signal'] == 'neutral'
     assert out['score'] == -0.15
+
+
+def test_technical_agent_marks_empty_llm_output_as_degraded(monkeypatch) -> None:
+    agent = TechnicalAnalystAgent()
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(agent.model_selector, 'resolve', lambda *_args, **_kwargs: 'llama3.1')
+    monkeypatch.setattr(
+        agent.llm,
+        'chat',
+        lambda *_args, **_kwargs: {'text': '   ', 'degraded': False},
+    )
+
+    ctx = AgentContext(
+        pair='EURUSD',
+        timeframe='M15',
+        mode='simulation',
+        risk_percent=1.0,
+        market_snapshot={
+            'degraded': False,
+            'pair': 'EURUSD',
+            'timeframe': 'M15',
+            'last_price': 1.1460,
+            'trend': 'bullish',
+            'rsi': 45.0,
+            'macd_diff': 0.0003,
+            'atr': 0.0008,
+        },
+        news_context={'news': []},
+        memory_context=[],
+    )
+
+    out = agent.run(ctx, db=None)
+    assert out['degraded'] is True

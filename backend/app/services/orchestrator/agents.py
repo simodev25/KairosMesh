@@ -77,6 +77,85 @@ def _parse_risk_acceptance_from_text(text: str, default_value: bool) -> bool:
     return default_value
 
 
+def _extract_first_json_object(text: str) -> dict[str, Any] | None:
+    content = str(text or '').strip()
+    if not content:
+        return None
+
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    start = content.find('{')
+    end = content.rfind('}')
+    if start < 0 or end <= start:
+        return None
+    candidate = content[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        return None
+    return None
+
+
+def _parse_risk_acceptance_contract(text: str, default_value: bool) -> tuple[bool, bool]:
+    payload = _extract_first_json_object(text)
+    if payload is not None:
+        decision = str(payload.get('decision', '') or '').strip().upper()
+        if decision == 'APPROVE':
+            return True, True
+        if decision == 'REJECT':
+            return False, True
+    return _parse_risk_acceptance_from_text(text, default_value), False
+
+
+def _parse_trade_decision_contract(text: str, fallback_decision: str = 'HOLD') -> tuple[str, bool]:
+    payload = _extract_first_json_object(text)
+    if payload is not None:
+        decision = str(payload.get('decision', '') or '').strip().upper()
+        if decision in {'BUY', 'SELL', 'HOLD'}:
+            return decision, True
+    parsed = _parse_trade_decision_from_text(text)
+    if parsed in {'BUY', 'SELL', 'HOLD'}:
+        return parsed, False
+    return fallback_decision, False
+
+
+def _normalize_llm_text_and_degraded(llm_res: dict[str, Any], *, require_text: bool = False) -> tuple[str, bool]:
+    text = str(llm_res.get('text', '') or '')
+    degraded = bool(llm_res.get('degraded', False))
+    if require_text and not text.strip():
+        degraded = True
+    return text, degraded
+
+
+def _compact_outputs_for_debate(agent_outputs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    compact: dict[str, dict[str, Any]] = {}
+    for name, output in (agent_outputs or {}).items():
+        if not isinstance(output, dict):
+            continue
+        item: dict[str, Any] = {}
+        for key in ('signal', 'score', 'reason', 'summary', 'llm_summary', 'news_count', 'degraded'):
+            if key in output:
+                item[key] = output.get(key)
+        indicators = output.get('indicators')
+        if isinstance(indicators, dict):
+            indicator_subset = {
+                key: indicators.get(key)
+                for key in ('trend', 'rsi', 'macd_diff', 'last_price', 'atr', 'change_pct')
+                if key in indicators
+            }
+            if indicator_subset:
+                item['indicators'] = indicator_subset
+        compact[name] = item
+    return compact
+
+
 def _merge_llm_signal(base_score: float, llm_signal: str, *, threshold: float, llm_bias: float) -> tuple[float, str]:
     llm_score = {'bullish': llm_bias, 'bearish': -llm_bias, 'neutral': 0.0}[llm_signal]
     base_score = float(base_score)
@@ -511,7 +590,8 @@ class TechnicalAnalystAgent:
             model=llm_model,
             db=db,
         )
-        llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
+        llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+        llm_signal = _parse_signal_from_text(llm_text)
         merged_score, merged_signal = _merge_llm_signal(
             float(output['score']),
             llm_signal,
@@ -524,8 +604,8 @@ class TechnicalAnalystAgent:
             {
                 'signal': merged_signal,
                 'score': merged_score,
-                'llm_summary': llm_res.get('text', ''),
-                'degraded': llm_res.get('degraded', False),
+                'llm_summary': llm_text,
+                'degraded': llm_degraded,
                 'prompt_meta': {
                     'prompt_id': prompt_info.get('prompt_id'),
                     'prompt_version': prompt_info.get('version', 0),
@@ -558,8 +638,27 @@ class NewsAnalystAgent:
             item for item in news
             if isinstance(item, dict) and str(item.get('title', '') or '').strip()
         ]
+        llm_enabled = self.model_selector.is_enabled(db, self.name)
+        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
+        llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         if not valid_news:
-            return {'signal': 'neutral', 'score': 0.0, 'reason': 'No Yahoo Finance news'}
+            output = {
+                'signal': 'neutral',
+                'score': 0.0,
+                'reason': 'No Yahoo Finance news',
+                'summary': 'No Yahoo Finance news',
+                'news_count': 0,
+                'degraded': False,
+                'prompt_meta': {
+                    'prompt_id': None,
+                    'prompt_version': 0,
+                    'llm_model': llm_model,
+                    'llm_enabled': llm_enabled,
+                    'skills_count': len(runtime_skills),
+                },
+            }
+            _enrich_prompt_meta_debug(output['prompt_meta'], runtime_skills=runtime_skills)
+            return output
 
         headlines = '\n'.join(f"- {item['title']}" for item in valid_news[:5])
         fallback_system = (
@@ -571,9 +670,6 @@ class NewsAnalystAgent:
             'Titres:\n{headlines}\nDonne un sentiment concis et les facteurs de risque.'
         )
 
-        llm_enabled = self.model_selector.is_enabled(db, self.name)
-        runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
-        llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         if db is not None and llm_enabled:
             prompt_info = self.prompt_service.render(
@@ -601,10 +697,11 @@ class NewsAnalystAgent:
 
         if llm_enabled:
             llm_res = self.llm.chat(system, user, model=llm_model, db=db)
-            signal = _parse_signal_from_text(llm_res.get('text', ''))
+            llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+            signal = _parse_signal_from_text(llm_text)
             score = {'bullish': 0.2, 'bearish': -0.2, 'neutral': 0.0}[signal]
-            degraded = llm_res.get('degraded', False)
-            summary = llm_res.get('text', '')
+            degraded = llm_degraded
+            summary = llm_text
         else:
             signal, score = _deterministic_headline_sentiment(headlines)
             if runtime_skills:
@@ -721,15 +818,16 @@ class MacroAnalystAgent:
             model=llm_model,
             db=db,
         )
-        llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
+        llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+        llm_signal = _parse_signal_from_text(llm_text)
         output['score'], output['signal'] = _merge_llm_signal(
             float(output.get('score', 0.0)),
             llm_signal,
             threshold=0.05,
             llm_bias=0.05,
         )
-        output['llm_summary'] = llm_res.get('text', '')
-        output['degraded'] = llm_res.get('degraded', False)
+        output['llm_summary'] = llm_text
+        output['degraded'] = llm_degraded
         output['prompt_meta'] = {
             'prompt_id': prompt_info.get('prompt_id'),
             'prompt_version': prompt_info.get('version', 0),
@@ -826,15 +924,16 @@ class SentimentAgent:
             model=llm_model,
             db=db,
         )
-        llm_signal = _parse_signal_from_text(llm_res.get('text', ''))
+        llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+        llm_signal = _parse_signal_from_text(llm_text)
         output['score'], output['signal'] = _merge_llm_signal(
             float(output.get('score', 0.0)),
             llm_signal,
             threshold=0.05,
             llm_bias=0.05,
         )
-        output['llm_summary'] = llm_res.get('text', '')
-        output['degraded'] = llm_res.get('degraded', False)
+        output['llm_summary'] = llm_text
+        output['degraded'] = llm_degraded
         output['prompt_meta'] = {
             'prompt_id': prompt_info.get('prompt_id'),
             'prompt_version': prompt_info.get('version', 0),
@@ -860,12 +959,13 @@ class BullishResearcherAgent:
         self.model_selector = AgentModelSelector()
 
     def run(self, ctx: AgentContext, agent_outputs: dict[str, dict[str, Any]], db: Session | None = None) -> dict[str, Any]:
+        debate_inputs = _compact_outputs_for_debate(agent_outputs)
         arguments = []
-        for name, output in agent_outputs.items():
+        for name, output in debate_inputs.items():
             if output.get('score', 0) > 0:
                 arguments.append(f"{name}: {output.get('reason', output.get('signal', 'bullish context'))}")
 
-        confidence = round(min(sum(max(v.get('score', 0), 0) for v in agent_outputs.values()), 1.0), 3)
+        confidence = round(min(sum(max(v.get('score', 0), 0) for v in debate_inputs.values()), 1.0), 3)
         fallback_system = (
             'Tu es un chercheur Forex haussier. Construis la meilleure thèse haussière à partir des preuves. '
             'Réponds en français.'
@@ -877,7 +977,7 @@ class BullishResearcherAgent:
         fallback_user_rendered = fallback_user.format(
             pair=ctx.pair,
             timeframe=ctx.timeframe,
-            signals_json=json.dumps(agent_outputs, ensure_ascii=True),
+            signals_json=json.dumps(debate_inputs, ensure_ascii=True),
             memory_context='\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
         )
 
@@ -885,9 +985,10 @@ class BullishResearcherAgent:
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
+        should_call_llm = llm_enabled and any(abs(float(item.get('score', 0.0) or 0.0)) >= 0.08 for item in debate_inputs.values())
         system_prompt = fallback_system
         user_prompt = fallback_user_rendered
-        if db is not None and llm_enabled:
+        if db is not None and should_call_llm:
             prompt_info = self.prompt_service.render(
                 db=db,
                 agent_name=self.name,
@@ -896,21 +997,26 @@ class BullishResearcherAgent:
                 variables={
                     'pair': ctx.pair,
                     'timeframe': ctx.timeframe,
-                    'signals_json': json.dumps(agent_outputs, ensure_ascii=True),
+                    'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
                     'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                 },
             )
             system_prompt = prompt_info['system_prompt']
             user_prompt = prompt_info['user_prompt']
             llm_out = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
+            llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_out, require_text=True)
         else:
             llm_out = {'text': ''}
+            llm_text = 'LLM debate skipped: insufficient directional evidence.' if llm_enabled and not should_call_llm else ''
+            llm_degraded = False
 
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         output = {
             'arguments': arguments or ['Aucun argument haussier fort.'],
             'confidence': confidence,
-            'llm_debate': llm_out.get('text', ''),
+            'llm_debate': llm_text,
+            'degraded': llm_degraded,
+            'llm_called': bool(db is not None and should_call_llm),
             'prompt_meta': {
                 'prompt_id': prompt_info.get('prompt_id'),
                 'prompt_version': prompt_info.get('version', 0),
@@ -937,12 +1043,13 @@ class BearishResearcherAgent:
         self.model_selector = AgentModelSelector()
 
     def run(self, ctx: AgentContext, agent_outputs: dict[str, dict[str, Any]], db: Session | None = None) -> dict[str, Any]:
+        debate_inputs = _compact_outputs_for_debate(agent_outputs)
         arguments = []
-        for name, output in agent_outputs.items():
+        for name, output in debate_inputs.items():
             if output.get('score', 0) < 0:
                 arguments.append(f"{name}: {output.get('reason', output.get('signal', 'bearish context'))}")
 
-        confidence = round(min(abs(sum(min(v.get('score', 0), 0) for v in agent_outputs.values())), 1.0), 3)
+        confidence = round(min(abs(sum(min(v.get('score', 0), 0) for v in debate_inputs.values())), 1.0), 3)
         fallback_system = (
             'Tu es un chercheur Forex baissier. Construis la meilleure thèse baissière à partir des preuves. '
             'Réponds en français.'
@@ -954,7 +1061,7 @@ class BearishResearcherAgent:
         fallback_user_rendered = fallback_user.format(
             pair=ctx.pair,
             timeframe=ctx.timeframe,
-            signals_json=json.dumps(agent_outputs, ensure_ascii=True),
+            signals_json=json.dumps(debate_inputs, ensure_ascii=True),
             memory_context='\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
         )
 
@@ -962,9 +1069,10 @@ class BearishResearcherAgent:
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
+        should_call_llm = llm_enabled and any(abs(float(item.get('score', 0.0) or 0.0)) >= 0.08 for item in debate_inputs.values())
         system_prompt = fallback_system
         user_prompt = fallback_user_rendered
-        if db is not None and llm_enabled:
+        if db is not None and should_call_llm:
             prompt_info = self.prompt_service.render(
                 db=db,
                 agent_name=self.name,
@@ -973,21 +1081,26 @@ class BearishResearcherAgent:
                 variables={
                     'pair': ctx.pair,
                     'timeframe': ctx.timeframe,
-                    'signals_json': json.dumps(agent_outputs, ensure_ascii=True),
+                    'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
                     'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                 },
             )
             system_prompt = prompt_info['system_prompt']
             user_prompt = prompt_info['user_prompt']
             llm_out = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
+            llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_out, require_text=True)
         else:
             llm_out = {'text': ''}
+            llm_text = 'LLM debate skipped: insufficient directional evidence.' if llm_enabled and not should_call_llm else ''
+            llm_degraded = False
 
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         output = {
             'arguments': arguments or ['Aucun argument baissier fort.'],
             'confidence': confidence,
-            'llm_debate': llm_out.get('text', ''),
+            'llm_debate': llm_text,
+            'degraded': llm_degraded,
+            'llm_called': bool(db is not None and should_call_llm),
             'prompt_meta': {
                 'prompt_id': prompt_info.get('prompt_id'),
                 'prompt_version': prompt_info.get('version', 0),
@@ -1535,6 +1648,7 @@ class TraderAgent:
             model=llm_model,
             db=db,
         )
+        llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
         deterministic_note = _build_execution_note(
             pair=ctx.pair,
             timeframe=ctx.timeframe,
@@ -1544,7 +1658,7 @@ class TraderAgent:
             take_profit=take_profit,
             confidence=confidence,
         )
-        llm_note = llm_res.get('text', '')
+        llm_note = llm_text
         if _execution_note_is_consistent(
             llm_note,
             decision=decision,
@@ -1554,7 +1668,7 @@ class TraderAgent:
             output['execution_note'] = llm_note
         else:
             output['execution_note'] = deterministic_note
-        output['degraded'] = llm_res.get('degraded', False)
+        output['degraded'] = llm_degraded
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         output['prompt_meta'] = {
             'prompt_id': prompt_info.get('prompt_id'),
@@ -1649,7 +1763,7 @@ class RiskManagerAgent:
             'Entry: {entry}\nStop loss: {stop_loss}\nTake profit: {take_profit}\n'
             'Risk %: {risk_percent}\n'
             'Sortie déterministe: accepted={accepted}, suggested_volume={suggested_volume}, reasons={reasons}\n'
-            'Retour attendu: APPROVE ou REJECT puis justification concise.'
+            'Retour attendu: JSON strict {{"decision":"APPROVE|REJECT","justification":"..."}} sans texte additionnel.'
         )
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         if db is not None:
@@ -1691,14 +1805,18 @@ class RiskManagerAgent:
             )
 
         llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
-        llm_accept = _parse_risk_acceptance_from_text(llm_res.get('text', ''), risk.accepted)
+        llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+        llm_requested_accept, strict_json_ok = _parse_risk_acceptance_contract(llm_text, risk.accepted)
+        llm_accept = llm_requested_accept
         live_mode = str(ctx.mode or '').strip().lower() == 'live'
         if live_mode and llm_accept and not risk.accepted:
             llm_accept = False
 
         reasons = list(deterministic_reasons)
+        if not strict_json_ok:
+            reasons.append('LLM output not strict JSON; fallback parse used.')
         reasons.append(f"LLM review: {'APPROVE' if llm_accept else 'REJECT'}")
-        if live_mode and not risk.accepted and _parse_risk_acceptance_from_text(llm_res.get('text', ''), risk.accepted):
+        if live_mode and not risk.accepted and llm_requested_accept:
             reasons.append('Live mode guardrail: deterministic risk rejection cannot be overridden by LLM.')
 
         output.update(
@@ -1706,8 +1824,9 @@ class RiskManagerAgent:
                 'accepted': llm_accept,
                 'reasons': reasons,
                 'suggested_volume': adjusted_suggested_volume if llm_accept else 0.0,
-                'llm_summary': llm_res.get('text', ''),
-                'degraded': llm_res.get('degraded', False),
+                'llm_summary': llm_text,
+                'degraded': llm_degraded,
+                'contract_valid': strict_json_ok,
                 'prompt_meta': {
                     'prompt_id': prompt_info.get('prompt_id'),
                     'prompt_version': prompt_info.get('version', 0),
@@ -1784,7 +1903,7 @@ class ExecutionManagerAgent:
             'Pair: {pair}\nTimeframe: {timeframe}\nMode: {mode}\nDecision trader: {decision}\n'
             'Risk accepted: {risk_accepted}\nSuggested volume: {suggested_volume}\n'
             'Stop loss: {stop_loss}\nTake profit: {take_profit}\n'
-            'Retour attendu: BUY, SELL ou HOLD puis justification concise.'
+            'Retour attendu: JSON strict {{"decision":"BUY|SELL|HOLD","justification":"..."}} sans texte additionnel.'
         )
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         if db is not None:
@@ -1820,7 +1939,8 @@ class ExecutionManagerAgent:
             )
 
         llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
-        llm_decision = _parse_trade_decision_from_text(llm_res.get('text', ''))
+        llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+        llm_decision, strict_json_ok = _parse_trade_decision_contract(llm_text, fallback_decision='HOLD')
         live_mode = str(ctx.mode or '').strip().lower() == 'live'
         risk_accepted = bool(risk_output.get('accepted'))
 
@@ -1855,6 +1975,8 @@ class ExecutionManagerAgent:
             should_execute = llm_decision in {'BUY', 'SELL'}
             side = llm_decision if should_execute else None
             final_reason = 'Execution decision updated by LLM review.' if should_execute else 'LLM requested HOLD.'
+        if not strict_json_ok:
+            final_reason = f'{final_reason} LLM output not strict JSON; fallback parse used.'
 
         output.update(
             {
@@ -1863,8 +1985,9 @@ class ExecutionManagerAgent:
                 'side': side,
                 'volume': suggested_volume if should_execute else 0.0,
                 'reason': final_reason,
-                'llm_summary': llm_res.get('text', ''),
-                'degraded': llm_res.get('degraded', False),
+                'llm_summary': llm_text,
+                'degraded': llm_degraded,
+                'contract_valid': strict_json_ok,
                 'prompt_meta': {
                     'prompt_id': prompt_info.get('prompt_id'),
                     'prompt_version': prompt_info.get('version', 0),

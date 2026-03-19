@@ -55,6 +55,17 @@ def test_sanitize_ollama_settings_normalizes_decision_mode() -> None:
     assert fallback['decision_mode'] == 'conservative'
 
 
+def test_sanitize_ollama_settings_normalizes_memory_context_flag() -> None:
+    enabled = _sanitize_ollama_settings({'provider': 'ollama', 'memory_context_enabled': 'true'})
+    assert enabled['memory_context_enabled'] is True
+
+    disabled = _sanitize_ollama_settings({'provider': 'ollama', 'memory_context_enabled': 'off'})
+    assert disabled['memory_context_enabled'] is False
+
+    fallback = _sanitize_ollama_settings({'provider': 'ollama'})
+    assert fallback['memory_context_enabled'] is False
+
+
 def test_validate_decision_mode_value_rejects_invalid_values() -> None:
     _validate_decision_mode_value({'decision_mode': 'balanced'})
     with pytest.raises(HTTPException):

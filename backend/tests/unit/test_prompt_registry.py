@@ -71,3 +71,22 @@ def test_prompt_registry_render_appends_agent_skills() -> None:
         assert 'Skills agent à appliquer:' in rendered['system_prompt']
         assert '- Prioriser impact Forex' in rendered['system_prompt']
         assert rendered['skills'] == ['Prioriser impact Forex', 'Citer les risques']
+
+
+def test_prompt_registry_render_marks_missing_variables() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    service = PromptTemplateService()
+    with Session(engine) as db:
+        rendered = service.render(
+            db=db,
+            agent_name='technical-analyst',
+            fallback_system='You are a forex technical analyst.',
+            fallback_user='Pair: {pair}\nTrend: {trend}',
+            variables={'pair': 'EURUSD'},
+        )
+
+        assert rendered['missing_variables'] == ['trend']
+        assert '<MISSING:trend>' in rendered['user_prompt']
+        assert '[WARN_PROMPT_MISSING_VARS] trend' in rendered['user_prompt']

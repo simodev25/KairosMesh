@@ -15,6 +15,7 @@ from app.db.models.run import AnalysisRun
 from app.db.session import SessionLocal
 from app.observability.metrics import analysis_runs_total, orchestrator_step_duration_seconds
 from app.services.execution.executor import ExecutionService
+from app.services.llm.model_selector import AgentModelSelector
 from app.services.market.yfinance_provider import YFinanceMarketProvider
 from app.services.memory.vector_memory import VectorMemoryService
 from app.services.orchestrator.agents import (
@@ -55,6 +56,7 @@ class ForexOrchestrator:
         self.memory_service = VectorMemoryService()
         self.prompt_service = PromptTemplateService()
         self.execution_service = ExecutionService()
+        self.model_selector = AgentModelSelector()
 
         self.technical_agent = TechnicalAnalystAgent()
         self.news_agent = NewsAnalystAgent(self.prompt_service)
@@ -132,6 +134,28 @@ class ForexOrchestrator:
             except Exception:
                 pass
         return str(value)
+
+    @staticmethod
+    def _compact_analysis_outputs_for_debate(analysis_outputs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        compact: dict[str, dict[str, Any]] = {}
+        for agent_name, output in (analysis_outputs or {}).items():
+            if not isinstance(output, dict):
+                continue
+            compact_output: dict[str, Any] = {}
+            for key in ('signal', 'score', 'reason', 'summary', 'llm_summary', 'news_count', 'degraded'):
+                if key in output:
+                    compact_output[key] = output.get(key)
+            indicators = output.get('indicators')
+            if isinstance(indicators, dict):
+                compact_indicators = {
+                    key: indicators.get(key)
+                    for key in ('trend', 'rsi', 'macd_diff', 'last_price', 'atr', 'change_pct')
+                    if key in indicators
+                }
+                if compact_indicators:
+                    compact_output['indicators'] = compact_indicators
+            compact[agent_name] = compact_output
+        return compact
 
     def _collect_run_steps(self, db: Session, run_id: int) -> list[dict[str, Any]]:
         steps = (
@@ -239,6 +263,49 @@ class ForexOrchestrator:
             if isinstance(output, dict) and output.get('degraded'):
                 degraded_agents.append(agent_name)
         return degraded_agents
+
+    @staticmethod
+    def _is_live_trade_candidate(
+        trader_decision: dict[str, Any],
+        risk_output: dict[str, Any],
+    ) -> bool:
+        decision = str(trader_decision.get('decision', 'HOLD') or '').strip().upper() or 'HOLD'
+        if decision not in {'BUY', 'SELL'}:
+            return False
+
+        execution_allowed = bool(trader_decision.get('execution_allowed', decision in {'BUY', 'SELL'}))
+        if not execution_allowed or not bool(risk_output.get('accepted')):
+            return False
+
+        try:
+            suggested_volume = float(risk_output.get('suggested_volume', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            suggested_volume = 0.0
+        return suggested_volume > 0.0
+
+    def _collect_live_blocking_degraded_agents(
+        self,
+        named_outputs: dict[str, dict[str, Any] | None],
+        *,
+        trader_decision: dict[str, Any],
+        risk_output: dict[str, Any],
+    ) -> list[str]:
+        degraded_agents = self._collect_degraded_agents(named_outputs)
+        if not degraded_agents:
+            return []
+
+        # These agents can degrade on explanatory text while core trade safety remains deterministic.
+        non_blocking_when_no_trade = {
+            self.bullish_researcher.name,
+            self.bearish_researcher.name,
+            self.trader_agent.name,
+            self.risk_manager_agent.name,
+        }
+
+        if not self._is_live_trade_candidate(trader_decision, risk_output):
+            return []
+
+        return [agent for agent in degraded_agents if agent not in non_blocking_when_no_trade]
 
     def analyze_context(
         self,
@@ -368,7 +435,7 @@ class ForexOrchestrator:
         )
         analysis_outputs.update(initial_outputs)
 
-        analysis_snapshot = dict(analysis_outputs)
+        analysis_snapshot = self._compact_analysis_outputs_for_debate(analysis_outputs)
         debate_outputs = execute_parallel_steps(
             [
                 (
@@ -422,13 +489,16 @@ class ForexOrchestrator:
 
         market = self.market_provider.get_market_snapshot(run.pair, run.timeframe)
         news = self.market_provider.get_news_context(run.pair)
-        memory_context = self.memory_service.search(
-            db=db,
-            pair=run.pair,
-            timeframe=run.timeframe,
-            query=f'{run.pair} {run.timeframe} trend {market.get("trend", "unknown")}',
-            limit=5,
-        )
+        memory_context_enabled = self.model_selector.resolve_memory_context_enabled(db)
+        memory_context: list[dict[str, Any]] = []
+        if memory_context_enabled:
+            memory_context = self.memory_service.search(
+                db=db,
+                pair=run.pair,
+                timeframe=run.timeframe,
+                query=f'{run.pair} {run.timeframe} trend {market.get("trend", "unknown")}',
+                limit=5,
+            )
 
         context = AgentContext(
             pair=run.pair,
@@ -459,14 +529,17 @@ class ForexOrchestrator:
             risk_output = analysis_bundle['risk']
 
             if str(run.mode or '').strip().lower() == 'live':
-                degraded_agents = self._collect_degraded_agents(
-                    {
-                        **analysis_outputs,
-                        self.bullish_researcher.name: bullish,
-                        self.bearish_researcher.name: bearish,
-                        self.trader_agent.name: trader_decision,
-                        self.risk_manager_agent.name: risk_output,
-                    }
+                candidate_outputs = {
+                    **analysis_outputs,
+                    self.bullish_researcher.name: bullish,
+                    self.bearish_researcher.name: bearish,
+                    self.trader_agent.name: trader_decision,
+                    self.risk_manager_agent.name: risk_output,
+                }
+                degraded_agents = self._collect_live_blocking_degraded_agents(
+                    candidate_outputs,
+                    trader_decision=trader_decision,
+                    risk_output=risk_output,
                 )
                 if degraded_agents:
                     degraded_list = ', '.join(sorted(dict.fromkeys(degraded_agents)))
@@ -551,6 +624,7 @@ class ForexOrchestrator:
                 'bullish': bullish,
                 'bearish': bearish,
                 'memory_context': memory_context,
+                'memory_context_enabled': memory_context_enabled,
                 'requested_metaapi_account_ref': metaapi_account_ref,
                 'workflow': list(self.WORKFLOW_STEPS),
             }
