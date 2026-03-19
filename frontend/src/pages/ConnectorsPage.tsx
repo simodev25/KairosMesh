@@ -141,9 +141,8 @@ function parseSymbolInput(value: string): string[] {
   return deduped;
 }
 
-function parseSkillsInput(value: string): string[] {
-  const normalized = value
-    .split(/[\n,]+/)
+function normalizeSkillsList(items: string[]): string[] {
+  const normalized = items
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
   const deduped: string[] = [];
@@ -155,6 +154,22 @@ function parseSkillsInput(value: string): string[] {
     deduped.push(skill);
   }
   return deduped;
+}
+
+function parseSkillsInput(value: string): string[] {
+  const raw = value.trim();
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return normalizeSkillsList(parsed.map((item) => String(item)));
+      }
+    } catch {
+      // fall back to newline parsing
+    }
+  }
+  return normalizeSkillsList(raw.split(/\n+/));
 }
 
 interface EditableSymbolGroup {
@@ -428,7 +443,7 @@ export function ConnectorsPage() {
     const cleanedSkills = Object.fromEntries(
       Object.entries(agentSkills)
         .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
-        .map(([agentName, skills]) => [agentName, parseSkillsInput((skills ?? []).join(','))] as const)
+        .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
         .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
     );
     const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
@@ -512,7 +527,7 @@ export function ConnectorsPage() {
     const cleanedSkills = Object.fromEntries(
       Object.entries(agentSkills)
         .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
-        .map(([agentName, skills]) => [agentName, parseSkillsInput((skills ?? []).join(','))] as const)
+        .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
         .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
     );
     const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
