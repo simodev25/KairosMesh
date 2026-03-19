@@ -2,6 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.routes.connectors import _sanitize_ollama_settings, _validate_decision_mode_value
+from app.core.config import get_settings
 
 
 def test_sanitize_ollama_settings_preserves_enabled_flags() -> None:
@@ -58,3 +59,14 @@ def test_validate_decision_mode_value_rejects_invalid_values() -> None:
     _validate_decision_mode_value({'decision_mode': 'balanced'})
     with pytest.raises(HTTPException):
         _validate_decision_mode_value({'decision_mode': 'too-risky'})
+
+
+def test_sanitize_invalid_decision_mode_uses_stable_default() -> None:
+    settings = get_settings()
+    previous = settings.decision_mode
+    try:
+        settings.decision_mode = 'balanced'
+        result = _sanitize_ollama_settings({'provider': 'ollama', 'decision_mode': 'invalid-value'})
+        assert result['decision_mode'] == 'conservative'
+    finally:
+        settings.decision_mode = previous

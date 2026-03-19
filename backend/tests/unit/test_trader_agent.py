@@ -424,3 +424,49 @@ def test_trader_agent_balanced_blocks_major_trend_momentum_contradiction() -> No
     assert result['contradiction_level'] == 'major'
     assert result['execution_allowed'] is False
     assert result['decision'] == 'HOLD'
+
+
+def test_trader_agent_permissive_override_is_not_set_when_evidence_source_is_already_ok() -> None:
+    agent = TraderAgent()
+    agent.model_selector.settings.decision_mode = 'permissive'
+    ctx = _context(trend='bearish', macd_diff=-0.03)
+    outputs = {
+        'technical-analyst': {'signal': 'bearish', 'score': -0.34},
+        'macro-analyst': {'signal': 'neutral', 'score': 0.0},
+        'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.0}
+    bearish = {'arguments': ['y'], 'confidence': 0.5}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['decision'] == 'SELL'
+    assert result['rationale']['evidence_source_ok'] is True
+    assert result['rationale']['technical_single_source_override'] is False
+    assert result['rationale']['permissive_technical_override'] is False
+    assert result['rationale']['evidence_source_requirement_bypassed'] is False
+
+
+def test_trader_agent_exposes_gate_fields_on_root_payload() -> None:
+    agent = TraderAgent()
+    agent.model_selector.settings.decision_mode = 'permissive'
+    ctx = _context(trend='bullish', macd_diff=0.02)
+    outputs = {
+        'technical-analyst': {'signal': 'bullish', 'score': 0.11},
+        'macro-analyst': {'signal': 'neutral', 'score': 0.0},
+        'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.8}
+    bearish = {'arguments': ['y'], 'confidence': 0.0}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['decision'] == 'BUY'
+    assert result['technical_signal'] == result['rationale']['technical_signal']
+    assert result['minimum_evidence_ok'] == result['rationale']['minimum_evidence_ok']
+    assert result['source_gate_ok'] == result['rationale']['source_gate_ok']
+    assert result['quality_gate_ok'] == result['rationale']['quality_gate_ok']
+    assert result['decision_gates'] == result['rationale']['decision_gates']
+    assert result['technical_alignment_support'] is True

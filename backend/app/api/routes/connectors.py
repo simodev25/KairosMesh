@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.schemas.connector import ConnectorConfigOut, ConnectorConfigUpdate, MarketSymbolsOut, MarketSymbolsUpdate
 from app.services.llm.model_selector import (
     AgentModelSelector,
+    DEFAULT_DECISION_MODE,
     SUPPORTED_DECISION_MODES,
     normalize_decision_mode,
 )
@@ -91,7 +92,7 @@ def _sanitize_ollama_settings(raw_settings: dict) -> dict:
     settings['agent_skills'] = _normalize_agent_skills(settings.get('agent_skills'))
     settings['decision_mode'] = normalize_decision_mode(
         settings.get('decision_mode'),
-        fallback=normalize_decision_mode(get_settings().decision_mode),
+        fallback=DEFAULT_DECISION_MODE,
     )
     return settings
 

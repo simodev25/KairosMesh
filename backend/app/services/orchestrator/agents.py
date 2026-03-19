@@ -1232,7 +1232,9 @@ class TraderAgent:
             and abs(technical_score) >= policy.technical_single_source_min_score
             and abs(combined_score) >= min_combined_score
             and confidence >= min_confidence
+            and aligned_source_count < min_aligned_sources
         )
+        evidence_source_ok = aligned_source_count >= min_aligned_sources or technical_single_source_override
         major_contradiction_block = policy.block_major_contradiction and contradiction_level == 'major'
         permissive_technical_override = bool(
             policy.mode == 'permissive'
@@ -1242,9 +1244,8 @@ class TraderAgent:
             and abs(combined_score) >= min_combined_score
             and confidence >= min_confidence
             and not major_contradiction_block
-            and (independent_aligned_count == 0 or aligned_source_count < min_aligned_sources)
+            and not evidence_source_ok
         )
-        evidence_source_ok = aligned_source_count >= min_aligned_sources or technical_single_source_override
         source_gate_ok = evidence_source_ok or permissive_technical_override
         score_gate_ok = candidate_decision in {'BUY', 'SELL'} and abs(combined_score) >= min_combined_score
         confidence_gate_ok = candidate_decision in {'BUY', 'SELL'} and confidence >= min_confidence
@@ -1268,12 +1269,14 @@ class TraderAgent:
             and direction_threshold_ok
         )
         decision_ready = minimum_evidence_ok and quality_gate_ok
-        low_edge_override = bool(
+        technical_alignment_support = bool(
             policy.allow_low_edge_technical_override
             and decision_ready
             and technical_signal == candidate_signal
             and technical_signal in {'bullish', 'bearish'}
         )
+        # Backward-compatible alias kept in payloads/traces.
+        low_edge_override = technical_alignment_support
         low_edge = not decision_ready
 
         decision = candidate_decision if decision_ready else 'HOLD'
@@ -1290,7 +1293,9 @@ class TraderAgent:
             gate_reasons.append('permissive_technical_override')
         if strong_conflict:
             gate_reasons.append('strong_conflict')
-        if low_edge_override:
+        if technical_alignment_support:
+            gate_reasons.append('technical_alignment_support')
+            # Backward-compatible gate reason kept for existing consumers.
             gate_reasons.append('low_edge_override')
         if low_edge:
             gate_reasons.append('low_edge')
@@ -1337,9 +1342,22 @@ class TraderAgent:
             'decision_mode': decision_mode,
             'execution_allowed': execution_allowed,
             'permissive_technical_override': permissive_technical_override,
+            'technical_single_source_override': technical_single_source_override,
             'signal_conflict': strong_conflict,
             'strong_conflict': strong_conflict,
             'low_edge': low_edge,
+            'low_edge_override': low_edge_override,
+            'technical_alignment_support': technical_alignment_support,
+            'technical_signal': technical_signal,
+            'technical_neutral_exception': technical_neutral_exception,
+            'minimum_evidence_ok': minimum_evidence_ok,
+            'score_gate_ok': score_gate_ok,
+            'confidence_gate_ok': confidence_gate_ok,
+            'source_gate_ok': source_gate_ok,
+            'quality_gate_ok': quality_gate_ok,
+            'evidence_source_ok': evidence_source_ok,
+            'major_contradiction_block': major_contradiction_block,
+            'decision_gates': gate_reasons,
             'contradiction_level': contradiction_level,
             'contradiction_penalty': round(contradiction_penalty, 3),
             'volume_multiplier': round(volume_multiplier, 3),
@@ -1374,11 +1392,19 @@ class TraderAgent:
                     'contradiction_weak_penalty': policy.contradiction_weak_penalty,
                     'contradiction_weak_confidence_multiplier': policy.contradiction_weak_confidence_multiplier,
                     'contradiction_weak_volume_multiplier': policy.contradiction_weak_volume_multiplier,
+                    'contradiction_moderate_penalty': policy.contradiction_moderate_penalty,
+                    'contradiction_moderate_confidence_multiplier': policy.contradiction_moderate_confidence_multiplier,
+                    'contradiction_moderate_volume_multiplier': policy.contradiction_moderate_volume_multiplier,
+                    'contradiction_major_penalty': policy.contradiction_major_penalty,
+                    'contradiction_major_confidence_multiplier': policy.contradiction_major_confidence_multiplier,
+                    'contradiction_major_volume_multiplier': policy.contradiction_major_volume_multiplier,
                     'block_major_contradiction': policy.block_major_contradiction,
                 },
                 'signal_conflict': strong_conflict,
                 'strong_conflict': strong_conflict,
                 'low_edge': low_edge,
+                'low_edge_override': low_edge_override,
+                'technical_alignment_support': technical_alignment_support,
                 'technical_signal': technical_signal,
                 'technical_neutral_exception': technical_neutral_exception,
                 'technical_single_source_override': technical_single_source_override,
