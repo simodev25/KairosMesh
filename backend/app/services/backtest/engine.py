@@ -138,16 +138,19 @@ class BacktestEngine:
             )
             trader = analysis_bundle['trader_decision']
             risk = analysis_bundle['risk']
-
-            decision = str(trader.get('decision', 'HOLD')).upper() if risk.get('accepted') else 'HOLD'
+            requested_decision = str(trader.get('decision', 'HOLD')).upper()
+            execution_allowed = bool(trader.get('execution_allowed', requested_decision in {'BUY', 'SELL'}))
+            risk_accepted = bool(risk.get('accepted'))
+            decision = requested_decision if risk_accepted and execution_allowed else 'HOLD'
             if should_log_steps:
                 logger.info(
-                    'backtest_agent_cycle pair=%s timeframe=%s candle=%s decision=%s accepted=%s llm=%s',
+                    'backtest_agent_cycle pair=%s timeframe=%s candle=%s decision=%s accepted=%s execution_allowed=%s llm=%s',
                     pair,
                     timeframe,
                     ts.isoformat(),
                     decision,
-                    risk.get('accepted'),
+                    risk_accepted,
+                    execution_allowed,
                     use_llm_for_candle,
                 )
             if decision == 'BUY':

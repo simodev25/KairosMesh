@@ -59,7 +59,7 @@ def test_trader_agent_low_edge_blocks_single_source_setup() -> None:
     result = agent.run(ctx, outputs, bullish, bearish)
 
     assert result['net_score'] == 0.12
-    assert result['combined_score'] == 0.42
+    assert result['combined_score'] == result['net_score']
     assert result['low_edge'] is True
     assert result['decision'] == 'HOLD'
 
@@ -78,6 +78,23 @@ def test_trader_agent_holds_when_debate_conflict_is_high() -> None:
     assert result['signal_conflict'] is True
     assert result['strong_conflict'] is True
     assert result['decision'] == 'HOLD'
+
+
+def test_trader_agent_debate_score_is_not_linear_multiple_of_net_score() -> None:
+    agent = TraderAgent()
+    ctx = _context()
+    outputs = {
+        'technical-analyst': {'signal': 'bullish', 'score': 0.12},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+        'macro-analyst': {'signal': 'neutral', 'score': 0.0},
+        'sentiment-agent': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 1.0}
+    bearish = {'arguments': ['y'], 'confidence': 0.0}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['debate_score'] != round(result['net_score'] * 0.3, 3)
 
 
 def test_trader_agent_holds_when_technical_signal_is_neutral_without_independent_convergence() -> None:
@@ -165,8 +182,8 @@ def test_trader_agent_outputs_sell_when_bearish_alignment_is_strong() -> None:
 def test_trader_agent_reduces_confidence_on_trend_macd_contradiction() -> None:
     agent = TraderAgent()
     agent.model_selector.settings.decision_mode = 'conservative'
-    baseline_ctx = _context(trend='bearish', macd_diff=-0.08, atr=0.2, last_price=211.237)
-    contradiction_ctx = _context(trend='bearish', macd_diff=0.08, atr=0.2, last_price=211.237)
+    baseline_ctx = _context(trend='bearish', macd_diff=-0.015, atr=0.2, last_price=211.237)
+    contradiction_ctx = _context(trend='bearish', macd_diff=0.015, atr=0.2, last_price=211.237)
     outputs = {
         'technical-analyst': {'signal': 'bearish', 'score': -0.4},
         'macro-analyst': {'signal': 'bearish', 'score': -0.1},
@@ -184,7 +201,27 @@ def test_trader_agent_reduces_confidence_on_trend_macd_contradiction() -> None:
     assert contradiction['confidence'] < baseline['confidence']
     assert abs(contradiction['combined_score']) < abs(baseline['combined_score'])
     assert contradiction['volume_multiplier'] < baseline['volume_multiplier']
-    assert contradiction['contradiction_level'] in {'moderate', 'major'}
+    assert contradiction['contradiction_level'] == 'moderate'
+
+
+def test_trader_agent_conservative_blocks_major_trend_momentum_contradiction() -> None:
+    agent = TraderAgent()
+    agent.model_selector.settings.decision_mode = 'conservative'
+    ctx = _context(trend='bearish', macd_diff=0.08, atr=0.2)
+    outputs = {
+        'technical-analyst': {'signal': 'bearish', 'score': -0.4},
+        'macro-analyst': {'signal': 'bearish', 'score': -0.1},
+        'sentiment-agent': {'signal': 'bearish', 'score': -0.1},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.0}
+    bearish = {'arguments': ['y'], 'confidence': 0.8}
+
+    result = agent.run(ctx, outputs, bullish, bearish)
+
+    assert result['contradiction_level'] == 'major'
+    assert result['execution_allowed'] is False
+    assert result['decision'] == 'HOLD'
 
 
 def test_trader_agent_execution_note_falls_back_to_structured_levels(monkeypatch) -> None:

@@ -323,7 +323,7 @@ DECISION_POLICIES: dict[str, DecisionGatingPolicy] = {
         contradiction_major_penalty=0.12,
         contradiction_major_confidence_multiplier=0.70,
         contradiction_major_volume_multiplier=0.55,
-        block_major_contradiction=False,
+        block_major_contradiction=True,
     ),
     'balanced': DecisionGatingPolicy(
         mode='balanced',
@@ -1025,8 +1025,11 @@ class TraderAgent:
         bullish_confidence = min(max(float(bullish.get('confidence', 0.0) or 0.0), 0.0), 1.0)
         bearish_confidence = min(max(float(bearish.get('confidence', 0.0) or 0.0), 0.0), 1.0)
         debate_balance = round(bullish_confidence - bearish_confidence, 3)
-        debate_score = round(debate_balance * 0.3, 3)
-        raw_combined_score = round(net_score + debate_score, 3)
+        strong_conflict = (
+            bullish_confidence >= 0.35
+            and bearish_confidence >= 0.35
+            and abs(debate_balance) <= 0.2
+        )
 
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
@@ -1098,6 +1101,26 @@ class TraderAgent:
                 independent_sources[signal].append(name)
                 independent_strength[signal] += abs(score)
 
+        preliminary_signal = 'bullish' if net_score > 0.0 else 'bearish' if net_score < 0.0 else 'neutral'
+        directional_total = len(directional_sources['bullish']) + len(directional_sources['bearish'])
+        source_alignment_score = 0.0
+        if preliminary_signal in {'bullish', 'bearish'} and directional_total > 0:
+            aligned_preliminary = len(directional_sources[preliminary_signal])
+            opposing_preliminary = directional_total - aligned_preliminary
+            source_alignment_score = (aligned_preliminary - opposing_preliminary) / float(directional_total)
+        elif (
+            preliminary_signal in {'bullish', 'bearish'}
+            and technical_signal == preliminary_signal
+            and abs(technical_score) >= 0.10
+        ):
+            source_alignment_score = 1.0
+
+        debate_sign = 1.0 if preliminary_signal == 'bullish' else -1.0 if preliminary_signal == 'bearish' else 0.0
+        debate_score = round(debate_sign * source_alignment_score * 0.12, 3)
+        if strong_conflict:
+            debate_score = round(debate_score * 0.5, 3)
+        raw_combined_score = round(net_score + debate_score, 3)
+
         trend = str(ctx.market_snapshot.get('trend', 'neutral') or 'neutral').strip().lower()
         macd_diff = float(ctx.market_snapshot.get('macd_diff', 0.0) or 0.0)
         atr = abs(float(ctx.market_snapshot.get('atr', 0.0) or 0.0))
@@ -1138,27 +1161,69 @@ class TraderAgent:
         aligned_sources = directional_sources.get(candidate_signal, []) if candidate_signal in {'bullish', 'bearish'} else []
         aligned_source_count = len(aligned_sources)
 
-        strong_conflict = (
-            bullish_confidence >= 0.35
-            and bearish_confidence >= 0.35
-            and abs(debate_balance) <= 0.2
-        )
-
         technical_neutral = technical_signal == 'neutral'
         independent_aligned_count = len(independent_sources.get(candidate_signal, [])) if candidate_signal in {'bullish', 'bearish'} else 0
         independent_aligned_strength = independent_strength.get(candidate_signal, 0.0) if candidate_signal in {'bullish', 'bearish'} else 0.0
         technical_neutral_exception = bool(
             technical_neutral
             and candidate_signal in {'bullish', 'bearish'}
-            and independent_aligned_count >= policy.technical_neutral_exception_min_sources
-            and independent_aligned_strength >= policy.technical_neutral_exception_min_strength
-            and abs(combined_score) >= policy.technical_neutral_exception_min_combined
+            and (
+                (
+                    independent_aligned_count >= policy.technical_neutral_exception_min_sources
+                    and independent_aligned_strength >= policy.technical_neutral_exception_min_strength
+                    and abs(combined_score) >= policy.technical_neutral_exception_min_combined
+                )
+                or (
+                    aligned_source_count >= max(min_aligned_sources, 1)
+                    and independent_aligned_strength >= max(policy.technical_neutral_exception_min_strength * 0.5, 0.10)
+                    and abs(combined_score) >= max(policy.technical_neutral_exception_min_combined, min_combined_score + 0.08)
+                )
+            )
         )
         technical_neutral_block = technical_neutral and not technical_neutral_exception
 
-        confidence_base = min(abs(combined_score) + max(abs(debate_balance) - 0.05, 0.0) * 0.2, 1.0)
-        confidence = min(max(confidence_base * confidence_multiplier, 0.0), 1.0)
+        edge_strength = min(abs(combined_score), 1.0)
+        source_coverage = 0.0
+        independent_coverage = 0.0
+        if candidate_signal in {'bullish', 'bearish'}:
+            source_coverage = min(aligned_source_count / float(max(min_aligned_sources, 1)), 1.0)
+            independent_coverage = min(
+                independent_aligned_count / float(max(policy.technical_neutral_exception_min_sources, 1)),
+                1.0,
+            )
+
+        technical_support = 0.0
+        if candidate_signal in {'bullish', 'bearish'} and technical_signal == candidate_signal:
+            technical_support = 0.25
+            if aligned_source_count == 0 and abs(technical_score) >= 0.10:
+                technical_support = 0.35
+        elif candidate_signal in {'bullish', 'bearish'} and technical_signal in {'bullish', 'bearish'}:
+            technical_support = -0.10
+
+        contradiction_quality_penalty = 0.0
+        if contradiction_level == 'weak':
+            contradiction_quality_penalty = 0.05
+        elif contradiction_level == 'moderate':
+            contradiction_quality_penalty = 0.12
+        elif contradiction_level == 'major':
+            contradiction_quality_penalty = 0.25
+
+        neutral_quality_penalty = 0.15 if technical_neutral_block else 0.0
+        evidence_quality = min(
+            max(
+                source_coverage * 0.55 + independent_coverage * 0.25 + technical_support
+                - contradiction_quality_penalty
+                - neutral_quality_penalty,
+                0.0,
+            ),
+            1.0,
+        )
+        evidence_quality = round(evidence_quality, 3)
+
+        decision_confidence_base = min(edge_strength * 0.7 + evidence_quality * 0.5, 1.0)
+        confidence = min(max(decision_confidence_base * confidence_multiplier, 0.0), 1.0)
         confidence = round(float(confidence), 3)
+        edge_strength = round(float(edge_strength), 3)
 
         technical_single_source_override = bool(
             policy.allow_technical_single_source_override
@@ -1168,7 +1233,6 @@ class TraderAgent:
             and abs(combined_score) >= min_combined_score
             and confidence >= min_confidence
         )
-        evidence_source_ok = aligned_source_count >= min_aligned_sources or technical_single_source_override
         major_contradiction_block = policy.block_major_contradiction and contradiction_level == 'major'
         permissive_technical_override = bool(
             policy.mode == 'permissive'
@@ -1180,12 +1244,16 @@ class TraderAgent:
             and not major_contradiction_block
             and (independent_aligned_count == 0 or aligned_source_count < min_aligned_sources)
         )
+        evidence_source_ok = aligned_source_count >= min_aligned_sources or technical_single_source_override
+        source_gate_ok = evidence_source_ok or permissive_technical_override
+        score_gate_ok = candidate_decision in {'BUY', 'SELL'} and abs(combined_score) >= min_combined_score
+        confidence_gate_ok = candidate_decision in {'BUY', 'SELL'} and confidence >= min_confidence
 
         minimum_evidence_ok = (
             candidate_decision in {'BUY', 'SELL'}
-            and abs(combined_score) >= min_combined_score
-            and confidence >= min_confidence
-            and (evidence_source_ok or permissive_technical_override)
+            and score_gate_ok
+            and confidence_gate_ok
+            and source_gate_ok
             and not major_contradiction_block
         )
         direction_threshold_ok = (
@@ -1193,47 +1261,23 @@ class TraderAgent:
         ) or (
             candidate_decision == 'SELL' and combined_score <= decision_sell_threshold
         )
-        if policy.mode == 'permissive':
-            low_edge_base = (not strong_conflict) and (
-                candidate_decision == 'HOLD'
-                or technical_neutral_block
-                or abs(combined_score) < min_combined_score
-                or confidence < min_confidence
-                or major_contradiction_block
-            )
-        else:
-            low_edge_base = (not strong_conflict) and (
-                candidate_decision == 'HOLD'
-                or not minimum_evidence_ok
-                or not direction_threshold_ok
-                or technical_neutral_block
-            )
+        quality_gate_ok = (
+            candidate_decision in {'BUY', 'SELL'}
+            and not strong_conflict
+            and not technical_neutral_block
+            and direction_threshold_ok
+        )
+        decision_ready = minimum_evidence_ok and quality_gate_ok
         low_edge_override = bool(
             policy.allow_low_edge_technical_override
-            and candidate_decision in {'BUY', 'SELL'}
+            and decision_ready
+            and technical_signal == candidate_signal
             and technical_signal in {'bullish', 'bearish'}
-            and not technical_neutral_block
-            and abs(combined_score) >= min_combined_score
-            and confidence >= min_confidence
-            and not major_contradiction_block
         )
-        if permissive_technical_override:
-            low_edge_override = True
-        low_edge = low_edge_base and not low_edge_override
-        if major_contradiction_block:
-            low_edge = True
+        low_edge = not decision_ready
 
-        decision = 'HOLD'
-        if (
-            not strong_conflict
-            and not low_edge
-            and not technical_neutral_block
-            and minimum_evidence_ok
-            and direction_threshold_ok
-            and not major_contradiction_block
-        ):
-            decision = candidate_decision
-        execution_allowed = decision in {'BUY', 'SELL'} and not major_contradiction_block and minimum_evidence_ok
+        decision = candidate_decision if decision_ready else 'HOLD'
+        execution_allowed = decision in {'BUY', 'SELL'} and minimum_evidence_ok and not major_contradiction_block
 
         gate_reasons: list[str] = []
         if technical_neutral_block:
@@ -1283,6 +1327,9 @@ class TraderAgent:
         output = {
             'decision': decision,
             'confidence': confidence,
+            'decision_confidence': confidence,
+            'edge_strength': edge_strength,
+            'evidence_quality': evidence_quality,
             'net_score': net_score,
             'debate_score': debate_score,
             'combined_score': combined_score,
@@ -1305,9 +1352,13 @@ class TraderAgent:
                 'bullish_confidence': bullish_confidence,
                 'bearish_confidence': bearish_confidence,
                 'base_net_score': net_score,
+                'source_consensus_score': round(source_alignment_score, 3),
                 'debate_score': debate_score,
                 'raw_combined_score': raw_combined_score,
                 'combined_score': combined_score,
+                'edge_strength': edge_strength,
+                'evidence_quality': evidence_quality,
+                'decision_confidence': confidence,
                 'decision_mode': decision_mode,
                 'policy': {
                     'mode': policy.mode,
@@ -1349,6 +1400,10 @@ class TraderAgent:
                 'decision_buy_threshold': decision_buy_threshold,
                 'decision_sell_threshold': decision_sell_threshold,
                 'minimum_evidence_ok': minimum_evidence_ok,
+                'score_gate_ok': score_gate_ok,
+                'confidence_gate_ok': confidence_gate_ok,
+                'source_gate_ok': source_gate_ok,
+                'quality_gate_ok': quality_gate_ok,
                 'evidence_source_ok': evidence_source_ok,
                 'direction_threshold_ok': direction_threshold_ok,
                 'trend_momentum_opposition': trend_momentum_opposition,

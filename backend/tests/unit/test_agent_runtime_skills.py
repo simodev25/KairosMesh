@@ -112,7 +112,7 @@ def test_trader_agent_uses_skill_hold_guardrail_when_llm_disabled() -> None:
 
         result = agent.run(ctx, outputs, bullish, bearish, db=db)
 
-        assert result['combined_score'] == 0.24
+        assert result['combined_score'] == 0.3
         assert result['rationale']['decision_buy_threshold'] == 0.3
         assert result['decision'] == 'HOLD'
         assert result['prompt_meta']['skills_count'] == 2
