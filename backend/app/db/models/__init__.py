@@ -1,3 +1,4 @@
+from app.db.models.agent_runtime_event import AgentRuntimeEvent
 from app.db.models.agent_step import AgentStep
 from app.db.models.agent_runtime_message import AgentRuntimeMessage
 from app.db.models.agent_runtime_session import AgentRuntimeSession
@@ -19,6 +20,7 @@ __all__ = [
     'ConnectorConfig',
     'AnalysisRun',
     'AgentStep',
+    'AgentRuntimeEvent',
     'AgentRuntimeMessage',
     'AgentRuntimeSession',
     'ExecutionOrder',

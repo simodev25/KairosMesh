@@ -20,6 +20,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.security import Role, get_password_hash
 from app.db.base import Base
+from app.db.models.agent_runtime_event import AgentRuntimeEvent
 from app.db.models.agent_runtime_message import AgentRuntimeMessage
 from app.db.models.agent_runtime_session import AgentRuntimeSession
 from app.db.models.connector_config import ConnectorConfig
@@ -30,6 +31,7 @@ from app.db.models.user import User
 from app.db.session import SessionLocal, engine, get_db
 from app.observability.metrics import backend_http_request_duration_seconds, backend_http_requests_total
 from app.observability.prometheus import build_metrics_payload
+from app.services.agent_runtime.session_store import RuntimeSessionStore
 from app.services.prompts.registry import PromptTemplateService
 from app.services.llm.skill_bootstrap import bootstrap_agent_skills_into_settings
 
@@ -272,61 +274,65 @@ async def run_updates_socket(websocket: WebSocket, run_id: int) -> None:
     poll_interval = max(float(settings.ws_run_poll_seconds), 0.5)
     last_signature: tuple[str, str] | None = None
     last_event_id = 0
+    store = RuntimeSessionStore()
     try:
         while True:
             db: Session = SessionLocal()
             try:
-                row = (
-                    db.query(
-                        AnalysisRun.id,
-                        AnalysisRun.status,
-                        AnalysisRun.decision,
-                        AnalysisRun.trace,
-                        AnalysisRun.updated_at,
-                    )
-                    .filter(AnalysisRun.id == run_id)
-                    .first()
-                )
-                if not row:
+                run = db.get(AnalysisRun, run_id)
+                if not run:
                     await websocket.send_json({'error': 'Run not found'})
                     await websocket.close(code=1008)
                     return
-                decision = row.decision
+                decision = run.decision
                 if isinstance(decision, dict):
                     decision = decision.get('decision') or decision
-                updated_at = row.updated_at.isoformat()
-                trace_payload = row.trace if isinstance(row.trace, dict) else {}
-                signature = (str(row.status), updated_at)
+                updated_at = run.updated_at.isoformat()
+                signature = (str(run.status), updated_at)
                 if signature != last_signature:
                     await websocket.send_json(
                         {
                             'type': 'status',
-                            'id': row.id,
-                            'status': row.status,
+                            'id': run.id,
+                            'status': run.status,
                             'decision': decision,
                             'updated_at': updated_at,
                         }
                     )
                     last_signature = signature
-                events, current_last_event_id = _extract_runtime_events(trace_payload)
-                if current_last_event_id > last_event_id:
+                events = store.list_events(run, after_id=last_event_id)
+                if events:
                     for event_payload in events:
-                        try:
-                            event_id = int(event_payload.get('id', 0) or 0)
-                        except (TypeError, ValueError):
-                            continue
-                        if event_id <= last_event_id:
-                            continue
                         await websocket.send_json(
                             {
                                 'type': 'event',
-                                'id': row.id,
+                                'id': run.id,
                                 'updated_at': updated_at,
                                 'event': event_payload,
                             }
                         )
-                    last_event_id = current_last_event_id
-                if row.status in {'completed', 'failed'}:
+                    last_event_id = max(int(events[-1].get('seq', 0) or 0), last_event_id)
+                elif last_event_id == 0:
+                    trace_payload = run.trace if isinstance(run.trace, dict) else {}
+                    fallback_events, current_last_event_id = _extract_runtime_events(trace_payload)
+                    if current_last_event_id > last_event_id:
+                        for event_payload in fallback_events:
+                            try:
+                                event_id = int(event_payload.get('id', 0) or 0)
+                            except (TypeError, ValueError):
+                                continue
+                            if event_id <= last_event_id:
+                                continue
+                            await websocket.send_json(
+                                {
+                                    'type': 'event',
+                                    'id': run.id,
+                                    'updated_at': updated_at,
+                                    'event': event_payload,
+                                }
+                            )
+                        last_event_id = current_last_event_id
+                if run.status in {'completed', 'failed'}:
                     await websocket.close(code=1000)
                     return
             finally:

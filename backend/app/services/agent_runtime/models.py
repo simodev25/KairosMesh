@@ -22,21 +22,29 @@ class RuntimeEvent:
     payload: dict[str, Any] = field(default_factory=dict)
     run_id: str | None = None
     session_key: str | None = None
+    actor: str | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
     created_at: str = field(default_factory=utc_now_iso)
     ts: int = field(default_factory=utc_now_ms)
 
     def as_dict(self) -> dict[str, Any]:
+        actor = str(self.actor or self.name or 'runtime').strip() or 'runtime'
         return {
             'id': self.id,
             'seq': self.id,
             'type': self.stream,
             'stream': self.stream,
             'name': self.name,
+            'event_type': self.name,
+            'actor': actor,
             'turn': self.turn,
             'payload': self.payload,
             'data': self.payload,
             'runId': self.run_id,
             'sessionKey': self.session_key,
+            'correlationId': self.correlation_id,
+            'causationId': self.causation_id,
             'created_at': self.created_at,
             'ts': self.ts,
         }
@@ -137,6 +145,18 @@ class RuntimeSessionState:
                 'memory_context_enabled': bool(self.context.get('memory_context_enabled', False)),
                 'memory_limit': self.context.get('memory_limit'),
                 'memory_refresh_count': self.context.get('memory_refresh_count', 0),
+                'second_pass_attempt_count': self.context.get('second_pass_attempt_count', 0),
                 'metaapi_account_ref': self.context.get('metaapi_account_ref'),
+            },
+            'governor': self.artifacts.get('runtime_governor', {}),
+            'evidence_bundle': {
+                'count': int(
+                    (
+                        self.artifacts.get('evidence_bundle', {})
+                        if isinstance(self.artifacts.get('evidence_bundle'), dict)
+                        else {}
+                    ).get('count', 0)
+                    or 0
+                ),
             },
         }

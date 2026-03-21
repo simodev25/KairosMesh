@@ -22,7 +22,7 @@ from app.observability.metrics import (
     orchestrator_step_duration_seconds,
 )
 from app.services.agent_runtime.constants import AGENTIC_V2_RUNTIME
-from app.services.agent_runtime.models import RuntimeSessionState
+from app.services.agent_runtime.models import RuntimeSessionState, utc_now_iso
 from app.services.agent_runtime.planner import AgenticRuntimePlanner
 from app.services.agent_runtime.session_store import RuntimeSessionStore
 from app.services.agent_runtime.tool_registry import RuntimeToolRegistry
@@ -386,6 +386,141 @@ class AgenticTradingRuntime:
         )
         state.history = state.history[-40:]
 
+    @staticmethod
+    def _safe_float(value: Any) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _is_live_mode(run: AnalysisRun) -> bool:
+        return str(run.mode or '').strip().lower() == 'live'
+
+    def _build_evidence_bundle(
+        self,
+        *,
+        run: AnalysisRun,
+        state: RuntimeSessionState,
+    ) -> dict[str, Any]:
+        analysis_outputs = self._analysis_outputs(state)
+        items: list[dict[str, Any]] = []
+        directional_sources: set[str] = set()
+        for agent_name, output in analysis_outputs.items():
+            if not isinstance(output, dict):
+                continue
+            direction = str(output.get('signal') or output.get('decision_mode') or 'neutral').strip().lower()
+            if direction not in {'bullish', 'bearish', 'neutral'}:
+                direction = 'neutral'
+            if direction in {'bullish', 'bearish'}:
+                directional_sources.add(direction)
+            strength = self._safe_float(
+                output.get('evidence_strength', output.get('score', output.get('confidence', 0.0)))
+            )
+            confidence = self._safe_float(output.get('confidence'))
+            freshness_score = self._safe_float(output.get('coverage', output.get('freshness_score', 1.0)))
+            items.append(
+                {
+                    'claim': str(output.get('summary') or output.get('decision_mode') or agent_name),
+                    'direction': direction,
+                    'strength': max(min(strength if strength is not None else 0.0, 1.0), 0.0),
+                    'confidence': max(min(confidence if confidence is not None else 0.0, 1.0), 0.0),
+                    'source_agent': agent_name,
+                    'timestamp': utc_now_iso(),
+                    'market_scope': {
+                        'pair': run.pair,
+                        'timeframe': run.timeframe,
+                    },
+                    'invalidates': [],
+                    'depends_on': [],
+                    'freshness_score': max(min(freshness_score if freshness_score is not None else 1.0, 1.0), 0.0),
+                }
+            )
+        contradiction_count = 1 if len(directional_sources) > 1 else 0
+        return {
+            'generated_at': utc_now_iso(),
+            'count': len(items),
+            'contradiction_count': contradiction_count,
+            'items': items,
+        }
+
+    def _build_runtime_governor(self, state: RuntimeSessionState) -> dict[str, Any]:
+        trader_decision = state.artifacts.get('trader_decision')
+        memory_enabled = bool(state.context.get('memory_context_enabled', False))
+        current_limit = int(state.context.get('memory_limit', 0) or 0)
+        max_limit = max(int(self.settings.orchestrator_autonomy_memory_limit_max), 1)
+        attempt_count = int(
+            state.context.get('second_pass_attempt_count', state.context.get('memory_refresh_count', 0)) or 0
+        )
+        max_attempts = 1
+        reason = 'no_second_pass_condition'
+        should_second_pass = False
+        if not isinstance(trader_decision, dict):
+            reason = 'trader_decision_missing'
+        elif not memory_enabled:
+            reason = 'memory_context_disabled'
+        elif str(trader_decision.get('decision') or '').strip().upper() != 'HOLD':
+            reason = 'decision_not_hold'
+        elif not bool(trader_decision.get('needs_follow_up', False)):
+            reason = 'no_follow_up_requested'
+        elif attempt_count >= max_attempts:
+            reason = 'second_pass_attempt_limit_reached'
+        elif current_limit >= max_limit:
+            reason = 'memory_limit_max_reached'
+        else:
+            should_second_pass = True
+            reason = str(trader_decision.get('follow_up_reason') or 'memory_refresh')
+        return {
+            'enabled': memory_enabled,
+            'attempt_count': attempt_count,
+            'max_attempts': max_attempts,
+            'memory_limit': current_limit,
+            'max_memory_limit': max_limit,
+            'should_second_pass': should_second_pass,
+            'reason': reason,
+        }
+
+    def _validate_execution_contract(
+        self,
+        *,
+        trader_decision: dict[str, Any],
+        risk_output: dict[str, Any],
+        execution_plan: dict[str, Any],
+    ) -> str | None:
+        if not bool(execution_plan.get('should_execute')):
+            return None
+
+        decision = str(trader_decision.get('decision') or '').strip().upper()
+        side = str(execution_plan.get('side') or '').strip().upper()
+        execution_allowed = bool(trader_decision.get('execution_allowed', decision in {'BUY', 'SELL'}))
+        if decision not in {'BUY', 'SELL'}:
+            return 'Trader decision is not executable.'
+        if not execution_allowed:
+            return 'Trader guardrails blocked execution.'
+        if not bool(risk_output.get('accepted')):
+            return 'Risk checks blocked execution.'
+        if side != decision:
+            return f'Execution side {side or "unknown"} does not match trader decision {decision}.'
+
+        volume = self._safe_float(execution_plan.get('volume'))
+        if volume is None or volume <= 0.0:
+            return 'Execution volume must be strictly positive.'
+
+        entry = self._safe_float(trader_decision.get('entry'))
+        stop_loss = self._safe_float(trader_decision.get('stop_loss'))
+        take_profit = self._safe_float(trader_decision.get('take_profit'))
+        if entry is None:
+            return 'Trader entry price is required for execution validation.'
+        if stop_loss is None or take_profit is None:
+            return 'Stop loss and take profit are required for execution validation.'
+        if decision == 'BUY' and not (stop_loss < entry < take_profit):
+            return 'BUY execution requires stop_loss < entry < take_profit.'
+        if decision == 'SELL' and not (take_profit < entry < stop_loss):
+            return 'SELL execution requires take_profit < entry < stop_loss.'
+        return None
+
     def _build_subagent_objective(
         self,
         *,
@@ -620,26 +755,6 @@ class AgenticTradingRuntime:
             ).inc()
             raise
 
-    def _should_refresh_memory(self, state: RuntimeSessionState) -> bool:
-        trader_decision = state.artifacts.get('trader_decision')
-        if not isinstance(trader_decision, dict):
-            return False
-        if str(trader_decision.get('decision') or '').strip().upper() != 'HOLD':
-            return False
-        if not bool(trader_decision.get('needs_follow_up', False)):
-            return False
-        if not bool(state.context.get('memory_context_enabled', False)):
-            return False
-
-        refresh_count = int(state.context.get('memory_refresh_count', 0) or 0)
-        max_limit = max(int(self.settings.orchestrator_autonomy_memory_limit_max), 1)
-        current_limit = int(state.context.get('memory_limit', 0) or 0)
-        if refresh_count >= 1:
-            return False
-        if current_limit >= max_limit:
-            return False
-        return True
-
     def _candidate_tools(self, state: RuntimeSessionState) -> list[str]:
         if not isinstance(state.context.get('market'), dict) or not isinstance(state.context.get('news'), dict):
             return ['resolve_market_context']
@@ -664,7 +779,9 @@ class AgenticTradingRuntime:
             return ['run_trader_agent']
         if not isinstance(state.artifacts.get('risk'), dict):
             return ['run_risk_manager']
-        if self._should_refresh_memory(state):
+        governor = self._build_runtime_governor(state)
+        state.artifacts['runtime_governor'] = governor
+        if bool(governor.get('should_second_pass')):
             return ['refresh_memory_context']
         if not isinstance(state.artifacts.get('execution_manager'), dict):
             return ['run_execution_manager']
@@ -723,9 +840,16 @@ class AgenticTradingRuntime:
                 'phase': 'plan',
                 'source': decision.source,
                 'degraded': decision.degraded,
+                'contract_valid': decision.contract_valid,
+                'decision_type': decision.decision_type,
                 'selectedTool': selected_tool,
                 'candidateTools': candidate_tools,
                 'reason': decision.reason,
+                'required_preconditions': decision.required_preconditions,
+                'expected_output_contract': decision.expected_output_contract,
+                'confidence': decision.confidence,
+                'needs_followup': decision.needs_followup,
+                'abort_reason': decision.abort_reason,
                 'llm_model': decision.llm_model,
                 'prompt_meta': decision.prompt_meta,
             },
@@ -841,6 +965,7 @@ class AgenticTradingRuntime:
             )
             state.context['metaapi_account_ref'] = metaapi_account_ref
             state.context['memory_refresh_count'] = 0
+            state.context['second_pass_attempt_count'] = 0
 
             self.session_store.initialize(
                 db,
@@ -865,6 +990,9 @@ class AgenticTradingRuntime:
             )
         else:
             state.context['metaapi_account_ref'] = metaapi_account_ref
+            state.context['second_pass_attempt_count'] = int(
+                state.context.get('second_pass_attempt_count', state.context.get('memory_refresh_count', 0)) or 0
+            )
             self.session_store.append_event(
                 db,
                 run,
@@ -912,6 +1040,25 @@ class AgenticTradingRuntime:
                 'risk': risk_output,
                 'execution': execution_result,
                 'execution_manager': execution_output,
+                'runtime_governor': state.artifacts.get('runtime_governor', {}),
+                'evidence_bundle': {
+                    'count': int(
+                        (
+                            state.artifacts.get('evidence_bundle', {})
+                            if isinstance(state.artifacts.get('evidence_bundle'), dict)
+                            else {}
+                        ).get('count', 0)
+                        or 0
+                    ),
+                    'contradiction_count': int(
+                        (
+                            state.artifacts.get('evidence_bundle', {})
+                            if isinstance(state.artifacts.get('evidence_bundle'), dict)
+                            else {}
+                        ).get('contradiction_count', 0)
+                        or 0
+                    ),
+                },
                 'runtime_engine': AGENTIC_V2_RUNTIME,
             }
             run.status = 'completed'
@@ -945,6 +1092,8 @@ class AgenticTradingRuntime:
                 'memory_signal': state.context.get('memory_signal', {}),
                 'memory_runtime': state.context.get('memory_runtime', {}),
                 'memory_retrieval_context': state.context.get('memory_retrieval_context', {}),
+                'evidence_bundle': state.artifacts.get('evidence_bundle', {}),
+                'runtime_governor': state.artifacts.get('runtime_governor', {}),
                 'requested_metaapi_account_ref': metaapi_account_ref,
                 'workflow': list(self.orchestrator.WORKFLOW_STEPS),
                 'workflow_mode': AGENTIC_V2_RUNTIME,
@@ -1032,6 +1181,8 @@ class AgenticTradingRuntime:
                 'memory_signal': state.context.get('memory_signal', {}),
                 'memory_runtime': state.context.get('memory_runtime', {}),
                 'memory_retrieval_context': state.context.get('memory_retrieval_context', {}),
+                'evidence_bundle': state.artifacts.get('evidence_bundle', {}),
+                'runtime_governor': state.artifacts.get('runtime_governor', {}),
                 'requested_metaapi_account_ref': metaapi_account_ref,
                 'workflow': list(self.orchestrator.WORKFLOW_STEPS),
                 'runtime_engine': AGENTIC_V2_RUNTIME,
@@ -1172,6 +1323,9 @@ class AgenticTradingRuntime:
         state.context['memory_runtime'] = memory_runtime
         state.context['memory_limit'] = next_limit
         state.context['memory_refresh_count'] = int(state.context.get('memory_refresh_count', 0) or 0) + 1
+        state.context['second_pass_attempt_count'] = int(
+            state.context.get('second_pass_attempt_count', 0) or 0
+        ) + 1
         state.artifacts.pop('analysis_outputs', None)
         state.artifacts.pop('bullish', None)
         state.artifacts.pop('bearish', None)
@@ -1179,12 +1333,17 @@ class AgenticTradingRuntime:
         state.artifacts.pop('risk', None)
         state.artifacts.pop('execution_manager', None)
         state.artifacts.pop('execution_result', None)
+        state.artifacts['runtime_governor'] = {
+            **self._build_runtime_governor(state),
+            'last_action': 'refresh_memory_context',
+        }
         state.notes.append(f'Memory refreshed with limit={next_limit}.')
         agentic_runtime_memory_refresh_total.labels(mode=str(run.mode or 'unknown')).inc()
         return {
             'memory_context_count': len(memory_context),
             'memory_limit': next_limit,
             'memory_refresh_count': state.context['memory_refresh_count'],
+            'second_pass_attempt_count': state.context['second_pass_attempt_count'],
         }
 
     async def _tool_spawn_subagent(
@@ -1594,11 +1753,14 @@ class AgenticTradingRuntime:
         analysis_outputs = self._analysis_outputs(state)
         bullish = state.artifacts.get('bullish') if isinstance(state.artifacts.get('bullish'), dict) else {}
         bearish = state.artifacts.get('bearish') if isinstance(state.artifacts.get('bearish'), dict) else {}
+        evidence_bundle = self._build_evidence_bundle(run=run, state=state)
+        state.artifacts['evidence_bundle'] = evidence_bundle
         input_payload = {
             'analysis_outputs': analysis_outputs,
             'bullish': bullish,
             'bearish': bearish,
             'memory_signal': ctx.memory_signal,
+            'evidence_bundle': evidence_bundle,
         }
         output = await self._tool_spawn_subagent(
             db=db,
@@ -1624,6 +1786,7 @@ class AgenticTradingRuntime:
             ),
         )
         state.artifacts['trader_decision'] = output
+        state.artifacts['runtime_governor'] = self._build_runtime_governor(state)
         return output
 
     async def _tool_run_risk_manager(
@@ -1660,6 +1823,25 @@ class AgenticTradingRuntime:
         ctx = self._build_context(state, run=run, risk_percent=risk_percent)
         trader_decision = state.artifacts.get('trader_decision') if isinstance(state.artifacts.get('trader_decision'), dict) else {}
         risk_output = state.artifacts.get('risk') if isinstance(state.artifacts.get('risk'), dict) else {}
+        analysis_outputs = self._analysis_outputs(state)
+        bullish = state.artifacts.get('bullish') if isinstance(state.artifacts.get('bullish'), dict) else {}
+        bearish = state.artifacts.get('bearish') if isinstance(state.artifacts.get('bearish'), dict) else {}
+
+        if self._is_live_mode(run):
+            degraded_agents = self.orchestrator._collect_live_blocking_degraded_agents(
+                {
+                    **analysis_outputs,
+                    self.orchestrator.bullish_researcher.name: bullish,
+                    self.orchestrator.bearish_researcher.name: bearish,
+                    self.orchestrator.trader_agent.name: trader_decision,
+                    self.orchestrator.risk_manager_agent.name: risk_output,
+                },
+                trader_decision=trader_decision,
+                risk_output=risk_output,
+            )
+            if degraded_agents:
+                degraded_list = ', '.join(sorted(dict.fromkeys(degraded_agents)))
+                raise RuntimeError(f'Live mode aborted: degraded LLM response from {degraded_list}.')
 
         execution_input = {
             'trader_decision': trader_decision,
@@ -1672,6 +1854,42 @@ class AgenticTradingRuntime:
             risk_output,
             db=db,
         )
+        if self._is_live_mode(run) and bool(execution_plan.get('degraded')):
+            raise RuntimeError('Live mode aborted: degraded LLM response from execution-manager.')
+
+        invalid_reason = self._validate_execution_contract(
+            trader_decision=trader_decision,
+            risk_output=risk_output,
+            execution_plan=execution_plan,
+        )
+        if invalid_reason:
+            if self._is_live_mode(run):
+                raise RuntimeError(f'Live mode aborted: {invalid_reason}')
+            execution_output = {
+                **execution_plan,
+                'decision': 'HOLD',
+                'should_execute': False,
+                'side': None,
+                'volume': 0.0,
+                'reason': invalid_reason,
+                'execution': {
+                    'status': 'blocked',
+                    'executed': False,
+                    'reason': invalid_reason,
+                },
+                'status': 'blocked',
+            }
+            self.orchestrator._record_step(
+                db,
+                run,
+                self.orchestrator.execution_manager_agent.name,
+                execution_input,
+                execution_output,
+            )
+            state.artifacts['execution_manager'] = execution_output
+            state.artifacts['execution_result'] = execution_output['execution']
+            return execution_output
+
         execution_result: dict[str, Any] = {
             'status': 'skipped',
             'executed': False,

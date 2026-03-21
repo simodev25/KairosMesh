@@ -12,6 +12,17 @@ agentic_runtime_tool_selections_total = Counter(
     'Planner selections by runtime tool',
     ['tool', 'source', 'degraded'],
 )
+agentic_runtime_planner_calls_total = Counter(
+    'agentic_runtime_planner_calls_total',
+    'Planner call outcomes for the agentic runtime',
+    ['status', 'source'],
+)
+agentic_runtime_planner_duration_seconds = Histogram(
+    'agentic_runtime_planner_duration_seconds',
+    'Planner latency in seconds for the agentic runtime',
+    ['status', 'source'],
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+)
 agentic_runtime_tool_calls_total = Counter(
     'agentic_runtime_tool_calls_total',
     'Runtime tool invocations',

@@ -83,7 +83,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
         ),
         'user': (
             "Choisis le prochain outil.\n"
-            'Réponds strictement avec ce JSON: {{"tool":"<candidate_tool_name>","reason":"<justification courte>"}}\n'
+            'Réponds strictement avec ce JSON: {{"decision_type":"select_tool","selected_tool":"<candidate_tool_name>","why_now":"<justification courte>","required_preconditions":["<précondition optionnelle>"],"expected_output_contract":{{"summary":"<sortie attendue>"}},"confidence":0.0,"needs_followup":false,"abort_reason":null}}\n'
             "Contexte runtime JSON:\n{context_json}"
         ),
     },

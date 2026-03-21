@@ -3022,23 +3022,23 @@ class RiskManagerAgent:
         llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
         llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
         llm_requested_accept, strict_json_ok = _parse_risk_acceptance_contract(llm_text, risk.accepted)
-        llm_accept = llm_requested_accept
-        live_mode = str(ctx.mode or '').strip().lower() == 'live'
-        if live_mode and llm_accept and not risk.accepted:
-            llm_accept = False
+        llm_accept = llm_requested_accept if strict_json_ok else risk.accepted
+        final_accept = bool(risk.accepted) and bool(llm_accept)
 
         reasons = list(deterministic_reasons)
         if not strict_json_ok:
-            reasons.append('LLM output not strict JSON; fallback parse used.')
-        reasons.append(f"LLM review: {'APPROVE' if llm_accept else 'REJECT'}")
-        if live_mode and not risk.accepted and llm_requested_accept:
-            reasons.append('Live mode guardrail: deterministic risk rejection cannot be overridden by LLM.')
+            reasons.append('LLM output not strict JSON; deterministic risk output preserved.')
+        reasons.append(f"LLM review: {'APPROVE' if llm_requested_accept else 'REJECT'}")
+        if not risk.accepted and llm_requested_accept:
+            reasons.append('Risk guardrail: deterministic rejection cannot be overridden by LLM.')
+        if risk.accepted and strict_json_ok and not llm_requested_accept:
+            reasons.append('LLM vetoed deterministic risk acceptance.')
 
         output.update(
             {
-                'accepted': llm_accept,
+                'accepted': final_accept,
                 'reasons': reasons,
-                'suggested_volume': adjusted_suggested_volume if llm_accept else 0.0,
+                'suggested_volume': adjusted_suggested_volume if final_accept else 0.0,
                 'llm_summary': llm_text,
                 'degraded': llm_degraded,
                 'contract_valid': strict_json_ok,
@@ -3093,7 +3093,7 @@ class ExecutionManagerAgent:
             reason = 'Risk checks blocked execution.'
 
         output: dict[str, Any] = {
-            'decision': decision,
+            'decision': decision if deterministic_allowed else 'HOLD',
             'should_execute': deterministic_allowed,
             'side': decision if deterministic_allowed else None,
             'volume': suggested_volume if deterministic_allowed else 0.0,
@@ -3156,7 +3156,6 @@ class ExecutionManagerAgent:
         llm_res = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
         llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
         llm_decision, strict_json_ok = _parse_trade_decision_contract(llm_text, fallback_decision='HOLD')
-        live_mode = str(ctx.mode or '').strip().lower() == 'live'
         risk_accepted = bool(risk_output.get('accepted'))
 
         if decision not in {'BUY', 'SELL'}:
@@ -3174,8 +3173,10 @@ class ExecutionManagerAgent:
             should_execute = False
             side = None
             final_reason = 'Risk checks blocked execution.'
-        elif live_mode:
-            if llm_decision == decision and llm_decision in {'BUY', 'SELL'}:
+        else:
+            same_side_confirmation = strict_json_ok and llm_decision == decision and llm_decision in {'BUY', 'SELL'}
+            explicit_hold = strict_json_ok and llm_decision == 'HOLD'
+            if same_side_confirmation:
                 final_decision = llm_decision
                 should_execute = True
                 side = llm_decision
@@ -3184,14 +3185,21 @@ class ExecutionManagerAgent:
                 final_decision = 'HOLD'
                 should_execute = False
                 side = None
-                final_reason = 'Live mode guardrail: execution requires LLM confirmation of deterministic decision.'
-        else:
-            final_decision = llm_decision
-            should_execute = llm_decision in {'BUY', 'SELL'}
-            side = llm_decision if should_execute else None
-            final_reason = 'Execution decision updated by LLM review.' if should_execute else 'LLM requested HOLD.'
-        if not strict_json_ok:
-            final_reason = f'{final_reason} LLM output not strict JSON; fallback parse used.'
+                if llm_decision in {'BUY', 'SELL'} and llm_decision != decision:
+                    final_reason = 'Execution guardrail blocked side flip requested by LLM.'
+                elif explicit_hold:
+                    final_reason = 'LLM requested HOLD.'
+                elif not strict_json_ok:
+                    final_reason = 'Execution contract invalid; execution forced to HOLD.'
+                else:
+                    final_reason = 'Execution requires same-side confirmation or HOLD.'
+        if llm_degraded:
+            final_decision = 'HOLD'
+            should_execute = False
+            side = None
+            final_reason = 'Execution guardrail blocked degraded LLM output.'
+        elif not strict_json_ok:
+            final_reason = f'{final_reason} LLM output not strict JSON.'
 
         output.update(
             {

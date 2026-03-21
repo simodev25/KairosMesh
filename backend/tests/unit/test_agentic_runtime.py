@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
+from app.db.models.agent_runtime_event import AgentRuntimeEvent
 from app.db.models.agent_runtime_message import AgentRuntimeMessage
 from app.db.models.agent_runtime_session import AgentRuntimeSession
 from app.db.models.run import AnalysisRun
@@ -19,6 +20,7 @@ from app.services.agent_runtime.session_store import RuntimeSessionStore
 from app.services.agent_runtime.tool_registry import RuntimeToolRegistry
 from app.services.llm.provider_client import LlmClient
 from app.observability.metrics import (
+    agentic_runtime_planner_calls_total,
     agentic_runtime_execution_outcomes_total,
     agentic_runtime_final_decisions_total,
     agentic_runtime_runs_total,
@@ -96,9 +98,16 @@ def test_runtime_session_store_appends_monotonic_events() -> None:
         db.refresh(run)
 
         runtime_trace = run.trace['agentic_runtime']
+        event_rows = (
+            db.query(AgentRuntimeEvent)
+            .filter(AgentRuntimeEvent.run_id == run.id)
+            .order_by(AgentRuntimeEvent.seq.asc())
+            .all()
+        )
         assert runtime_trace['last_event_id'] == 3
         assert runtime_trace['event_count'] == 3
         assert [item['id'] for item in runtime_trace['events']] == [2, 3]
+        assert [row.seq for row in event_rows] == [1, 2, 3]
 
 
 def test_agentic_runtime_selects_memory_refresh_after_follow_up_hold() -> None:
@@ -279,6 +288,105 @@ def test_agentic_runtime_uses_planner_choice(monkeypatch) -> None:
             source='llm',
             degraded='false',
         ) == selections_before + 1.0
+
+
+def test_agentic_runtime_planner_falls_back_on_invalid_tool(monkeypatch) -> None:
+    runtime = AgenticTradingRuntime()
+    state = RuntimeSessionState(
+        objective={'kind': 'trade-analysis'},
+        max_turns=12,
+        plan=list(runtime.PLAN),
+    )
+    state.context.update(
+        {
+            'market': {'trend': 'bullish'},
+            'news': {'news': []},
+            'memory_context': [],
+            'memory_context_enabled': True,
+            'memory_limit': 5,
+            'memory_refresh_count': 0,
+        }
+    )
+    candidate_tools = [
+        {'name': 'run_technical_analyst', 'description': 'Technical'},
+        {'name': 'run_news_analyst', 'description': 'News'},
+    ]
+
+    monkeypatch.setattr(runtime.planner.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime.planner.model_selector, 'resolve', lambda *_args, **_kwargs: 'test-model')
+    monkeypatch.setattr(runtime.planner.model_selector, 'resolve_skills', lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        runtime.planner.llm,
+        'chat_json',
+        lambda *_args, **_kwargs: {
+            'json': {
+                'decision_type': 'select_tool',
+                'selected_tool': 'run_unknown_tool',
+                'why_now': 'invalid',
+                'required_preconditions': [],
+                'expected_output_contract': {'summary': 'x'},
+                'confidence': 0.5,
+                'needs_followup': False,
+                'abort_reason': None,
+            },
+            'degraded': False,
+        },
+    )
+
+    before = _counter_value(
+        agentic_runtime_planner_calls_total,
+        status='fallback',
+        source='deterministic',
+    )
+    decision = runtime.planner.choose_tool(db=None, state=state, candidate_tools=candidate_tools)
+
+    assert decision.tool_name == 'run_technical_analyst'
+    assert decision.contract_valid is False
+    assert decision.degraded is True
+    assert _counter_value(
+        agentic_runtime_planner_calls_total,
+        status='fallback',
+        source='deterministic',
+    ) == before + 1.0
+
+
+def test_agentic_runtime_planner_accepts_legacy_contract_as_degraded(monkeypatch) -> None:
+    runtime = AgenticTradingRuntime()
+    state = RuntimeSessionState(
+        objective={'kind': 'trade-analysis'},
+        max_turns=12,
+        plan=list(runtime.PLAN),
+    )
+    state.context.update(
+        {
+            'market': {'trend': 'bullish'},
+            'news': {'news': []},
+            'memory_context': [],
+        }
+    )
+    candidate_tools = [
+        {'name': 'run_technical_analyst', 'description': 'Technical'},
+        {'name': 'run_news_analyst', 'description': 'News'},
+    ]
+
+    monkeypatch.setattr(runtime.planner.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime.planner.model_selector, 'resolve', lambda *_args, **_kwargs: 'test-model')
+    monkeypatch.setattr(runtime.planner.model_selector, 'resolve_skills', lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        runtime.planner.llm,
+        'chat_json',
+        lambda *_args, **_kwargs: {
+            'json': {'tool': 'run_news_analyst', 'reason': 'legacy contract'},
+            'degraded': False,
+        },
+    )
+
+    decision = runtime.planner.choose_tool(db=None, state=state, candidate_tools=candidate_tools)
+
+    assert decision.tool_name == 'run_news_analyst'
+    assert decision.source == 'llm_legacy'
+    assert decision.contract_valid is False
+    assert decision.degraded is True
 
 
 def test_agentic_runtime_can_resume_existing_subagent_session() -> None:
@@ -783,3 +891,107 @@ def test_agentic_runtime_writes_debug_trade_trace_json_on_failure(monkeypatch, t
         assert payload['run']['status'] == 'failed'
         assert payload['context']['price_history'][0]['close'] == 1.102
         assert payload['error']['message'] == 'synthetic failure'
+
+
+def test_agentic_runtime_blocks_invalid_execution_side(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db)
+        runtime = AgenticTradingRuntime()
+        state = RuntimeSessionState(
+            objective={'kind': 'trade-analysis'},
+            max_turns=12,
+            plan=list(runtime.PLAN),
+        )
+        state.artifacts['trader_decision'] = {
+            'decision': 'BUY',
+            'execution_allowed': True,
+            'entry': 1.102,
+            'stop_loss': 1.099,
+            'take_profit': 1.108,
+        }
+        state.artifacts['risk'] = {'accepted': True, 'suggested_volume': 0.2}
+        monkeypatch.setattr(
+            runtime.orchestrator.execution_manager_agent,
+            'run',
+            lambda *_args, **_kwargs: {
+                'decision': 'SELL',
+                'should_execute': True,
+                'side': 'SELL',
+                'volume': 0.2,
+                'reason': 'bad side flip',
+            },
+        )
+
+        output = asyncio.run(
+            runtime._tool_run_execution_manager(
+                db=db,
+                run=run,
+                state=state,
+                risk_percent=1.0,
+                metaapi_account_ref=None,
+            )
+        )
+
+        assert output['status'] == 'blocked'
+        assert output['should_execute'] is False
+        assert output['side'] is None
+        assert 'does not match trader decision' in output['reason']
+
+
+def test_agentic_runtime_aborts_live_on_degraded_execution_manager(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db)
+        run.mode = 'live'
+        db.commit()
+        db.refresh(run)
+        runtime = AgenticTradingRuntime()
+        state = RuntimeSessionState(
+            objective={'kind': 'trade-analysis'},
+            max_turns=12,
+            plan=list(runtime.PLAN),
+        )
+        state.artifacts['analysis_outputs'] = {
+            'technical-analyst': {'signal': 'bullish', 'score': 0.4},
+            'news-analyst': {'signal': 'neutral', 'score': 0.0},
+            'market-context-analyst': {'signal': 'bullish', 'score': 0.2},
+        }
+        state.artifacts['bullish'] = {'confidence': 0.7}
+        state.artifacts['bearish'] = {'confidence': 0.2}
+        state.artifacts['trader_decision'] = {
+            'decision': 'BUY',
+            'execution_allowed': True,
+            'entry': 1.102,
+            'stop_loss': 1.099,
+            'take_profit': 1.108,
+        }
+        state.artifacts['risk'] = {'accepted': True, 'suggested_volume': 0.2}
+
+        monkeypatch.setattr(
+            runtime.orchestrator.execution_manager_agent,
+            'run',
+            lambda *_args, **_kwargs: {
+                'decision': 'BUY',
+                'should_execute': True,
+                'side': 'BUY',
+                'volume': 0.2,
+                'reason': 'degraded confirmation',
+                'degraded': True,
+            },
+        )
+
+        with pytest.raises(RuntimeError, match='degraded LLM response from execution-manager'):
+            asyncio.run(
+                runtime._tool_run_execution_manager(
+                    db=db,
+                    run=run,
+                    state=state,
+                    risk_percent=1.0,
+                    metaapi_account_ref=None,
+                )
+            )

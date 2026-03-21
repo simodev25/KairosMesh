@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session, object_session
 
+from app.db.models.agent_runtime_event import AgentRuntimeEvent
 from app.db.models.agent_runtime_message import AgentRuntimeMessage
 from app.db.models.agent_runtime_session import AgentRuntimeSession
 from app.db.models.run import AnalysisRun
@@ -181,6 +182,49 @@ class RuntimeSessionStore:
             'metadata': metadata,
         }
 
+    def _event_record_to_entry(self, record: AgentRuntimeEvent) -> dict[str, Any]:
+        payload = record.payload if isinstance(record.payload, dict) else {}
+        created_at = self._dt_to_iso(record.created_at)
+        return {
+            'id': record.seq,
+            'seq': record.seq,
+            'type': record.stream,
+            'stream': record.stream,
+            'name': record.event_type,
+            'event_type': record.event_type,
+            'actor': record.actor,
+            'turn': record.turn,
+            'payload': payload,
+            'data': payload,
+            'runId': str(record.run_id),
+            'sessionKey': record.session_key,
+            'correlationId': record.correlation_id,
+            'causationId': record.causation_id,
+            'created_at': created_at or utc_now_iso(),
+            'ts': int(record.ts or 0),
+        }
+
+    def _load_last_event_seq(self, db: Session, run: AnalysisRun) -> int:
+        row = (
+            db.query(AgentRuntimeEvent.seq)
+            .filter(AgentRuntimeEvent.run_id == run.id)
+            .order_by(AgentRuntimeEvent.seq.desc())
+            .first()
+        )
+        if row is None:
+            return 0
+        try:
+            return int(row[0] or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _count_events(self, db: Session, run: AnalysisRun) -> int:
+        return (
+            db.query(AgentRuntimeEvent)
+            .filter(AgentRuntimeEvent.run_id == run.id)
+            .count()
+        )
+
     def _load_session_record(
         self,
         db: Session,
@@ -330,8 +374,15 @@ class RuntimeSessionStore:
             if session_history:
                 runtime_trace['session_history'] = session_history
 
+        events = self.list_events(run, limit=self.event_limit)
+        runtime_trace['events'] = events
+        if events:
+            runtime_trace['last_event_id'] = int(events[-1].get('seq', 0) or 0)
+        db = self._db_for_run(run)
+        if db is not None:
+            runtime_trace['event_count'] = self._count_events(db, run)
+
         if include_state_snapshot:
-            db = self._db_for_run(run)
             if db is not None:
                 root_record = self._load_root_session_record(db, run)
                 if root_record is not None and isinstance(root_record.state_snapshot, dict):
@@ -625,6 +676,55 @@ class RuntimeSessionStore:
             return items
         return items[-max(int(limit), 1) :]
 
+    def list_events(
+        self,
+        run: AnalysisRun,
+        *,
+        session_key: str | None = None,
+        after_id: int | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_session_key = self._normalize_session_key(session_key) if session_key is not None else None
+        db = self._db_for_run(run)
+        if db is not None:
+            query = (
+                db.query(AgentRuntimeEvent)
+                .filter(AgentRuntimeEvent.run_id == run.id)
+                .order_by(AgentRuntimeEvent.seq.asc())
+            )
+            if normalized_session_key:
+                query = query.filter(AgentRuntimeEvent.session_key == normalized_session_key)
+            if after_id is not None:
+                query = query.filter(AgentRuntimeEvent.seq > max(int(after_id), 0))
+            if limit is not None:
+                query = query.limit(max(int(limit), 1))
+            records = query.all()
+            if records:
+                return [self._event_record_to_entry(record) for record in records]
+
+        trace = self._clone_runtime_trace(run)
+        runtime_trace = trace[self.TRACE_KEY]
+        events = runtime_trace.get('events')
+        if not isinstance(events, list):
+            return []
+        normalized_events: list[dict[str, Any]] = []
+        after_seq = max(int(after_id or 0), 0)
+        for item in events:
+            if not isinstance(item, dict):
+                continue
+            try:
+                seq = int(item.get('seq', item.get('id', 0)) or 0)
+            except (TypeError, ValueError):
+                continue
+            if normalized_session_key and self._normalize_session_key(item.get('sessionKey')) != normalized_session_key:
+                continue
+            if seq <= after_seq:
+                continue
+            normalized_events.append(item)
+        if limit is None:
+            return normalized_events
+        return normalized_events[: max(int(limit), 1)]
+
     def append_session_message(
         self,
         db: Session,
@@ -762,23 +862,53 @@ class RuntimeSessionStore:
         if not isinstance(events, list):
             events = []
 
-        next_event_id = int(runtime_trace.get('last_event_id', 0) or 0) + 1
+        trace_last_event_id = int(runtime_trace.get('last_event_id', 0) or 0)
+        next_event_id = max(trace_last_event_id, self._load_last_event_seq(db, run)) + 1
+        normalized_payload = self._json_safe(payload or {})
+        normalized_session_key = str(session_key or runtime_trace.get('session_key') or f'analysis-run:{run.id}')
+        actor = str(
+            normalized_payload.get('actor') or normalized_payload.get('name') or name or normalized_stream
+        ).strip() or name
         event = RuntimeEvent(
             id=next_event_id,
             stream=normalized_stream,
             name=name,
             turn=state.turn,
-            payload=payload or {},
+            payload=normalized_payload,
             run_id=str(run.id),
-            session_key=str(session_key or runtime_trace.get('session_key') or f'analysis-run:{run.id}'),
+            session_key=normalized_session_key,
+            actor=actor,
+            correlation_id=str(
+                normalized_payload.get('correlationId') or normalized_payload.get('correlation_id') or ''
+            ).strip()
+            or None,
+            causation_id=str(
+                normalized_payload.get('causationId') or normalized_payload.get('causation_id') or ''
+            ).strip()
+            or None,
         ).as_dict()
+        db.add(
+            AgentRuntimeEvent(
+                run_id=run.id,
+                session_key=normalized_session_key,
+                seq=next_event_id,
+                stream=normalized_stream,
+                event_type=name,
+                actor=actor,
+                turn=state.turn,
+                correlation_id=event.get('correlationId'),
+                causation_id=event.get('causationId'),
+                payload=normalized_payload,
+                ts=int(event.get('ts', 0) or 0),
+            )
+        )
         next_events = [*events, event]
         if len(next_events) > self.event_limit:
             next_events = next_events[-self.event_limit :]
 
         runtime_trace['events'] = next_events
         runtime_trace['last_event_id'] = next_event_id
-        runtime_trace['event_count'] = int(runtime_trace.get('event_count', 0) or 0) + 1
+        runtime_trace['event_count'] = next_event_id
         runtime_trace['status'] = runtime_status or state.status
         runtime_trace['plan'] = list(state.plan)
         runtime_trace['session'] = state.summary()
