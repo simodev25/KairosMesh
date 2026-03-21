@@ -1,4 +1,9 @@
-from app.services.orchestrator.agents import AgentContext, TraderAgent
+from app.services.orchestrator.agents import (
+    AgentContext,
+    TraderAgent,
+    _apply_mode_prompt_guidance,
+    _resolve_decision_policy,
+)
 
 
 def _context(
@@ -355,8 +360,8 @@ def test_trader_agent_permissive_accepts_lower_but_valid_evidence_thresholds() -
     result = agent.run(ctx, outputs, bullish, bearish)
 
     assert result['decision_mode'] == 'permissive'
-    assert result['combined_score'] >= 0.22
-    assert result['confidence'] >= 0.26
+    assert result['combined_score'] >= result['rationale']['min_combined_score']
+    assert result['confidence'] >= result['rationale']['min_confidence']
     assert result['decision'] == 'BUY'
 
 
@@ -377,8 +382,83 @@ def test_trader_agent_permissive_authorizes_sell_for_strong_bearish_technical_si
 
     assert result['decision_mode'] == 'permissive'
     assert result['decision'] == 'SELL'
-    assert result['combined_score'] <= -0.22
-    assert result['confidence'] >= 0.26
+    assert result['combined_score'] <= -result['rationale']['min_combined_score']
+    assert result['confidence'] >= result['rationale']['min_confidence']
+
+
+def test_balanced_and_conservative_policy_thresholds_remain_stable() -> None:
+    balanced = _resolve_decision_policy('balanced')
+    conservative = _resolve_decision_policy('conservative')
+
+    assert balanced.min_combined_score == 0.25
+    assert balanced.min_confidence == 0.30
+    assert balanced.min_aligned_sources == 1
+    assert balanced.allow_technical_single_source_override is False
+
+    assert conservative.min_combined_score == 0.30
+    assert conservative.min_confidence == 0.35
+    assert conservative.min_aligned_sources == 2
+    assert conservative.allow_technical_single_source_override is False
+
+
+def test_trader_agent_mode_hierarchy_keeps_permissive_more_opportunistic() -> None:
+    ctx = _context(trend='bullish', macd_diff=0.02)
+    outputs = {
+        'technical-analyst': {'signal': 'bullish', 'score': 0.10},
+        'market-context-analyst': {'signal': 'neutral', 'score': 0.0},
+        'news-analyst': {'signal': 'neutral', 'score': 0.0},
+    }
+    bullish = {'arguments': ['x'], 'confidence': 0.3}
+    bearish = {'arguments': ['y'], 'confidence': 0.0}
+
+    permissive = TraderAgent()
+    permissive.model_selector.settings.decision_mode = 'permissive'
+    permissive_result = permissive.run(ctx, outputs, bullish, bearish)
+
+    balanced = TraderAgent()
+    balanced.model_selector.settings.decision_mode = 'balanced'
+    balanced_result = balanced.run(ctx, outputs, bullish, bearish)
+
+    conservative = TraderAgent()
+    conservative.model_selector.settings.decision_mode = 'conservative'
+    conservative_result = conservative.run(ctx, outputs, bullish, bearish)
+
+    assert permissive_result['decision'] == 'BUY'
+    assert balanced_result['decision'] == 'HOLD'
+    assert conservative_result['decision'] == 'HOLD'
+    assert permissive_result['combined_score'] >= permissive_result['rationale']['min_combined_score']
+    assert balanced_result['combined_score'] < balanced_result['rationale']['min_combined_score']
+    assert conservative_result['combined_score'] < conservative_result['rationale']['min_combined_score']
+
+
+def test_apply_mode_prompt_guidance_is_permissive_only_and_deduplicated() -> None:
+    system_prompt = 'System prompt base'
+    user_prompt = 'User prompt base'
+
+    permissive_system, permissive_user = _apply_mode_prompt_guidance(
+        system_prompt,
+        user_prompt,
+        decision_mode='permissive',
+        agent_name='trader-agent',
+    )
+    repeated_system, repeated_user = _apply_mode_prompt_guidance(
+        permissive_system,
+        permissive_user,
+        decision_mode='permissive',
+        agent_name='trader-agent',
+    )
+    balanced_system, balanced_user = _apply_mode_prompt_guidance(
+        system_prompt,
+        user_prompt,
+        decision_mode='balanced',
+        agent_name='trader-agent',
+    )
+
+    assert 'mode permissive' in permissive_system.lower()
+    assert repeated_system == permissive_system
+    assert repeated_user == permissive_user
+    assert balanced_system == system_prompt
+    assert balanced_user == user_prompt
 
 
 def test_trader_agent_permissive_uses_override_when_sources_are_missing_but_technical_is_directional() -> None:

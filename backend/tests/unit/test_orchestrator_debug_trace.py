@@ -163,6 +163,11 @@ def test_orchestrator_writes_debug_trade_trace_json(monkeypatch, tmp_path: Path)
         assert payload['context']['price_history'][0]['close'] == 1.102
         assert 'memory_signal' in payload['context']
         assert payload['analysis_bundle']['execution_result']['status'] == 'skipped'
+        assert completed_run.decision['execution']['status'] == 'skipped'
+        assert completed_run.decision['execution_manager']['status'] == 'skipped'
+        assert completed_run.decision['execution_manager']['execution']['status'] == 'skipped'
+        assert completed_run.decision['execution_manager']['decision'] == 'HOLD'
+        assert completed_run.decision['execution_manager']['should_execute'] is False
         assert any(step['agent_name'] == 'execution-manager' for step in payload['agent_steps'])
         assert 'memory_signal' in completed_run.trace
 

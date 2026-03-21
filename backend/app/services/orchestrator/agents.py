@@ -534,15 +534,15 @@ DECISION_POLICIES: dict[str, DecisionGatingPolicy] = {
     ),
     'permissive': DecisionGatingPolicy(
         mode='permissive',
-        min_combined_score=0.22,
-        min_confidence=0.26,
+        min_combined_score=0.18,
+        min_confidence=0.22,
         min_aligned_sources=1,
-        technical_neutral_exception_min_sources=3,
-        technical_neutral_exception_min_strength=0.28,
-        technical_neutral_exception_min_combined=0.35,
+        technical_neutral_exception_min_sources=1,
+        technical_neutral_exception_min_strength=0.10,
+        technical_neutral_exception_min_combined=0.20,
         allow_low_edge_technical_override=True,
         allow_technical_single_source_override=True,
-        technical_single_source_min_score=0.22,
+        technical_single_source_min_score=0.18,
         contradiction_weak_penalty=0.02,
         contradiction_weak_confidence_multiplier=0.96,
         contradiction_weak_volume_multiplier=0.90,
@@ -700,6 +700,55 @@ def _optimize_news_prompts_for_latency(system_prompt: str, user_prompt: str) -> 
     return system, user
 
 
+def _permissive_mode_prompt_guidance(agent_name: str) -> str:
+    guidance_map = {
+        'technical-analyst': (
+            'Mode permissive: n exige pas une convergence parfaite. '
+            'Si un biais technique faible mais exploitable existe, prefere bullish/bearish faible a neutral automatique.'
+        ),
+        'news-analyst': (
+            'Mode permissive: distingue clairement absence de signal vs signal faible exploitable. '
+            'N ecrase pas en neutral un biais plausible uniquement parce que les preuves sont imparfaites.'
+        ),
+        'macro-analyst': (
+            'Mode permissive: accepte un biais contextuel leger si le contexte ne contredit pas la direction, '
+            'tout en gardant une confidence prudente et explicite.'
+        ),
+        'market-context-analyst': (
+            'Mode permissive: accepte un biais contextuel leger si le contexte ne contredit pas la direction, '
+            'tout en gardant une confidence prudente et explicite.'
+        ),
+        'debate-engine': (
+            'Mode permissive: explore des theses moderement actionnables quand les preuves sont plausibles, '
+            'sans transformer une ambiguite majeure en conviction forte.'
+        ),
+        'bullish-researcher': (
+            'Mode permissive: construis aussi des theses haussieres moderement actionnables, '
+            'pas seulement des cas de convergence parfaite.'
+        ),
+        'bearish-researcher': (
+            'Mode permissive: construis aussi des theses baissieres moderement actionnables, '
+            'pas seulement des cas de convergence parfaite.'
+        ),
+        'trader-agent': (
+            'Mode permissive: autorise BUY/SELL quand le setup est plausible et correctement borne, '
+            'meme si la convergence est partielle; preserve les blocages de contradiction majeure.'
+        ),
+    }
+    return guidance_map.get(agent_name, '')
+
+
+def _apply_mode_prompt_guidance(system_prompt: str, user_prompt: str, *, decision_mode: str, agent_name: str) -> tuple[str, str]:
+    if decision_mode != 'permissive':
+        return system_prompt, user_prompt
+    extra = _permissive_mode_prompt_guidance(agent_name)
+    if not extra:
+        return system_prompt, user_prompt
+    if extra.lower() in system_prompt.lower():
+        return system_prompt, user_prompt
+    return f'{system_prompt}\n\n{extra}', user_prompt
+
+
 def _deterministic_headline_sentiment(headlines: str, *, pair: str | None = None) -> tuple[str, float]:
     lines = [
         str(line).strip().lstrip('-').strip()
@@ -843,6 +892,13 @@ class TechnicalAnalystAgent:
                 macd_diff=m.get('macd_diff'),
                 last_price=m.get('last_price'),
             )
+        decision_mode = self.model_selector.resolve_decision_mode(db)
+        system_prompt, user_prompt = _apply_mode_prompt_guidance(
+            system_prompt,
+            user_prompt,
+            decision_mode=decision_mode,
+            agent_name=self.name,
+        )
         llm_res = self.llm.chat(
             system_prompt,
             user_prompt,
@@ -927,6 +983,7 @@ class NewsAnalystAgent:
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
+        trading_decision_mode = self.model_selector.resolve_decision_mode(db)
         settings = get_settings()
         analysis_cfg = settings.news_analysis if isinstance(settings.news_analysis, dict) else {}
         min_relevance = _clamp(_safe_float(analysis_cfg.get('minimum_relevance_score'), 0.35), 0.0, 1.0)
@@ -1306,6 +1363,12 @@ class NewsAnalystAgent:
                     evidence=evidence_text,
                 )
             system, user = _optimize_news_prompts_for_latency(system, user)
+            system, user = _apply_mode_prompt_guidance(
+                system,
+                user,
+                decision_mode=trading_decision_mode,
+                agent_name=self.name,
+            )
 
             llm_res = self.llm.chat(
                 system,
@@ -1773,6 +1836,12 @@ class MarketContextAnalystAgent:
             else:
                 system_prompt = fallback_system
                 user_prompt = fallback_user.format(**variables)
+            system_prompt, user_prompt = _apply_mode_prompt_guidance(
+                system_prompt,
+                user_prompt,
+                decision_mode=trading_decision_mode,
+                agent_name=self.name,
+            )
 
             output['llm_call_attempted'] = True
             llm_res = self.llm.chat(
@@ -1844,6 +1913,7 @@ class BullishResearcherAgent:
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
+        trading_decision_mode = self.model_selector.resolve_decision_mode(db)
         should_call_llm = llm_enabled and any(abs(float(item.get('score', 0.0) or 0.0)) >= 0.08 for item in debate_inputs.values())
         system_prompt = fallback_system
         user_prompt = fallback_user_rendered
@@ -1862,6 +1932,12 @@ class BullishResearcherAgent:
             )
             system_prompt = prompt_info['system_prompt']
             user_prompt = prompt_info['user_prompt']
+            system_prompt, user_prompt = _apply_mode_prompt_guidance(
+                system_prompt,
+                user_prompt,
+                decision_mode=trading_decision_mode,
+                agent_name=self.name,
+            )
             llm_out = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
             llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_out, require_text=True)
         else:
@@ -1928,6 +2004,7 @@ class BearishResearcherAgent:
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
+        trading_decision_mode = self.model_selector.resolve_decision_mode(db)
         should_call_llm = llm_enabled and any(abs(float(item.get('score', 0.0) or 0.0)) >= 0.08 for item in debate_inputs.values())
         system_prompt = fallback_system
         user_prompt = fallback_user_rendered
@@ -1946,6 +2023,12 @@ class BearishResearcherAgent:
             )
             system_prompt = prompt_info['system_prompt']
             user_prompt = prompt_info['user_prompt']
+            system_prompt, user_prompt = _apply_mode_prompt_guidance(
+                system_prompt,
+                user_prompt,
+                decision_mode=trading_decision_mode,
+                agent_name=self.name,
+            )
             llm_out = self.llm.chat(system_prompt, user_prompt, model=llm_model, db=db)
             llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_out, require_text=True)
         else:
@@ -2680,6 +2763,12 @@ class TraderAgent:
                 net_score=net_score,
                 combined_score=combined_score,
             )
+        system_prompt, user_prompt = _apply_mode_prompt_guidance(
+            system_prompt,
+            user_prompt,
+            decision_mode=decision_mode,
+            agent_name=self.name,
+        )
         llm_res = self.llm.chat(
             system_prompt,
             user_prompt,
