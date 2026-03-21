@@ -1,11 +1,13 @@
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
+from app.db.models.metaapi_account import MetaApiAccount
 from app.db.models.run import AnalysisRun
 from app.db.models.user import User
 from app.services.orchestrator.engine import ForexOrchestrator
@@ -29,6 +31,20 @@ def _seed_run(db: Session, *, mode: str = 'simulation') -> AnalysisRun:
     db.commit()
     db.refresh(run)
     return run
+
+
+def _seed_metaapi_account(db: Session) -> MetaApiAccount:
+    account = MetaApiAccount(
+        label='paper-default',
+        account_id='test-account-id',
+        region='new-york',
+        enabled=True,
+        is_default=True,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
 
 
 def test_compact_analysis_outputs_for_debate_drops_prompt_noise() -> None:
@@ -63,6 +79,216 @@ def test_compact_analysis_outputs_for_debate_drops_prompt_noise() -> None:
     assert 'ema_fast' not in compact['technical-analyst']['indicators']
     assert 'prompt_meta' not in compact['technical-analyst']
     assert 'prompt_meta' not in compact['news-analyst']
+
+
+def test_resolve_market_snapshot_uses_metaapi_when_enabled(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        account = _seed_metaapi_account(db)
+        orchestrator = ForexOrchestrator()
+        orchestrator.settings.metaapi_use_sdk_for_market_data = True
+
+        candles: list[dict[str, object]] = []
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for idx in range(90):
+            close = 70000.0 + (idx * 4.5)
+            candles.append(
+                {
+                    'time': (start + timedelta(minutes=15 * idx)).isoformat().replace('+00:00', 'Z'),
+                    'open': close - 5.0,
+                    'high': close + 8.0,
+                    'low': close - 9.0,
+                    'close': close,
+                    'volume': 1000 + idx,
+                }
+            )
+
+        async def fake_get_market_candles(*, pair: str, timeframe: str, limit: int, account_id: str | None, region: str | None):
+            assert pair == 'BTCUSD'
+            assert timeframe == 'M15'
+            assert account_id == account.account_id
+            assert region == account.region
+            assert limit == 240
+            return {
+                'degraded': False,
+                'pair': pair,
+                'symbol': 'BTCUSD',
+                'requested_symbol': 'BTCUSD',
+                'tried_symbols': ['BTCUSD'],
+                'timeframe': timeframe,
+                'candles': candles,
+                'provider': 'sdk',
+            }
+
+        monkeypatch.setattr(orchestrator.metaapi, 'get_market_candles', fake_get_market_candles)
+        monkeypatch.setattr(
+            orchestrator.market_provider,
+            'get_market_snapshot',
+            lambda *_args, **_kwargs: {'degraded': True, 'error': 'yfinance fallback should not be used'},
+        )
+
+        snapshot = asyncio.run(
+            orchestrator.resolve_market_snapshot(
+                db,
+                pair='BTCUSD',
+                timeframe='M15',
+                metaapi_account_ref=account.id,
+            )
+        )
+
+        assert snapshot['degraded'] is False
+        assert snapshot['market_data_source'] == 'metaapi'
+        assert snapshot['market_data_provider'] == 'sdk'
+        assert snapshot['symbol'] == 'BTCUSD'
+        assert snapshot['timeframe'] == 'M15'
+        assert snapshot['trend'] in {'bullish', 'neutral'}
+
+
+def test_resolve_market_snapshot_falls_back_to_yfinance_when_metaapi_degraded(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        account = _seed_metaapi_account(db)
+        orchestrator = ForexOrchestrator()
+        orchestrator.settings.metaapi_use_sdk_for_market_data = True
+
+        async def fake_get_market_candles(*_args, **_kwargs):
+            return {
+                'degraded': True,
+                'pair': 'BTCUSD',
+                'timeframe': 'M15',
+                'provider': 'sdk',
+                'reason': 'No market candles returned for symbol candidates',
+                'requested_symbol': 'BTCUSD',
+                'tried_symbols': ['BTCUSD'],
+            }
+
+        monkeypatch.setattr(orchestrator.metaapi, 'get_market_candles', fake_get_market_candles)
+        monkeypatch.setattr(
+            orchestrator.market_provider,
+            'get_market_snapshot',
+            lambda *_args, **_kwargs: {
+                'degraded': False,
+                'pair': 'BTCUSD',
+                'timeframe': 'M15',
+                'last_price': 71000.0,
+                'atr': 150.0,
+                'trend': 'bullish',
+            },
+        )
+
+        snapshot = asyncio.run(
+            orchestrator.resolve_market_snapshot(
+                db,
+                pair='BTCUSD',
+                timeframe='M15',
+                metaapi_account_ref=account.id,
+            )
+        )
+
+        assert snapshot['degraded'] is False
+        assert snapshot['market_data_source'] == 'yfinance_fallback'
+        assert snapshot['metaapi_market_data_degraded'] is True
+        assert snapshot['metaapi_market_data_reason'] == 'No market candles returned for symbol candidates'
+
+
+def test_resolve_market_snapshot_uses_env_metaapi_account_when_no_db_account(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        orchestrator = ForexOrchestrator()
+        orchestrator.settings.metaapi_use_sdk_for_market_data = True
+        orchestrator.settings.metaapi_account_id = 'env-account-id'
+
+        async def fake_get_market_candles(*, pair: str, timeframe: str, limit: int, account_id: str | None, region: str | None):
+            assert pair == 'BTCUSD'
+            assert timeframe == 'M15'
+            assert limit == 240
+            assert account_id is None
+            assert region is None
+            return {
+                'degraded': False,
+                'pair': pair,
+                'symbol': 'BTCUSD',
+                'requested_symbol': 'BTCUSD',
+                'tried_symbols': ['BTCUSD'],
+                'timeframe': timeframe,
+                'candles': [
+                    {
+                        'time': (datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=15 * idx)).isoformat().replace('+00:00', 'Z'),
+                        'open': 100.0 + idx,
+                        'high': 101.0 + idx,
+                        'low': 99.0 + idx,
+                        'close': 100.5 + idx,
+                        'volume': 1.0 + idx,
+                    }
+                    for idx in range(80)
+                ],
+                'provider': 'sdk',
+            }
+
+        monkeypatch.setattr(orchestrator.metaapi, 'get_market_candles', fake_get_market_candles)
+
+        snapshot = asyncio.run(
+            orchestrator.resolve_market_snapshot(
+                db,
+                pair='BTCUSD',
+                timeframe='M15',
+                metaapi_account_ref=None,
+            )
+        )
+
+        assert snapshot['degraded'] is False
+        assert snapshot['market_data_source'] == 'metaapi'
+        assert snapshot['metaapi_account_id'] == 'env-account-id'
+        assert snapshot.get('metaapi_account_ref') is None
+
+
+def test_resolve_recent_candles_prefers_metaapi_when_enabled(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        orchestrator = ForexOrchestrator()
+        orchestrator.settings.metaapi_use_sdk_for_market_data = True
+
+        async def fake_get_market_candles(*, pair: str, timeframe: str, limit: int, account_id: str | None, region: str | None):
+            assert pair == 'BTCUSD'
+            assert timeframe == 'M15'
+            assert limit == 3
+            return {
+                'degraded': False,
+                'candles': [
+                    {'time': '2026-03-21T15:00:00Z', 'open': 1.0, 'high': 2.0, 'low': 0.5, 'close': 1.5, 'volume': 10},
+                    {'time': '2026-03-21T15:15:00Z', 'open': 1.5, 'high': 2.1, 'low': 1.2, 'close': 1.9, 'volume': 11},
+                    {'time': '2026-03-21T15:30:00Z', 'open': 1.9, 'high': 2.2, 'low': 1.7, 'close': 2.0, 'volume': 12},
+                ],
+                'provider': 'sdk',
+            }
+
+        monkeypatch.setattr(orchestrator.metaapi, 'get_market_candles', fake_get_market_candles)
+        monkeypatch.setattr(
+            orchestrator.market_provider,
+            'get_recent_candles',
+            lambda *_args, **_kwargs: [{'ts': 'fallback'}],
+        )
+
+        candles = asyncio.run(
+            orchestrator.resolve_recent_candles(
+                db,
+                pair='BTCUSD',
+                timeframe='M15',
+                limit=3,
+            )
+        )
+
+        assert len(candles) == 3
+        assert candles[0]['ts'] == '2026-03-21T15:00:00Z'
+        assert candles[-1]['close'] == 2.0
 
 
 def test_orchestrator_writes_debug_trade_trace_json(monkeypatch, tmp_path: Path) -> None:

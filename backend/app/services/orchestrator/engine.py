@@ -1,5 +1,6 @@
 import logging
 import json
+import math
 import threading
 import time
 from datetime import datetime, timezone
@@ -7,7 +8,11 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
+import pandas as pd
 from sqlalchemy.orm import Session
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator, MACD
+from ta.volatility import AverageTrueRange
 
 from app.core.config import get_settings
 from app.db.models.agent_step import AgentStep
@@ -31,6 +36,8 @@ from app.services.orchestrator.agents import (
     TraderAgent,
 )
 from app.services.prompts.registry import PromptTemplateService
+from app.services.trading.account_selector import MetaApiAccountSelector
+from app.services.trading.metaapi_client import MetaApiClient
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +59,8 @@ class ForexOrchestrator:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.market_provider = YFinanceMarketProvider()
+        self.metaapi = MetaApiClient()
+        self.account_selector = MetaApiAccountSelector()
         self.memory_service = VectorMemoryService()
         self.memori_memory_service = MemoriMemoryService()
         self.prompt_service = PromptTemplateService()
@@ -437,6 +446,291 @@ class ForexOrchestrator:
             return float(value)
         except (TypeError, ValueError):
             return float(default)
+
+    @staticmethod
+    def _to_finite_float(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        return number
+
+    @staticmethod
+    def _resolve_requested_metaapi_account_ref(run: AnalysisRun, explicit_account_ref: int | None) -> int | None:
+        if explicit_account_ref is not None:
+            return int(explicit_account_ref)
+        trace_payload = run.trace if isinstance(run.trace, dict) else {}
+        raw_value = trace_payload.get('requested_metaapi_account_ref')
+        try:
+            resolved = int(raw_value or 0)
+        except (TypeError, ValueError):
+            return None
+        return resolved or None
+
+    @classmethod
+    def _build_snapshot_from_market_candles(
+        cls,
+        *,
+        pair: str,
+        timeframe: str,
+        candles: list[dict[str, Any]],
+        symbol: str | None,
+    ) -> dict[str, Any]:
+        if not isinstance(candles, list) or not candles:
+            return {'degraded': True, 'error': 'No market candles available', 'pair': pair, 'timeframe': timeframe}
+
+        rows: list[dict[str, Any]] = []
+        for candle in candles:
+            if not isinstance(candle, dict):
+                continue
+            open_price = cls._to_finite_float(candle.get('open'))
+            high = cls._to_finite_float(candle.get('high'))
+            low = cls._to_finite_float(candle.get('low'))
+            close_price = cls._to_finite_float(candle.get('close'))
+            if open_price is None or high is None or low is None or close_price is None:
+                continue
+            rows.append(
+                {
+                    'time': candle.get('time'),
+                    'Open': open_price,
+                    'High': high,
+                    'Low': low,
+                    'Close': close_price,
+                }
+            )
+
+        if len(rows) < 60:
+            return {
+                'degraded': True,
+                'error': 'Insufficient market candles for indicators',
+                'pair': pair,
+                'timeframe': timeframe,
+            }
+
+        frame = pd.DataFrame(rows)
+        frame['time'] = pd.to_datetime(frame['time'], utc=True, errors='coerce')
+        frame = (
+            frame.dropna(subset=['time'])
+            .sort_values('time')
+            .drop_duplicates(subset=['time'], keep='last')
+            .set_index('time')
+        )
+
+        if len(frame) < 60:
+            return {
+                'degraded': True,
+                'error': 'Insufficient chronological market candles for indicators',
+                'pair': pair,
+                'timeframe': timeframe,
+            }
+
+        close = frame['Close']
+        high = frame['High']
+        low = frame['Low']
+
+        try:
+            rsi_raw = cls._to_finite_float(RSIIndicator(close=close, window=14).rsi().iloc[-1])
+            ema_fast_raw = cls._to_finite_float(EMAIndicator(close=close, window=20).ema_indicator().iloc[-1])
+            ema_slow_raw = cls._to_finite_float(EMAIndicator(close=close, window=50).ema_indicator().iloc[-1])
+            macd_diff_raw = cls._to_finite_float(MACD(close=close).macd_diff().iloc[-1])
+            atr_raw = cls._to_finite_float(AverageTrueRange(high=high, low=low, close=close).average_true_range().iloc[-1])
+        except Exception as exc:
+            return {
+                'degraded': True,
+                'error': f'Market indicator computation failed: {exc}',
+                'pair': pair,
+                'timeframe': timeframe,
+            }
+
+        latest = cls._to_finite_float(close.iloc[-1])
+        prev = cls._to_finite_float(close.iloc[-2]) if len(close) > 1 else latest
+        if (
+            latest is None
+            or prev is None
+            or rsi_raw is None
+            or ema_fast_raw is None
+            or ema_slow_raw is None
+            or macd_diff_raw is None
+            or atr_raw is None
+        ):
+            return {
+                'degraded': True,
+                'error': 'Market indicators unavailable from candles',
+                'pair': pair,
+                'timeframe': timeframe,
+            }
+
+        pct_change = ((latest - prev) / prev) * 100 if prev else 0.0
+        trend = 'bullish' if ema_fast_raw > ema_slow_raw else 'bearish'
+        if abs(ema_fast_raw - ema_slow_raw) < latest * 0.0003:
+            trend = 'neutral'
+
+        return {
+            'degraded': False,
+            'pair': pair,
+            'timeframe': timeframe,
+            'symbol': symbol,
+            'last_price': latest,
+            'change_pct': round(float(pct_change), 5),
+            'rsi': round(float(rsi_raw), 3),
+            'ema_fast': round(float(ema_fast_raw), 6),
+            'ema_slow': round(float(ema_slow_raw), 6),
+            'macd_diff': round(float(macd_diff_raw), 6),
+            'atr': round(float(atr_raw), 6),
+            'trend': trend,
+        }
+
+    def _yfinance_market_snapshot_with_metaapi_context(
+        self,
+        *,
+        pair: str,
+        timeframe: str,
+        metaapi_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        snapshot = self.market_provider.get_market_snapshot(pair, timeframe)
+        payload = dict(snapshot) if isinstance(snapshot, dict) else {
+            'degraded': True,
+            'error': 'Market snapshot unavailable',
+            'pair': pair,
+            'timeframe': timeframe,
+        }
+        if metaapi_payload is None:
+            payload.setdefault('market_data_source', 'yfinance')
+            return payload
+
+        payload['market_data_source'] = 'yfinance_fallback'
+        payload['metaapi_market_data_degraded'] = True
+        payload['metaapi_market_data_reason'] = (
+            str(metaapi_payload.get('reason') or metaapi_payload.get('error') or '').strip() or None
+        )
+        payload['metaapi_market_data_provider'] = metaapi_payload.get('provider')
+        payload['metaapi_requested_symbol'] = metaapi_payload.get('requested_symbol')
+        payload['metaapi_tried_symbols'] = metaapi_payload.get('tried_symbols', [])
+        return payload
+
+    async def resolve_market_snapshot(
+        self,
+        db: Session,
+        *,
+        pair: str,
+        timeframe: str,
+        metaapi_account_ref: int | None = None,
+    ) -> dict[str, Any]:
+        if not bool(self.settings.metaapi_use_sdk_for_market_data):
+            return self._yfinance_market_snapshot_with_metaapi_context(pair=pair, timeframe=timeframe)
+
+        selected_account = self.account_selector.resolve(db, metaapi_account_ref)
+        metaapi_market = await self.metaapi.get_market_candles(
+            pair=pair,
+            timeframe=timeframe,
+            limit=240,
+            account_id=selected_account.account_id if selected_account is not None else None,
+            region=selected_account.region if selected_account is not None else None,
+        )
+        if bool(metaapi_market.get('degraded', False)):
+            logger.warning(
+                'metaapi market snapshot degraded pair=%s timeframe=%s account_id=%s reason=%s',
+                pair,
+                timeframe,
+                selected_account.account_id if selected_account is not None else str(self.settings.metaapi_account_id or '').strip() or 'default',
+                metaapi_market.get('reason'),
+            )
+            return self._yfinance_market_snapshot_with_metaapi_context(
+                pair=pair,
+                timeframe=timeframe,
+                metaapi_payload=metaapi_market,
+            )
+
+        snapshot = self._build_snapshot_from_market_candles(
+            pair=pair,
+            timeframe=timeframe,
+            candles=metaapi_market.get('candles', []) if isinstance(metaapi_market.get('candles'), list) else [],
+            symbol=str(metaapi_market.get('symbol') or '').strip() or pair,
+        )
+        if bool(snapshot.get('degraded', False)):
+            logger.warning(
+                'metaapi market snapshot indicator build failed pair=%s timeframe=%s account_id=%s reason=%s',
+                pair,
+                timeframe,
+                selected_account.account_id if selected_account is not None else str(self.settings.metaapi_account_id or '').strip() or 'default',
+                snapshot.get('error'),
+            )
+            return self._yfinance_market_snapshot_with_metaapi_context(
+                pair=pair,
+                timeframe=timeframe,
+                metaapi_payload={
+                    **metaapi_market,
+                    'reason': snapshot.get('error') or metaapi_market.get('reason'),
+                },
+            )
+
+        snapshot['market_data_source'] = 'metaapi'
+        snapshot['market_data_provider'] = metaapi_market.get('provider')
+        snapshot['requested_symbol'] = metaapi_market.get('requested_symbol')
+        snapshot['tried_symbols'] = metaapi_market.get('tried_symbols', [])
+        if selected_account is not None:
+            snapshot['metaapi_account_ref'] = selected_account.id
+            snapshot['metaapi_account_label'] = selected_account.label
+        snapshot['metaapi_account_id'] = (
+            selected_account.account_id if selected_account is not None else str(self.settings.metaapi_account_id or '').strip() or None
+        )
+        return snapshot
+
+    async def resolve_recent_candles(
+        self,
+        db: Session,
+        *,
+        pair: str,
+        timeframe: str,
+        limit: int = 200,
+        metaapi_account_ref: int | None = None,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(int(limit or 1), 1)
+        if not bool(self.settings.metaapi_use_sdk_for_market_data):
+            return self.market_provider.get_recent_candles(pair, timeframe, limit=safe_limit)
+
+        selected_account = self.account_selector.resolve(db, metaapi_account_ref)
+        metaapi_market = await self.metaapi.get_market_candles(
+            pair=pair,
+            timeframe=timeframe,
+            limit=safe_limit,
+            account_id=selected_account.account_id if selected_account is not None else None,
+            region=selected_account.region if selected_account is not None else None,
+        )
+        if bool(metaapi_market.get('degraded', False)):
+            logger.warning(
+                'metaapi recent candles degraded pair=%s timeframe=%s account_id=%s reason=%s',
+                pair,
+                timeframe,
+                selected_account.account_id if selected_account is not None else str(self.settings.metaapi_account_id or '').strip() or 'default',
+                metaapi_market.get('reason'),
+            )
+            return self.market_provider.get_recent_candles(pair, timeframe, limit=safe_limit)
+
+        items = metaapi_market.get('candles', [])
+        if not isinstance(items, list) or not items:
+            return self.market_provider.get_recent_candles(pair, timeframe, limit=safe_limit)
+
+        normalized: list[dict[str, Any]] = []
+        for candle in items:
+            if not isinstance(candle, dict):
+                continue
+            close_value = self._to_finite_float(candle.get('close'))
+            if close_value is None:
+                continue
+            normalized.append(
+                {
+                    'ts': str(candle.get('time') or '').strip(),
+                    'open': self._to_finite_float(candle.get('open')),
+                    'high': self._to_finite_float(candle.get('high')),
+                    'low': self._to_finite_float(candle.get('low')),
+                    'close': close_value,
+                    'volume': self._to_finite_float(candle.get('volume')),
+                }
+            )
+        return normalized[-safe_limit:]
 
     @staticmethod
     def _normalize_trade_decision(value: Any) -> str:
@@ -952,7 +1246,13 @@ class ForexOrchestrator:
 
         self._ensure_prompt_defaults(self.prompt_service, db)
 
-        market = self.market_provider.get_market_snapshot(run.pair, run.timeframe)
+        metaapi_account_ref = self._resolve_requested_metaapi_account_ref(run, metaapi_account_ref)
+        market = await self.resolve_market_snapshot(
+            db,
+            pair=run.pair,
+            timeframe=run.timeframe,
+            metaapi_account_ref=metaapi_account_ref,
+        )
         news = self.market_provider.get_news_context(run.pair)
         memory_context_enabled = self.model_selector.resolve_memory_context_enabled(db)
         decision_mode = self.model_selector.resolve_decision_mode(db)
@@ -986,10 +1286,12 @@ class ForexOrchestrator:
         price_history: list[dict[str, Any]] = []
         if self.settings.debug_trade_json_enabled and self.settings.debug_trade_json_include_price_history:
             try:
-                price_history = self.market_provider.get_recent_candles(
-                    run.pair,
-                    run.timeframe,
+                price_history = await self.resolve_recent_candles(
+                    db,
+                    pair=run.pair,
+                    timeframe=run.timeframe,
                     limit=self.settings.debug_trade_json_price_history_limit,
+                    metaapi_account_ref=metaapi_account_ref,
                 )
             except Exception:
                 logger.exception('debug price history fetch failed run_id=%s', run_id)
@@ -1172,9 +1474,6 @@ class ForexOrchestrator:
                     raise RuntimeError(
                         f'Live mode aborted: degraded LLM response from {degraded_list}.'
                     )
-
-            if metaapi_account_ref is None:
-                metaapi_account_ref = int((run.trace or {}).get('requested_metaapi_account_ref', 0) or 0) or None
 
             execution_input = {
                 'trader_decision': trader_decision,
