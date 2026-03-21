@@ -6,3 +6,7 @@ scrape_configs:
     static_configs:
       - targets: ['backend:8000']
     metrics_path: /metrics
+  - job_name: forex_worker
+    static_configs:
+      - targets: ['worker:9101']
+    metrics_path: /metrics

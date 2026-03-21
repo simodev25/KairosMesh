@@ -8,7 +8,7 @@ class BacktestCreateRequest(BaseModel):
     timeframe: str = Field(min_length=2, max_length=5)
     start_date: date
     end_date: date
-    strategy: str = 'agents_v1'
+    strategy: str = 'ema_rsi'
 
 
 class BacktestTradeOut(BaseModel):

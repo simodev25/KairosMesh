@@ -10,7 +10,7 @@ from app.db.models.run import AnalysisRun
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.run import CreateRunRequest, RunDetailOut, RunOut
-from app.services.agent_runtime import normalize_runtime_engine, resolve_run_runtime_engine, run_with_selected_runtime
+from app.services.agent_runtime import run_with_selected_runtime
 from app.services.agent_runtime.constants import AGENTIC_V2_RUNTIME
 from app.services.agent_runtime.session_store import RuntimeSessionStore
 from app.services.market.symbols import canonical_symbol, get_market_symbols_config
@@ -27,7 +27,7 @@ def _serialize_run(
     hydrate_runtime: bool = False,
 ) -> RunOut | RunDetailOut:
     trace = run.trace if isinstance(run.trace, dict) else {}
-    if hydrate_runtime and resolve_run_runtime_engine(run) == AGENTIC_V2_RUNTIME:
+    if hydrate_runtime:
         trace = RuntimeSessionStore().hydrate_trace(run)
 
     payload = {
@@ -79,7 +79,7 @@ async def create_run(
             len(preferred_pairs),
         )
     if timeframe not in settings.default_timeframes:
-        raise HTTPException(status_code=400, detail=f'Unsupported timeframe {timeframe} for V1 scope')
+        raise HTTPException(status_code=400, detail=f'Unsupported timeframe {timeframe}')
     if payload.mode == 'live' and user.role not in {Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR}:
         raise HTTPException(status_code=403, detail='Live mode requires elevated trading role')
     if payload.metaapi_account_ref is not None:
@@ -94,7 +94,7 @@ async def create_run(
         status='pending',
         trace={
             'requested_metaapi_account_ref': payload.metaapi_account_ref,
-            'runtime_engine': normalize_runtime_engine(payload.runtime),
+            'runtime_engine': AGENTIC_V2_RUNTIME,
         },
         created_by_id=user.id,
     )

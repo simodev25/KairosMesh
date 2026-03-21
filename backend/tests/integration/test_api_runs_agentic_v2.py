@@ -42,7 +42,6 @@ def test_login_and_create_run_agentic_v2(monkeypatch) -> None:
                 'timeframe': 'H1',
                 'mode': 'simulation',
                 'risk_percent': 1.0,
-                'runtime': 'agentic_v2',
             },
             headers={'Authorization': f'Bearer {token}'},
         )
@@ -67,7 +66,6 @@ def test_get_run_rehydrates_runtime_history_from_sql(monkeypatch) -> None:
                 'timeframe': 'H1',
                 'mode': 'simulation',
                 'risk_percent': 1.0,
-                'runtime': 'agentic_v2',
             },
             headers={'Authorization': f'Bearer {token}'},
         )

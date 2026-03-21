@@ -8,7 +8,19 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.run import AnalysisRun
-from app.observability.metrics import orchestrator_step_duration_seconds
+from app.observability.metrics import (
+    agentic_runtime_execution_outcomes_total,
+    agentic_runtime_final_decisions_total,
+    agentic_runtime_memory_refresh_total,
+    agentic_runtime_runs_total,
+    agentic_runtime_session_messages_total,
+    agentic_runtime_subagent_sessions_total,
+    agentic_runtime_tool_calls_total,
+    agentic_runtime_tool_duration_seconds,
+    agentic_runtime_tool_selections_total,
+    analysis_runs_total,
+    orchestrator_step_duration_seconds,
+)
 from app.services.agent_runtime.constants import AGENTIC_V2_RUNTIME
 from app.services.agent_runtime.models import RuntimeSessionState
 from app.services.agent_runtime.planner import AgenticRuntimePlanner
@@ -174,6 +186,10 @@ class AgenticTradingRuntime:
         )
         self.registry.set_policy(allow=['*'], deny=[])
 
+    @staticmethod
+    def _bool_label(value: bool) -> str:
+        return 'true' if value else 'false'
+
     def _build_objective(
         self,
         *,
@@ -253,6 +269,112 @@ class AgenticTradingRuntime:
     def _analysis_outputs(state: RuntimeSessionState) -> dict[str, dict[str, Any]]:
         outputs = state.artifacts.get('analysis_outputs')
         return outputs if isinstance(outputs, dict) else {}
+
+    async def _collect_debug_price_history(
+        self,
+        db: Session,
+        run: AnalysisRun,
+        *,
+        metaapi_account_ref: int | None,
+    ) -> list[dict[str, Any]]:
+        if not (
+            self.settings.debug_trade_json_enabled
+            and self.settings.debug_trade_json_include_price_history
+        ):
+            return []
+
+        try:
+            return await self.orchestrator.resolve_recent_candles(
+                db,
+                pair=run.pair,
+                timeframe=run.timeframe,
+                limit=self.settings.debug_trade_json_price_history_limit,
+                metaapi_account_ref=metaapi_account_ref,
+            )
+        except Exception:
+            logger.exception('agentic runtime debug price history fetch failed run_id=%s', run.id)
+            return []
+
+    async def _attach_debug_trace(
+        self,
+        db: Session,
+        run: AnalysisRun,
+        state: RuntimeSessionState,
+        *,
+        risk_percent: float,
+        metaapi_account_ref: int | None,
+        trace_payload: dict[str, Any],
+        error: Exception | None = None,
+    ) -> dict[str, Any]:
+        if not self.settings.debug_trade_json_enabled:
+            return trace_payload
+
+        analysis_outputs = self._analysis_outputs(state)
+        bullish = state.artifacts.get('bullish') if isinstance(state.artifacts.get('bullish'), dict) else {}
+        bearish = state.artifacts.get('bearish') if isinstance(state.artifacts.get('bearish'), dict) else {}
+        trader_decision = state.artifacts.get('trader_decision') if isinstance(state.artifacts.get('trader_decision'), dict) else {}
+        risk_output = state.artifacts.get('risk') if isinstance(state.artifacts.get('risk'), dict) else {}
+        execution_output = state.artifacts.get('execution_manager') if isinstance(state.artifacts.get('execution_manager'), dict) else {}
+        execution_result = state.artifacts.get('execution_result') if isinstance(state.artifacts.get('execution_result'), dict) else {}
+        price_history = await self._collect_debug_price_history(
+            db,
+            run,
+            metaapi_account_ref=metaapi_account_ref,
+        )
+
+        try:
+            debug_payload = self.orchestrator._build_debug_trade_payload(
+                db=db,
+                run=run,
+                risk_percent=risk_percent,
+                metaapi_account_ref=metaapi_account_ref,
+                market=state.context.get('market', {}) if isinstance(state.context.get('market'), dict) else {},
+                news=state.context.get('news', {}) if isinstance(state.context.get('news'), dict) else {},
+                memory_context=state.context.get('memory_context', []) if isinstance(state.context.get('memory_context'), list) else [],
+                memory_signal=state.context.get('memory_signal', {}) if isinstance(state.context.get('memory_signal'), dict) else {},
+                memory_runtime=state.context.get('memory_runtime', {}) if isinstance(state.context.get('memory_runtime'), dict) else {},
+                price_history=price_history,
+                analysis_outputs=analysis_outputs,
+                bullish=bullish,
+                bearish=bearish,
+                trader_decision=trader_decision,
+                risk_output=risk_output,
+                execution_output=execution_output,
+                execution_result=execution_result,
+            )
+            if error is not None:
+                debug_payload['error'] = {
+                    'type': type(error).__name__,
+                    'message': str(error),
+                }
+            debug_file = self.orchestrator._write_debug_trade_payload(run.id, debug_payload)
+            updated_trace_payload = {
+                **trace_payload,
+                'debug_trace_meta': {
+                    'enabled': True,
+                    'generated_at': debug_payload.get('generated_at'),
+                    'steps_count': len(debug_payload.get('agent_steps', [])),
+                    'inline_in_run_trace': self.settings.debug_trade_json_inline_in_run_trace,
+                    'file_written': bool(debug_file),
+                },
+            }
+            if debug_file:
+                updated_trace_payload['debug_trace_file'] = debug_file
+            if self.settings.debug_trade_json_inline_in_run_trace:
+                updated_trace_payload['debug_trace'] = debug_payload
+            return updated_trace_payload
+        except Exception:
+            logger.exception('agentic runtime debug trace export failed run_id=%s', run.id)
+            return {
+                **trace_payload,
+                'debug_trace_meta': {
+                    'enabled': True,
+                    'generated_at': None,
+                    'steps_count': 0,
+                    'inline_in_run_trace': self.settings.debug_trade_json_inline_in_run_trace,
+                    'file_written': False,
+                },
+            }
 
     def _record_history(self, state: RuntimeSessionState, *, tool_name: str, result: dict[str, Any]) -> None:
         state.history.append(
@@ -344,6 +466,12 @@ class AgenticTradingRuntime:
                 'objective': objective,
             },
         )
+        agentic_runtime_subagent_sessions_total.labels(
+            source_tool=source_tool,
+            session_mode=session_mode,
+            status='started',
+            resumed=self._bool_label(resumed),
+        ).inc()
         self.session_store.append_event(
             db,
             run,
@@ -437,6 +565,12 @@ class AgenticTradingRuntime:
                     'resumed': resumed,
                 },
             )
+            agentic_runtime_subagent_sessions_total.labels(
+                source_tool=source_tool,
+                session_mode=session_mode,
+                status='completed',
+                resumed=self._bool_label(resumed),
+            ).inc()
             return output
         except Exception as exc:
             self.session_store.finalize_subagent_session(
@@ -478,6 +612,12 @@ class AgenticTradingRuntime:
                 },
                 runtime_status='failed',
             )
+            agentic_runtime_subagent_sessions_total.labels(
+                source_tool=source_tool,
+                session_mode=session_mode,
+                status='failed',
+                resumed=self._bool_label(resumed),
+            ).inc()
             raise
 
     def _should_refresh_memory(self, state: RuntimeSessionState) -> bool:
@@ -566,6 +706,11 @@ class AgenticTradingRuntime:
             candidate_tools=candidate_payloads,
         )
         selected_tool = decision.tool_name if decision.tool_name in candidate_tools else candidate_tools[0]
+        agentic_runtime_tool_selections_total.labels(
+            tool=selected_tool,
+            source=decision.source,
+            degraded=self._bool_label(bool(decision.degraded)),
+        ).inc()
         state.notes.append(f'Planner[{decision.source}] -> {selected_tool}: {decision.reason}')
         state.notes = state.notes[-40:]
         self.session_store.append_event(
@@ -618,6 +763,7 @@ class AgenticTradingRuntime:
                 'args': tool_payload,
             },
         )
+        started = time.perf_counter()
         try:
             result = await self.registry.call(
                 tool_name,
@@ -643,7 +789,13 @@ class AgenticTradingRuntime:
                 },
                 runtime_status='failed',
             )
+            elapsed = max(time.perf_counter() - started, 0.0)
+            agentic_runtime_tool_calls_total.labels(tool=tool_name, status='error').inc()
+            agentic_runtime_tool_duration_seconds.labels(tool=tool_name, status='error').observe(elapsed)
             raise
+        elapsed = max(time.perf_counter() - started, 0.0)
+        agentic_runtime_tool_calls_total.labels(tool=tool_name, status='success').inc()
+        agentic_runtime_tool_duration_seconds.labels(tool=tool_name, status='success').observe(elapsed)
         self._record_history(state, tool_name=tool_name, result=result)
         self.session_store.append_event(
             db,
@@ -680,6 +832,7 @@ class AgenticTradingRuntime:
         objective = self._build_objective(run=run, risk_percent=risk_percent, metaapi_account_ref=metaapi_account_ref)
         state = self.session_store.restore_state(run)
         resuming_existing_state = state is not None
+        resumed_label = self._bool_label(resuming_existing_state)
         if state is None:
             state = RuntimeSessionState(
                 objective=objective,
@@ -762,6 +915,22 @@ class AgenticTradingRuntime:
                 'runtime_engine': AGENTIC_V2_RUNTIME,
             }
             run.status = 'completed'
+            decision_label = str(trader_decision.get('decision') or 'UNKNOWN').strip().upper() or 'UNKNOWN'
+            execution_status = str(execution_result.get('status') or 'unknown').strip().lower() or 'unknown'
+            analysis_runs_total.labels(status='completed').inc()
+            agentic_runtime_runs_total.labels(
+                status='completed',
+                mode=str(run.mode or 'unknown'),
+                resumed=resumed_label,
+            ).inc()
+            agentic_runtime_final_decisions_total.labels(
+                decision=decision_label,
+                mode=str(run.mode or 'unknown'),
+            ).inc()
+            agentic_runtime_execution_outcomes_total.labels(
+                status=execution_status,
+                mode=str(run.mode or 'unknown'),
+            ).inc()
 
             trace_payload = run.trace if isinstance(run.trace, dict) else {}
             trace_payload = {
@@ -781,6 +950,14 @@ class AgenticTradingRuntime:
                 'workflow_mode': AGENTIC_V2_RUNTIME,
                 'runtime_engine': AGENTIC_V2_RUNTIME,
             }
+            trace_payload = await self._attach_debug_trace(
+                db,
+                run,
+                state,
+                risk_percent=risk_percent,
+                metaapi_account_ref=metaapi_account_ref,
+                trace_payload=trace_payload,
+            )
             run.trace = trace_payload
             db.commit()
             db.refresh(run)
@@ -836,12 +1013,40 @@ class AgenticTradingRuntime:
             state.notes.append(str(exc))
             run.status = 'failed'
             run.error = str(exc)
+            analysis_runs_total.labels(status='failed').inc()
+            agentic_runtime_runs_total.labels(
+                status='failed',
+                mode=str(run.mode or 'unknown'),
+                resumed=resumed_label,
+            ).inc()
             failed_trace = run.trace if isinstance(run.trace, dict) else {}
-            run.trace = {
+            failed_trace = {
                 **failed_trace,
+                'market': state.context.get('market', {}),
+                'news': state.context.get('news', {}),
+                'analysis_outputs': self._analysis_outputs(state),
+                'bullish': state.artifacts.get('bullish') if isinstance(state.artifacts.get('bullish'), dict) else {},
+                'bearish': state.artifacts.get('bearish') if isinstance(state.artifacts.get('bearish'), dict) else {},
+                'memory_context': state.context.get('memory_context', []),
+                'memory_context_enabled': state.context.get('memory_context_enabled', False),
+                'memory_signal': state.context.get('memory_signal', {}),
+                'memory_runtime': state.context.get('memory_runtime', {}),
+                'memory_retrieval_context': state.context.get('memory_retrieval_context', {}),
+                'requested_metaapi_account_ref': metaapi_account_ref,
+                'workflow': list(self.orchestrator.WORKFLOW_STEPS),
                 'runtime_engine': AGENTIC_V2_RUNTIME,
                 'workflow_mode': AGENTIC_V2_RUNTIME,
+                'error': str(exc),
             }
+            run.trace = await self._attach_debug_trace(
+                db,
+                run,
+                state,
+                risk_percent=risk_percent,
+                metaapi_account_ref=metaapi_account_ref,
+                trace_payload=failed_trace,
+                error=exc,
+            )
             db.commit()
             db.refresh(run)
             self.session_store.append_event(
@@ -975,6 +1180,7 @@ class AgenticTradingRuntime:
         state.artifacts.pop('execution_manager', None)
         state.artifacts.pop('execution_result', None)
         state.notes.append(f'Memory refreshed with limit={next_limit}.')
+        agentic_runtime_memory_refresh_total.labels(mode=str(run.mode or 'unknown')).inc()
         return {
             'memory_context_count': len(memory_context),
             'memory_limit': next_limit,
@@ -1136,6 +1342,9 @@ class AgenticTradingRuntime:
                 'resumeRequested': bool(resume),
             },
         )
+        agentic_runtime_session_messages_total.labels(
+            resume_requested=self._bool_label(bool(resume))
+        ).inc()
 
         resume_output: dict[str, Any] | None = None
         if resume:

@@ -1,0 +1,201 @@
+{
+  "id": null,
+  "title": "Forex Platform - Agent Runtime Sessions & Failures",
+  "tags": ["forex", "agentic_v2", "sessions", "failures"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Tool Failures / min",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_tool_calls_total{status=\"error\"}[5m])) * 60",
+          "legendFormat": "failures/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Session Messages / min",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_session_messages_total[5m])) * 60",
+          "legendFormat": "messages/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Subagent Sessions / min",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_subagent_sessions_total{status=~\"completed|failed\"}[5m])) * 60",
+          "legendFormat": "sessions/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Completed Run Success (%)",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "100 * sum(rate(agentic_runtime_runs_total{status=\"completed\"}[5m])) / clamp_min(sum(rate(agentic_runtime_runs_total[5m])), 0.0001)",
+          "legendFormat": "success %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Tool Failures / min by Tool",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_tool_calls_total{status=\"error\"}[5m])) by (tool) * 60",
+          "legendFormat": "{{tool}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Tool Success / min by Tool",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_tool_calls_total{status=\"success\"}[5m])) by (tool) * 60",
+          "legendFormat": "{{tool}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Subagent Sessions / min by Source Tool",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_subagent_sessions_total{status=~\"completed|failed\"}[5m])) by (source_tool, status) * 60",
+          "legendFormat": "{{source_tool}} / {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Session Messages / min by Resume Flag",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_session_messages_total[5m])) by (resume_requested) * 60",
+          "legendFormat": "resume={{resume_requested}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Planner Degraded Selections / min by Source",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_tool_selections_total{degraded=\"true\"}[5m])) by (source, tool) * 60",
+          "legendFormat": "{{tool}} / {{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Memory Refresh / min by Mode",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "targets": [
+        {
+          "expr": "sum(rate(agentic_runtime_memory_refresh_total[5m])) by (mode) * 60",
+          "legendFormat": "{{mode}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "decimals": 2
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

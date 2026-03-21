@@ -53,7 +53,7 @@ def create_backtest(
             len(preferred_pairs),
         )
     if timeframe not in settings.default_timeframes:
-        raise HTTPException(status_code=400, detail=f'Unsupported timeframe {timeframe} for V1 scope')
+        raise HTTPException(status_code=400, detail=f'Unsupported timeframe {timeframe}')
     if payload.end_date <= payload.start_date:
         raise HTTPException(status_code=400, detail='end_date must be greater than start_date')
 

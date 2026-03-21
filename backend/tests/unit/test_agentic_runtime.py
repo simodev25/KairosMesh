@@ -1,5 +1,8 @@
 import asyncio
+import json
+from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -15,6 +18,13 @@ from app.services.agent_runtime.runtime import AgenticTradingRuntime
 from app.services.agent_runtime.session_store import RuntimeSessionStore
 from app.services.agent_runtime.tool_registry import RuntimeToolRegistry
 from app.services.llm.provider_client import LlmClient
+from app.observability.metrics import (
+    agentic_runtime_execution_outcomes_total,
+    agentic_runtime_final_decisions_total,
+    agentic_runtime_runs_total,
+    agentic_runtime_tool_calls_total,
+    agentic_runtime_tool_selections_total,
+)
 
 
 def _seed_run(db: Session) -> AnalysisRun:
@@ -35,6 +45,10 @@ def _seed_run(db: Session) -> AnalysisRun:
     db.commit()
     db.refresh(run)
     return run
+
+
+def _counter_value(metric, **labels: str) -> float:
+    return float(metric.labels(**labels)._value.get())
 
 
 def test_runtime_tool_registry_supports_sync_and_async_handlers() -> None:
@@ -230,6 +244,12 @@ def test_agentic_runtime_uses_planner_choice(monkeypatch) -> None:
             plan=state.plan,
             max_turns=state.max_turns,
         )
+        selections_before = _counter_value(
+            agentic_runtime_tool_selections_total,
+            tool='run_news_analyst',
+            source='llm',
+            degraded='false',
+        )
 
         def fake_choose_tool(**_kwargs):
             return PlannerDecision(
@@ -253,6 +273,12 @@ def test_agentic_runtime_uses_planner_choice(monkeypatch) -> None:
             and item['payload'].get('selectedTool') == 'run_news_analyst'
             for item in runtime_trace['events']
         )
+        assert _counter_value(
+            agentic_runtime_tool_selections_total,
+            tool='run_news_analyst',
+            source='llm',
+            degraded='false',
+        ) == selections_before + 1.0
 
 
 def test_agentic_runtime_can_resume_existing_subagent_session() -> None:
@@ -325,6 +351,58 @@ def test_agentic_runtime_can_resume_existing_subagent_session() -> None:
             and item['payload'].get('childSessionKey') == child_session_key
             for item in resumed_trace['events']
         )
+
+
+def test_agentic_runtime_call_tool_emits_success_metrics() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db)
+        runtime = AgenticTradingRuntime()
+        state = RuntimeSessionState(
+            objective={'kind': 'trade-analysis'},
+            max_turns=12,
+            plan=list(runtime.PLAN),
+        )
+        runtime.session_store.initialize(
+            db,
+            run,
+            runtime_engine=AGENTIC_V2_RUNTIME,
+            objective=state.objective,
+            plan=state.plan,
+            max_turns=state.max_turns,
+        )
+        runtime.registry.register(
+            'test-runtime-tool',
+            lambda **_kwargs: {'status': 'ok'},
+            description='Synthetic test tool.',
+            section='tests',
+            profiles=('agentic_v2',),
+        )
+        calls_before = _counter_value(
+            agentic_runtime_tool_calls_total,
+            tool='test-runtime-tool',
+            status='success',
+        )
+
+        result = asyncio.run(
+            runtime._call_tool(
+                db,
+                run,
+                state,
+                tool_name='test-runtime-tool',
+                risk_percent=1.0,
+                metaapi_account_ref=None,
+            )
+        )
+
+        assert result == {'status': 'ok'}
+        assert _counter_value(
+            agentic_runtime_tool_calls_total,
+            tool='test-runtime-tool',
+            status='success',
+        ) == calls_before + 1.0
 
 
 def test_agentic_runtime_sessions_resume_tool(monkeypatch) -> None:
@@ -503,3 +581,205 @@ def test_agentic_runtime_sessions_send_and_history() -> None:
 
         hydrated_trace = runtime.session_store.hydrate_trace(run)
         assert hydrated_trace['agentic_runtime']['session_history'][child_session['session_key']][0]['content'] == 'Continue with updated evidence.'
+
+
+def test_agentic_runtime_writes_debug_trade_trace_json(monkeypatch, tmp_path: Path) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db)
+        runtime = AgenticTradingRuntime()
+        runtime.settings.debug_trade_json_enabled = True
+        runtime.settings.debug_trade_json_dir = str(tmp_path)
+        runtime.settings.debug_trade_json_include_price_history = True
+        runtime.settings.debug_trade_json_price_history_limit = 20
+        runtime.settings.debug_trade_json_inline_in_run_trace = False
+
+        monkeypatch.setattr(runtime.orchestrator.prompt_service, 'seed_defaults', lambda _db: None)
+        runs_before = _counter_value(
+            agentic_runtime_runs_total,
+            status='completed',
+            mode='simulation',
+            resumed='false',
+        )
+        decisions_before = _counter_value(
+            agentic_runtime_final_decisions_total,
+            decision='BUY',
+            mode='simulation',
+        )
+        executions_before = _counter_value(
+            agentic_runtime_execution_outcomes_total,
+            status='skipped',
+            mode='simulation',
+        )
+
+        selection_state = {'done': False}
+
+        def fake_select_next_tool(_db, _run, _state):
+            if not selection_state['done']:
+                return 'resolve_market_context'
+            return None
+
+        async def fake_call_tool(_db, _run, state, *, tool_name, risk_percent, metaapi_account_ref):
+            assert tool_name == 'resolve_market_context'
+            assert risk_percent == 1.0
+            assert metaapi_account_ref is None
+            state.context['market'] = {
+                'degraded': False,
+                'pair': run.pair,
+                'timeframe': run.timeframe,
+                'last_price': 1.102,
+                'atr': 0.001,
+                'trend': 'bullish',
+            }
+            state.context['news'] = {
+                'degraded': False,
+                'pair': run.pair,
+                'news': [{'title': 'ECB keeps rates unchanged'}],
+            }
+            state.context['memory_context'] = [{'summary': 'Memo context'}]
+            state.context['memory_context_enabled'] = True
+            state.context['memory_signal'] = {'used': True, 'signal': 'supportive'}
+            state.context['memory_runtime'] = {'sources': {'vector': 1, 'memori': 0}}
+            state.context['memory_retrieval_context'] = {'trend': 'bullish'}
+            state.artifacts['analysis_outputs'] = {
+                'technical-analyst': {'signal': 'bullish', 'score': 0.4},
+                'news-analyst': {'signal': 'neutral', 'score': 0.0},
+            }
+            state.artifacts['bullish'] = {'arguments': ['Trend aligned'], 'confidence': 0.61}
+            state.artifacts['bearish'] = {'arguments': ['Resistance overhead'], 'confidence': 0.22}
+            state.artifacts['trader_decision'] = {
+                'decision': 'BUY',
+                'confidence': 0.61,
+                'entry': 1.102,
+                'stop_loss': 1.099,
+                'take_profit': 1.108,
+            }
+            state.artifacts['risk'] = {'accepted': True, 'reasons': ['Risk checks passed.'], 'suggested_volume': 0.2}
+            state.artifacts['execution_manager'] = {'decision': 'BUY', 'should_execute': False, 'status': 'skipped'}
+            state.artifacts['execution_result'] = {'status': 'skipped', 'executed': False}
+            runtime.orchestrator._record_step(
+                _db,
+                _run,
+                'resolve_market_context',
+                {'tool': tool_name},
+                {'status': 'ok'},
+            )
+            selection_state['done'] = True
+            return {'status': 'ok'}
+
+        async def fake_recent_candles(_db, *, pair, timeframe, limit, metaapi_account_ref):
+            assert pair == run.pair
+            assert timeframe == run.timeframe
+            assert limit == 20
+            assert metaapi_account_ref is None
+            return [{'ts': '2026-03-21T19:00:00Z', 'close': 1.102}]
+
+        monkeypatch.setattr(runtime, '_select_next_tool', fake_select_next_tool)
+        monkeypatch.setattr(runtime, '_candidate_tools', lambda _state: [] if selection_state['done'] else ['resolve_market_context'])
+        monkeypatch.setattr(runtime, '_call_tool', fake_call_tool)
+        monkeypatch.setattr(runtime.orchestrator, 'resolve_recent_candles', fake_recent_candles)
+        monkeypatch.setattr(runtime.orchestrator.memory_service, 'add_run_memory', lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(runtime.orchestrator.memori_memory_service, 'store_run_memory', lambda *_args, **_kwargs: {'stored': False})
+
+        completed_run = asyncio.run(runtime.execute(db, run, risk_percent=1.0))
+
+        assert completed_run.status == 'completed'
+        assert completed_run.trace['debug_trace_meta']['enabled'] is True
+        assert completed_run.trace['debug_trace_meta']['file_written'] is True
+        debug_path = Path(completed_run.trace['debug_trace_file'])
+        assert debug_path.exists()
+
+        payload = json.loads(debug_path.read_text(encoding='utf-8'))
+        assert payload['run']['id'] == run.id
+        assert payload['context']['price_history'][0]['close'] == 1.102
+        assert payload['analysis_bundle']['trader_decision']['decision'] == 'BUY'
+        assert _counter_value(
+            agentic_runtime_runs_total,
+            status='completed',
+            mode='simulation',
+            resumed='false',
+        ) == runs_before + 1.0
+        assert _counter_value(
+            agentic_runtime_final_decisions_total,
+            decision='BUY',
+            mode='simulation',
+        ) == decisions_before + 1.0
+        assert _counter_value(
+            agentic_runtime_execution_outcomes_total,
+            status='skipped',
+            mode='simulation',
+        ) == executions_before + 1.0
+
+
+def test_agentic_runtime_writes_debug_trade_trace_json_on_failure(monkeypatch, tmp_path: Path) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db)
+        runtime = AgenticTradingRuntime()
+        runtime.settings.debug_trade_json_enabled = True
+        runtime.settings.debug_trade_json_dir = str(tmp_path)
+        runtime.settings.debug_trade_json_include_price_history = True
+        runtime.settings.debug_trade_json_price_history_limit = 20
+        runtime.settings.debug_trade_json_inline_in_run_trace = False
+
+        monkeypatch.setattr(runtime.orchestrator.prompt_service, 'seed_defaults', lambda _db: None)
+
+        def fake_select_next_tool(_db, _run, _state):
+            return 'resolve_market_context'
+
+        async def fake_call_tool(_db, _run, state, *, tool_name, risk_percent, metaapi_account_ref):
+            assert tool_name == 'resolve_market_context'
+            assert risk_percent == 1.0
+            assert metaapi_account_ref is None
+            state.context['market'] = {
+                'degraded': False,
+                'pair': run.pair,
+                'timeframe': run.timeframe,
+                'last_price': 1.102,
+                'atr': 0.001,
+                'trend': 'bullish',
+            }
+            state.context['news'] = {
+                'degraded': False,
+                'pair': run.pair,
+                'news': [{'title': 'ECB keeps rates unchanged'}],
+            }
+            runtime.orchestrator._record_step(
+                _db,
+                _run,
+                'resolve_market_context',
+                {'tool': tool_name},
+                {'status': 'error', 'reason': 'synthetic failure'},
+            )
+            raise RuntimeError('synthetic failure')
+
+        async def fake_recent_candles(_db, *, pair, timeframe, limit, metaapi_account_ref):
+            assert pair == run.pair
+            assert timeframe == run.timeframe
+            assert limit == 20
+            assert metaapi_account_ref is None
+            return [{'ts': '2026-03-21T19:00:00Z', 'close': 1.102}]
+
+        monkeypatch.setattr(runtime, '_select_next_tool', fake_select_next_tool)
+        monkeypatch.setattr(runtime, '_call_tool', fake_call_tool)
+        monkeypatch.setattr(runtime.orchestrator, 'resolve_recent_candles', fake_recent_candles)
+
+        with pytest.raises(RuntimeError, match='synthetic failure'):
+            asyncio.run(runtime.execute(db, run, risk_percent=1.0))
+
+        db.refresh(run)
+        assert run.status == 'failed'
+        assert run.trace['debug_trace_meta']['enabled'] is True
+        assert run.trace['debug_trace_meta']['file_written'] is True
+        debug_path = Path(run.trace['debug_trace_file'])
+        assert debug_path.exists()
+
+        payload = json.loads(debug_path.read_text(encoding='utf-8'))
+        assert payload['run']['id'] == run.id
+        assert payload['run']['status'] == 'failed'
+        assert payload['context']['price_history'][0]['close'] == 1.102
+        assert payload['error']['message'] == 'synthetic failure'

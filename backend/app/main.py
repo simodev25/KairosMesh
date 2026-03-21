@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from jose import JWTError, jwt
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -29,6 +29,7 @@ from app.db.models.run import AnalysisRun
 from app.db.models.user import User
 from app.db.session import SessionLocal, engine, get_db
 from app.observability.metrics import backend_http_request_duration_seconds, backend_http_requests_total
+from app.observability.prometheus import build_metrics_payload
 from app.services.prompts.registry import PromptTemplateService
 from app.services.llm.skill_bootstrap import bootstrap_agent_skills_into_settings
 
@@ -260,7 +261,7 @@ async def prometheus_request_metrics(request: Request, call_next):
 
 @app.get('/metrics')
 def metrics() -> PlainTextResponse:
-    return PlainTextResponse(generate_latest().decode('utf-8'), media_type=CONTENT_TYPE_LATEST)
+    return PlainTextResponse(build_metrics_payload().decode('utf-8'), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.websocket('/ws/runs/{run_id}')

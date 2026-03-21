@@ -1,6 +1,8 @@
-# Architecture des agents (V1)
+# Architecture des agents spécialistes partagés
 
-Ce document décrit, de manière opérationnelle et fidèle au code, comment fonctionne la chaîne multi-agent de trading.
+Ce document décrit, de manière opérationnelle et fidèle au code, les briques spécialistes de trading encore présentes dans `backend/app/services/orchestrator/*`.
+
+Le runtime historique V1 n'est plus exposé par l'API ni par l'UI. `agentic_v2` réutilise toutefois une partie importante de cette pile, en particulier `analyze_context`, les agents spécialistes, la récupération marché et la mémoire.
 
 Périmètre principal couvert:
 
@@ -29,12 +31,12 @@ flowchart TD
   A[POST /api/v1/runs] --> B[AnalysisRun pending]
   B --> C{async_execution}
   C -- true --> D[Celery task run_analysis_task.execute]
-  C -- false --> E[ForexOrchestrator.execute]
+  C -- false --> E[AgenticTradingRuntime.execute]
   D --> E
 
   E --> F[Market snapshot + News context]
   E --> G[Memory retrieval Vector + Memori]
-  E --> H[analyze_context]
+  E --> H[ForexOrchestrator.analyze_context]
 
   H --> H1[technical/news/market-context en parallèle]
   H --> H2[bullish/bearish en parallèle]
@@ -55,7 +57,7 @@ Chemin API:
 
 - `POST /api/v1/runs` crée un `AnalysisRun` en `pending`.
 - Si `async_execution=true` (défaut), run passe en `queued` puis exécution via Celery.
-- Sinon l'orchestrateur tourne dans la requête HTTP.
+- Sinon `AgenticTradingRuntime` tourne dans la requête HTTP.
 
 Fichiers:
 
@@ -76,11 +78,7 @@ Responsabilités:
 
 - Charger les contextes marché/news/mémoire.
 - Exécuter les agents dans l'ordre et avec parallélisme contrôlé.
-- Piloter les cycles d'autonomie (`runtime_supervisor`).
-- Appliquer les aborts live sur outputs dégradés critiques.
-- Enchaîner `execution-manager` puis `ExecutionService`.
-- Persister trace complète (`analysis_runs`, `agent_steps`, `execution_orders`).
-- Enrichir mémoire post-run (vector + Memori).
+- Fournir les briques partagées réutilisées par `agentic_v2` pour l'analyse, le marché et la mémoire.
 
 Ordre de workflow déclaré (`WORKFLOW_STEPS`):
 

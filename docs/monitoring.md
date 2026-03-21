@@ -24,6 +24,15 @@ Métriques clés:
 
 - `analysis_runs_total{status=...}`
 - `orchestrator_step_duration_seconds_*`
+- `agentic_runtime_runs_total{status,mode,resumed}`
+- `agentic_runtime_tool_selections_total{tool,source,degraded}`
+- `agentic_runtime_tool_calls_total{tool,status}`
+- `agentic_runtime_tool_duration_seconds_*`
+- `agentic_runtime_subagent_sessions_total{source_tool,session_mode,status,resumed}`
+- `agentic_runtime_final_decisions_total{decision,mode}`
+- `agentic_runtime_execution_outcomes_total{status,mode}`
+- `agentic_runtime_session_messages_total{resume_requested}`
+- `agentic_runtime_memory_refresh_total{mode}`
 - `llm_calls_total{provider,status}`
 - `llm_latency_seconds_*`
 - `llm_cost_usd_total{model}`
@@ -41,6 +50,10 @@ Métriques clés:
 - URL: `http://localhost:3000`
 - Credentials local: `admin/admin`
 - Dashboard provisionné:
+  - `Forex Platform - Agent Runtime Overview`
+  - fichier: `infra/docker/grafana/dashboards/agent-runtime-overview.json`
+  - `Forex Platform - Agent Runtime Sessions & Failures`
+  - fichier: `infra/docker/grafana/dashboards/agent-runtime-sessions.json`
   - `Forex Platform - LLM & Orchestrator`
   - fichier: `infra/docker/grafana/dashboards/llm-observability.json`
   - `Forex Platform - Backend Performance & Cache`
@@ -48,6 +61,13 @@ Métriques clés:
 
 Panels disponibles:
 
+- Agentic runs/min, failure rate, planner degraded selections
+- Final decisions BUY/SELL/HOLD par minute
+- Tool selections/calls/failures par outil
+- Latence p95 des outils runtime et des spécialistes
+- Sessions sous-agents par `source_tool`
+- Messages `sessions_send` et fréquence des refresh mémoire
+- Statuts d'exécution (`filled`, `skipped`, `failed`, ...)
 - LLM Calls/min par status
 - LLM Latency p95
 - LLM Estimated Cost USD/min par modèle
@@ -66,6 +86,10 @@ Panels disponibles:
 
 ## Alertes recommandées (V1)
 
+- hausse de `agentic_runtime_runs_total{status="failed"}`.
+- hausse de `agentic_runtime_tool_calls_total{status="error"}` sur un outil donné.
+- hausse de `agentic_runtime_tool_selections_total{degraded="true"}`.
+- `agentic_runtime_execution_outcomes_total{status="failed"}` en augmentation.
 - hausse `external_provider_failures_total{provider="ollama"}`.
 - `llm_calls_total{status="error"}` > seuil.
 - p95 `orchestrator_step_duration_seconds` anormalement haute.

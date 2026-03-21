@@ -70,17 +70,17 @@ curl -sS -X POST "http://localhost:8000/api/v1/runs?async_execution=true" \
 docker compose logs --tail 120 worker backend | rg "dispatch_due_schedules|ollama_chat_call|metaapi|qdrant|yfinance|succeeded"
 ```
 
-5. Backtest `agents_v1`
+5. Backtest `ema_rsi`
 
 ```bash
 curl -sS -X POST http://localhost:8000/api/v1/backtests \
   -H "Authorization: Bearer <JWT>" \
   -H "Content-Type: application/json" \
-  -d '{"pair":"EURUSD","timeframe":"H1","start_date":"2025-01-01","end_date":"2025-03-01","strategy":"agents_v1"}'
+  -d '{"pair":"EURUSD","timeframe":"H1","start_date":"2025-01-01","end_date":"2025-03-01","strategy":"ema_rsi"}'
 ```
 
 6. Vérifier workflow source backtest
-- `metrics.workflow_source` doit valoir `ForexOrchestrator.analyze_context`.
+- `metrics.workflow_source` doit valoir `BacktestEngine.ema_rsi`.
 
 ## 4) Plan d'intégration minimal à couvrir
 
@@ -160,5 +160,5 @@ docker compose up -d --scale worker=3 worker
 
 - run bloqué en `running` sans étapes agents;
 - absence d'appels LLM dans les logs malgré LLM activé;
-- backtest `agents_v1` retombant sur workflow `ema_rsi`;
+- stratégie de backtest non supportée acceptée silencieusement;
 - exécution `paper/live` sans contrôle risque effectif.

@@ -83,7 +83,7 @@ class AgenticRuntimePlanner:
         fallback_user = (
             'Choisis le prochain outil.\n'
             'Réponds strictement avec ce JSON:\n'
-            '{"tool":"<candidate_tool_name>","reason":"<justification courte>"}\n\n'
+            '{{"tool":"<candidate_tool_name>","reason":"<justification courte>"}}\n\n'
             'Contexte runtime:\n{context_json}'
         )
         context_payload = {

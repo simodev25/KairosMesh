@@ -49,7 +49,7 @@ flowchart LR
 - `backend/app/services/memory`: mémoire hybride:
   - `VectorMemoryService` (Qdrant + repli SQL cosine), filtrée par `pair` et `timeframe`, utilisée pour le `memory_signal` déterministe.
   - `MemoriMemoryService` (optionnel) pour rappel sémantique additionnel inter-runs/inter-agents.
-- `backend/app/services/backtest`: stratégies `agents_v1` et `ema_rsi`.
+- `backend/app/services/backtest`: stratégie `ema_rsi`.
 
 ## Frontières de sécurité (V1)
 
@@ -92,8 +92,7 @@ sequenceDiagram
 ## Flux backtest
 
 - Endpoint: `POST /api/v1/backtests`.
-- Stratégies:
-  - `agents_v1`: passe par `ForexOrchestrator.analyze_context` (sans execution broker).
+- Stratégie disponible:
   - `ema_rsi`: stratégie technique déterministe.
 - Sorties: métriques (Sharpe, Sortino, drawdown, profit factor), equity curve, trades.
 

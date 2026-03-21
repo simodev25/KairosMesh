@@ -1,6 +1,5 @@
 export type DecisionType = 'BUY' | 'SELL' | 'HOLD';
 export type ExecutionMode = 'simulation' | 'paper' | 'live';
-export type RuntimeEngine = 'agents_v1' | 'agentic_v2';
 
 export interface User {
   id: number;

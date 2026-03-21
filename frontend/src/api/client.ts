@@ -41,7 +41,6 @@ export const api = {
       timeframe: string;
       mode: string;
       risk_percent: number;
-      runtime?: 'agents_v1' | 'agentic_v2';
       metaapi_account_ref?: number | null;
     },
     asyncExecution = true,

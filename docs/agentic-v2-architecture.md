@@ -1,6 +1,6 @@
 # Architecture `agentic_v2` alignée OpenClaw
 
-Ce document décrit précisément ce qui a été ajouté au projet pour faire évoluer la plateforme d'un workflow multi-agent V1 vers un runtime plus agentique, inspiré d'OpenClaw, tout en conservant les barrières critiques de trading.
+Ce document décrit précisément ce qui a été ajouté au projet pour faire évoluer la plateforme d'un workflow multi-agent historique vers un runtime plus agentique, inspiré d'OpenClaw, tout en conservant les barrières critiques de trading.
 
 Périmètre principal couvert:
 
@@ -13,7 +13,7 @@ Périmètre principal couvert:
 
 ## 1. Objectif
 
-L'objectif de `agentic_v2` est de remplacer un enchaînement strictement codé en dur par un runtime qui:
+L'objectif de `agentic_v2` est de remplacer l'ancien enchaînement strictement codé en dur par un runtime qui:
 
 - maintient un état de session vivant;
 - choisit le prochain outil via un planner LLM sous contraintes;
@@ -22,10 +22,7 @@ L'objectif de `agentic_v2` est de remplacer un enchaînement strictement codé e
 - reprend un run depuis un snapshot d'état;
 - conserve `risk-manager` et `execution-manager` comme garde-fous déterministes.
 
-Le projet ne remplace pas `agents_v1`. Les deux runtimes coexistent:
-
-- `agents_v1`: pipeline historique fixe;
-- `agentic_v2`: runtime planifié, traçable, avec sessions et sous-agents.
+Depuis le nettoyage du runtime historique, `agentic_v2` est le runtime unique exposé par l'API et l'UI. Les briques `orchestrator/*` restantes servent de composants spécialistes partagés réutilisés par `agentic_v2`.
 
 ## 2. Résumé des évolutions réalisées
 
@@ -36,13 +33,12 @@ Les changements ont été livrés en 6 blocs successifs.
 Ajouts:
 
 - package `backend/app/services/agent_runtime/`
-- dispatcher runtime dans `backend/app/services/agent_runtime/dispatcher.py`
-- sélection runtime dans l'API `/runs`
-- choix UI `agents_v1` vs `agentic_v2`
+- façade de lancement runtime dans `backend/app/services/agent_runtime/dispatcher.py`
+- intégration runtime dans l'API `/runs`
 
 Effet:
 
-- le système sait maintenant lancer soit l'ancien orchestrateur, soit un runtime agentique séparé.
+- le système lance désormais systématiquement un runtime agentique séparé.
 
 ### Bloc 2. Tracing compatible OpenClaw
 
@@ -112,9 +108,8 @@ Effet:
 ```mermaid
 flowchart LR
   UI[Frontend React] --> API[FastAPI /runs]
-  API --> DISP[Runtime dispatcher]
-  DISP -->|agents_v1| V1[ForexOrchestrator]
-  DISP -->|agentic_v2| RT[AgenticTradingRuntime]
+  API --> DISP[Runtime launch facade]
+  DISP --> RT[AgenticTradingRuntime]
 
   RT --> PLAN[AgenticRuntimePlanner]
   RT --> REG[RuntimeToolRegistry]
@@ -143,7 +138,7 @@ flowchart LR
 
 | Composant | Rôle | Fichier principal |
 |---|---|---|
-| Runtime dispatcher | Choisit `agents_v1` ou `agentic_v2` | `backend/app/services/agent_runtime/dispatcher.py` |
+| Runtime launch facade | Point d'entrée backend vers `agentic_v2` | `backend/app/services/agent_runtime/dispatcher.py` |
 | `AgenticTradingRuntime` | Boucle agentique principale | `backend/app/services/agent_runtime/runtime.py` |
 | `AgenticRuntimePlanner` | Choisit le prochain outil via LLM JSON | `backend/app/services/agent_runtime/planner.py` |
 | `RuntimeToolRegistry` | Enregistre et appelle les outils | `backend/app/services/agent_runtime/tool_registry.py` |
@@ -415,7 +410,7 @@ Objectifs recherchés:
 `GET /api/v1/runs/{id}` ne renvoie pas directement le JSON brut stocké dans `analysis_runs.trace`. Il reconstruit la partie runtime:
 
 1. lecture de `analysis_runs.trace`;
-2. si `runtime_engine == agentic_v2`, appel à `RuntimeSessionStore.hydrate_trace(run)`;
+2. appel à `RuntimeSessionStore.hydrate_trace(run)`;
 3. injection de `sessions` depuis SQL;
 4. injection de `session_history` depuis SQL;
 5. optionnellement injection de `state_snapshot` si demandé.
@@ -429,10 +424,7 @@ Conséquence:
 
 ### 12.1 Dashboard
 
-Le dashboard permet de choisir le runtime au lancement du run:
-
-- `agents_v1`
-- `agentic_v2`
+Le dashboard lance directement un run `agentic_v2`. Le sélecteur de runtime a été retiré.
 
 ### 12.2 Run detail
 
@@ -448,7 +440,7 @@ Le dashboard permet de choisir le runtime au lancement du run:
 
 ```mermaid
 flowchart LR
-  D[DashboardPage] --> C[createRun runtime=agentic_v2]
+  D[DashboardPage] --> C[createRun]
   C --> API[POST /api/v1/runs]
   API --> RD[RunDetailPage]
   RD --> WS[WebSocket /ws/runs/{id}]
@@ -545,7 +537,8 @@ Au démarrage local, `Base.metadata.create_all(...)` permet aussi d'initialiser 
 Validation backend:
 
 ```bash
-python3 -m pytest backend/tests/unit/test_agentic_runtime.py backend/tests/integration/test_api_runs_agentic_v2.py backend/tests/integration/test_api_runs.py -q
+cd backend
+python3 -m pytest tests/unit/test_agentic_runtime.py tests/integration/test_api_runs_agentic_v2.py tests/integration/test_api_runs.py -q
 ```
 
 Validation frontend:
@@ -558,7 +551,7 @@ npm --prefix frontend run -s build
 
 Par rapport à V1, `agentic_v2` apporte:
 
-- un runtime séparé du pipeline historique;
+- un runtime unique exposé côté produit;
 - une boucle de décision outillée;
 - des sous-agents traçables;
 - des primitives de session explicites;

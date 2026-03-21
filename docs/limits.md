@@ -31,5 +31,5 @@ Pour les limites spécifiques au runtime agentique V2, voir `docs/agentic-v2-lim
 
 ## Performance
 
-- Le backtest `agents_v1` est plus coûteux que `ema_rsi` (pipeline multi-agent).
+- Le backtest exposé est désormais `ema_rsi`, choisi pour sa simplicité et son coût borné.
 - Le composant de graphiques trades réels est chargé à la demande (lazy) pour réduire le bundle initial.

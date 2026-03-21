@@ -63,7 +63,6 @@ Variables clés:
 `get_historical_candles(pair, timeframe, start_date, end_date)` alimente:
 
 - stratégie `ema_rsi`
-- stratégie `agents_v1`
 
 ## Intégration mémoire
 

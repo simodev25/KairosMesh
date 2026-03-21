@@ -83,7 +83,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
         ),
         'user': (
             "Choisis le prochain outil.\n"
-            'Réponds strictement avec ce JSON: {"tool":"<candidate_tool_name>","reason":"<justification courte>"}\n'
+            'Réponds strictement avec ce JSON: {{"tool":"<candidate_tool_name>","reason":"<justification courte>"}}\n'
             "Contexte runtime JSON:\n{context_json}"
         ),
     },
@@ -153,6 +153,22 @@ class SafeDict(dict):
 class PromptTemplateService:
     def __init__(self) -> None:
         self.model_selector = AgentModelSelector()
+
+    @staticmethod
+    def _escape_literal_braces_preserving_placeholders(template: str) -> str:
+        text = str(template or '')
+        placeholder_pattern = re.compile(r'\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[^{}]+|\[[^{}]+\])?)\}')
+        placeholders: list[str] = []
+
+        def _stash(match: re.Match[str]) -> str:
+            placeholders.append(match.group(0))
+            return f'__PROMPT_VAR_{len(placeholders) - 1}__'
+
+        masked = placeholder_pattern.sub(_stash, text)
+        masked = masked.replace('{', '{{').replace('}', '}}')
+        for index, original in enumerate(placeholders):
+            masked = masked.replace(f'__PROMPT_VAR_{index}__', original)
+        return masked
 
     @staticmethod
     def _normalize_legacy_market_wording(text: str) -> str:
@@ -321,12 +337,22 @@ class PromptTemplateService:
             for item in self.model_selector.resolve_skills(db, agent_name)
         ]
         system_prompt = self._append_skills_block(system_prompt, skills)
-        required_vars = self._required_template_variables(user_template)
-        missing_variables = [key for key in required_vars if key not in variables]
-        render_variables = dict(variables)
-        for key in missing_variables:
-            render_variables[key] = f'<MISSING:{key}>'
-        user_prompt = user_template.format_map(SafeDict(**render_variables))
+        def _build_render_context(template: str) -> tuple[list[str], dict[str, Any]]:
+            required_vars = self._required_template_variables(template)
+            missing_variables = [key for key in required_vars if key not in variables]
+            render_variables = dict(variables)
+            for key in missing_variables:
+                render_variables[key] = f'<MISSING:{key}>'
+            return missing_variables, render_variables
+
+        render_template = user_template
+        missing_variables, render_variables = _build_render_context(render_template)
+        try:
+            user_prompt = render_template.format_map(SafeDict(**render_variables))
+        except ValueError:
+            render_template = self._escape_literal_braces_preserving_placeholders(user_template)
+            missing_variables, render_variables = _build_render_context(render_template)
+            user_prompt = render_template.format_map(SafeDict(**render_variables))
         if missing_variables:
             missing_payload = ', '.join(missing_variables)
             user_prompt = f'{user_prompt}\n\n[WARN_PROMPT_MISSING_VARS] {missing_payload}'

@@ -174,6 +174,7 @@ class Settings(BaseSettings):
     )
 
     prometheus_enabled: bool = Field(default=True, alias='PROMETHEUS_ENABLED')
+    prometheus_worker_port: int = Field(default=9101, alias='PROMETHEUS_WORKER_PORT')
     open_telemetry_enabled: bool = Field(default=False, alias='OPEN_TELEMETRY_ENABLED')
     ws_require_auth: bool = Field(default=True, alias='WS_REQUIRE_AUTH')
     ws_allow_query_token: bool = Field(default=True, alias='WS_ALLOW_QUERY_TOKEN')

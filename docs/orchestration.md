@@ -156,8 +156,8 @@ Formats supportés:
 
 ## Run vs backtest
 
-- Run `/runs`: workflow complet jusqu'à `execution-manager`.
-- Backtest `agents_v1`: réutilise `analyze_context` jusqu'à `risk-manager`; execution broker désactivée par design.
+- Run `/runs`: runtime `agentic_v2` complet jusqu'à `execution-manager`.
+- Backtest `/backtests`: stratégie `ema_rsi` déterministe uniquement.
 
 ## Second pass conditionnel
 

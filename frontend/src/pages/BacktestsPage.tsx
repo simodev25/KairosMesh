@@ -6,8 +6,7 @@ import { useMarketSymbols } from '../hooks/useMarketSymbols';
 import type { BacktestRun } from '../types';
 
 const STRATEGIES = [
-  { value: 'agents_v1', label: 'Agents V1' },
-  { value: 'ema_rsi', label: 'EMA + RSI (legacy)' },
+  { value: 'ema_rsi', label: 'EMA + RSI' },
 ];
 
 function defaultStartDate() {
@@ -27,7 +26,7 @@ export function BacktestsPage() {
   const [timeframe, setTimeframe] = useState('H1');
   const [startDate, setStartDate] = useState(defaultStartDate());
   const [endDate, setEndDate] = useState(defaultEndDate());
-  const [strategy, setStrategy] = useState('agents_v1');
+  const [strategy, setStrategy] = useState('ema_rsi');
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [selected, setSelected] = useState<BacktestRun | null>(null);
   const [loading, setLoading] = useState(false);

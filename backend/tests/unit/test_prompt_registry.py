@@ -131,3 +131,38 @@ def test_prompt_registry_market_context_no_missing_macd_when_provided() -> None:
 
         assert rendered['missing_variables'] == []
         assert '[WARN_PROMPT_MISSING_VARS]' not in rendered['user_prompt']
+
+
+def test_prompt_registry_render_handles_literal_json_braces_in_prompt_template() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    service = PromptTemplateService()
+    with Session(engine) as db:
+        db.add(
+            PromptTemplate(
+                agent_name='agentic-runtime-planner',
+                version=1,
+                is_active=True,
+                system_prompt='system',
+                user_prompt_template=(
+                    'Choisis le prochain outil.\n'
+                    'Réponds strictement avec ce JSON: {"tool":"<candidate_tool_name>","reason":"<justification courte>"}\n'
+                    'Contexte runtime JSON:\n{context_json}'
+                ),
+                notes='legacy broken planner prompt',
+            )
+        )
+        db.commit()
+
+        rendered = service.render(
+            db=db,
+            agent_name='agentic-runtime-planner',
+            fallback_system='fallback system',
+            fallback_user='fallback user {context_json}',
+            variables={'context_json': '{"candidate_tools":[{"name":"run_news_analyst"}]}'},
+        )
+
+        assert rendered['missing_variables'] == []
+        assert '{"tool":"<candidate_tool_name>","reason":"<justification courte>"}' in rendered['user_prompt']
+        assert '{"candidate_tools":[{"name":"run_news_analyst"}]}' in rendered['user_prompt']

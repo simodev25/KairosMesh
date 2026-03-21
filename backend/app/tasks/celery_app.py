@@ -2,8 +2,10 @@ import os
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_process_shutdown, worker_ready
 
 from app.core.config import get_settings
+from app.observability.prometheus import mark_worker_process_dead, start_worker_metrics_server
 
 settings = get_settings()
 
@@ -42,3 +44,15 @@ celery_app.conf.beat_schedule = {
 import app.tasks.run_analysis_task  # noqa: E402,F401
 import app.tasks.scheduler_task  # noqa: E402,F401
 import app.tasks.backtest_task  # noqa: E402,F401
+
+
+@worker_ready.connect(weak=False)
+def _start_prometheus_worker_metrics_server(**_: object) -> None:
+    if not settings.prometheus_enabled:
+        return
+    start_worker_metrics_server(settings.prometheus_worker_port)
+
+
+@worker_process_shutdown.connect(weak=False)
+def _mark_prometheus_worker_process_dead(pid: int | None = None, **_: object) -> None:
+    mark_worker_process_dead(pid)
