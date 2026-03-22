@@ -9,6 +9,7 @@ from app.main import app
 
 
 async def _fake_execute(self, db, run, risk_percent, metaapi_account_ref=None):
+    assert (run.trace or {}).get('runtime_engine') == 'agentic_v2'
     run.status = 'completed'
     run.decision = {'decision': 'HOLD', 'confidence': 0.5, 'risk': {'accepted': True, 'reasons': ['test'], 'suggested_volume': 0}}
     db.commit()
@@ -17,7 +18,7 @@ async def _fake_execute(self, db, run, risk_percent, metaapi_account_ref=None):
 
 
 def test_login_and_create_run(monkeypatch) -> None:
-    monkeypatch.setattr('app.services.orchestrator.engine.ForexOrchestrator.execute', _fake_execute)
+    monkeypatch.setattr('app.services.agent_runtime.runtime.AgenticTradingRuntime.execute', _fake_execute)
 
     with TestClient(app) as client:
         login_resp = client.post('/api/v1/auth/login', json={'email': 'admin@local.dev', 'password': 'admin1234'})

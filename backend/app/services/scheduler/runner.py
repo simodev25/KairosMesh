@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.db.models.metaapi_account import MetaApiAccount
 from app.db.models.run import AnalysisRun
+from app.services.agent_runtime.constants import AGENTIC_V2_RUNTIME
 from app.services.market.symbols import canonical_symbol, get_market_symbols_config
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def validate_schedule_target(
             len(preferred_pairs),
         )
     if normalized_timeframe not in settings.default_timeframes:
-        raise ValueError(f'Unsupported timeframe {normalized_timeframe} for V1 scope')
+        raise ValueError(f'Unsupported timeframe {normalized_timeframe}')
     if normalized_mode not in SUPPORTED_MODES:
         raise ValueError(f'Unsupported mode {mode}')
 
@@ -64,7 +65,10 @@ def create_and_enqueue_run(
     from app.tasks.run_analysis_task import execute as run_analysis_task
     settings = get_settings()
 
-    base_trace = {'requested_metaapi_account_ref': metaapi_account_ref}
+    base_trace = {
+        'requested_metaapi_account_ref': metaapi_account_ref,
+        'runtime_engine': AGENTIC_V2_RUNTIME,
+    }
     if trace_context:
         base_trace.update(trace_context)
 

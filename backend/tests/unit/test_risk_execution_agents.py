@@ -69,7 +69,7 @@ def test_execution_manager_agent_blocks_when_risk_rejects() -> None:
     assert result['prompt_meta']['llm_enabled'] is False
 
 
-def test_risk_manager_agent_llm_can_override_in_simulation(monkeypatch) -> None:
+def test_risk_manager_agent_llm_cannot_override_rejection_in_simulation(monkeypatch) -> None:
     agent = RiskManagerAgent()
     context = _context()
     context.mode = 'simulation'
@@ -86,14 +86,15 @@ def test_risk_manager_agent_llm_can_override_in_simulation(monkeypatch) -> None:
 
     result = agent.run(context, trader_decision, db=None)
 
-    assert result['accepted'] is True
+    assert result['accepted'] is False
+    assert result['suggested_volume'] == 0.0
     assert result['prompt_meta']['llm_enabled'] is True
     assert result['prompt_meta']['llm_model'] == 'llama3.1'
     assert result['degraded'] is False
     assert result['contract_valid'] is False
 
 
-def test_risk_manager_agent_accepts_json_contract_without_degradation(monkeypatch) -> None:
+def test_risk_manager_agent_keeps_deterministic_rejection_with_json_contract(monkeypatch) -> None:
     agent = RiskManagerAgent()
     context = _context()
     context.mode = 'simulation'
@@ -114,7 +115,8 @@ def test_risk_manager_agent_accepts_json_contract_without_degradation(monkeypatc
 
     result = agent.run(context, trader_decision, db=None)
 
-    assert result['accepted'] is True
+    assert result['accepted'] is False
+    assert result['suggested_volume'] == 0.0
     assert result['degraded'] is False
     assert result['contract_valid'] is True
 
@@ -190,6 +192,34 @@ def test_execution_manager_agent_parses_json_contract_without_degradation(monkey
     assert result['contract_valid'] is True
 
 
+def test_execution_manager_agent_blocks_side_flip_in_paper(monkeypatch) -> None:
+    agent = ExecutionManagerAgent()
+    context = _context()
+    context.mode = 'paper'
+    trader_decision = {
+        'decision': 'BUY',
+        'entry': 1.1,
+        'stop_loss': 1.095,
+        'take_profit': 1.11,
+    }
+    risk_output = {'accepted': True, 'suggested_volume': 0.2, 'reasons': ['Risk checks passed.']}
+
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(agent.model_selector, 'resolve', lambda *_args, **_kwargs: 'llama3.1')
+    monkeypatch.setattr(
+        agent.llm,
+        'chat',
+        lambda *_args, **_kwargs: {'text': '{"decision":"SELL","justification":"flip"}', 'degraded': False},
+    )
+
+    result = agent.run(context, trader_decision, risk_output, db=None)
+
+    assert result['decision'] == 'HOLD'
+    assert result['should_execute'] is False
+    assert result['side'] is None
+    assert 'side flip' in result['reason'].lower()
+
+
 def test_execution_manager_agent_cannot_promote_hold_to_trade(monkeypatch) -> None:
     agent = ExecutionManagerAgent()
     context = _context()
@@ -227,7 +257,7 @@ def test_execution_manager_agent_blocks_when_trader_execution_not_allowed() -> N
 
     result = agent.run(context, trader_decision, risk_output, db=None)
 
-    assert result['decision'] == 'BUY'
+    assert result['decision'] == 'HOLD'
     assert result['should_execute'] is False
     assert result['side'] is None
     assert 'guardrails' in result['reason'].lower()

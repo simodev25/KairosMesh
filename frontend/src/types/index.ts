@@ -22,6 +22,40 @@ export interface Run {
   updated_at: string;
 }
 
+export interface InstrumentDescriptor {
+  raw_symbol?: string;
+  canonical_symbol?: string;
+  display_symbol?: string;
+  asset_class?: string;
+  instrument_type?: string;
+  market?: string;
+  provider?: string;
+  provider_symbol?: string;
+  primary_asset?: string;
+  secondary_asset?: string;
+  base_asset?: string;
+  quote_asset?: string;
+  reference_asset?: string;
+  venue?: string;
+  exchange?: string;
+  provider_symbols?: Record<string, unknown>;
+  classification_trace?: unknown;
+  flags?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ProviderResolutionTrace {
+  provider?: string;
+  provider_symbol?: string;
+  resolved_symbol?: string;
+  canonical_symbol?: string;
+  raw_symbol?: string;
+  resolution_path?: string[];
+  fallback_used?: boolean;
+  status?: string;
+  [key: string]: unknown;
+}
+
 export interface AgentStep {
   id: number;
   agent_name: string;
@@ -34,6 +68,55 @@ export interface AgentStep {
 
 export interface RunDetail extends Run {
   steps: AgentStep[];
+}
+
+export interface RuntimeEvent {
+  id: number;
+  seq?: number;
+  type: string;
+  stream?: string;
+  name: string;
+  turn: number;
+  payload: Record<string, unknown>;
+  data?: Record<string, unknown>;
+  runId?: string;
+  sessionKey?: string;
+  created_at: string;
+  ts?: number;
+}
+
+export interface RuntimeSessionEntry {
+  session_key: string;
+  parent_session_key?: string | null;
+  label?: string;
+  name?: string;
+  status: string;
+  mode?: string;
+  depth?: number;
+  role?: string;
+  can_spawn?: boolean;
+  control_scope?: string;
+  turn?: number;
+  current_phase?: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  last_resumed_at?: string | null;
+  resume_count?: number;
+  source_tool?: string;
+  objective?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  error?: string | null;
+}
+
+export interface RuntimeSessionMessage {
+  id: number;
+  session_key: string;
+  role: string;
+  content: string;
+  sender_session_key?: string | null;
+  created_at: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ExecutionOrder {

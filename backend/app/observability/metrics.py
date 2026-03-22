@@ -2,6 +2,63 @@ from prometheus_client import Counter, Histogram
 
 analysis_runs_total = Counter('analysis_runs_total', 'Number of analysis runs', ['status'])
 orchestrator_step_duration_seconds = Histogram('orchestrator_step_duration_seconds', 'Agent step latency', ['agent'])
+agentic_runtime_runs_total = Counter(
+    'agentic_runtime_runs_total',
+    'Number of agentic runtime runs',
+    ['status', 'mode', 'resumed'],
+)
+agentic_runtime_tool_selections_total = Counter(
+    'agentic_runtime_tool_selections_total',
+    'Planner selections by runtime tool',
+    ['tool', 'source', 'degraded'],
+)
+agentic_runtime_planner_calls_total = Counter(
+    'agentic_runtime_planner_calls_total',
+    'Planner call outcomes for the agentic runtime',
+    ['status', 'source'],
+)
+agentic_runtime_planner_duration_seconds = Histogram(
+    'agentic_runtime_planner_duration_seconds',
+    'Planner latency in seconds for the agentic runtime',
+    ['status', 'source'],
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+)
+agentic_runtime_tool_calls_total = Counter(
+    'agentic_runtime_tool_calls_total',
+    'Runtime tool invocations',
+    ['tool', 'status'],
+)
+agentic_runtime_tool_duration_seconds = Histogram(
+    'agentic_runtime_tool_duration_seconds',
+    'Runtime tool duration in seconds',
+    ['tool', 'status'],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60),
+)
+agentic_runtime_subagent_sessions_total = Counter(
+    'agentic_runtime_subagent_sessions_total',
+    'Specialist subagent session lifecycle events',
+    ['source_tool', 'session_mode', 'status', 'resumed'],
+)
+agentic_runtime_final_decisions_total = Counter(
+    'agentic_runtime_final_decisions_total',
+    'Final trading decisions produced by the agentic runtime',
+    ['decision', 'mode'],
+)
+agentic_runtime_execution_outcomes_total = Counter(
+    'agentic_runtime_execution_outcomes_total',
+    'Execution outcomes produced by the agentic runtime',
+    ['status', 'mode'],
+)
+agentic_runtime_session_messages_total = Counter(
+    'agentic_runtime_session_messages_total',
+    'Messages sent to runtime sessions',
+    ['resume_requested'],
+)
+agentic_runtime_memory_refresh_total = Counter(
+    'agentic_runtime_memory_refresh_total',
+    'Memory refresh cycles triggered by the runtime',
+    ['mode'],
+)
 llm_calls_total = Counter('llm_calls_total', 'Total LLM calls', ['provider', 'status'])
 llm_prompt_tokens_total = Counter('llm_prompt_tokens_total', 'Total prompt tokens consumed', ['provider', 'model'])
 llm_completion_tokens_total = Counter('llm_completion_tokens_total', 'Total completion tokens consumed', ['provider', 'model'])

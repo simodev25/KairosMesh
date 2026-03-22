@@ -6,8 +6,7 @@ import { useMarketSymbols } from '../hooks/useMarketSymbols';
 import type { BacktestRun } from '../types';
 
 const STRATEGIES = [
-  { value: 'agents_v1', label: 'Agents V1' },
-  { value: 'ema_rsi', label: 'EMA + RSI (legacy)' },
+  { value: 'ema_rsi', label: 'EMA + RSI' },
 ];
 
 function defaultStartDate() {
@@ -22,12 +21,12 @@ function defaultEndDate() {
 
 export function BacktestsPage() {
   const { token } = useAuth();
-  const { pairs } = useMarketSymbols(token);
+  const { instruments } = useMarketSymbols(token);
   const [pair, setPair] = useState(DEFAULT_PAIR);
   const [timeframe, setTimeframe] = useState('H1');
   const [startDate, setStartDate] = useState(defaultStartDate());
   const [endDate, setEndDate] = useState(defaultEndDate());
-  const [strategy, setStrategy] = useState('agents_v1');
+  const [strategy, setStrategy] = useState('ema_rsi');
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [selected, setSelected] = useState<BacktestRun | null>(null);
   const [loading, setLoading] = useState(false);
@@ -48,11 +47,11 @@ export function BacktestsPage() {
   }, [token]);
 
   useEffect(() => {
-    if (pairs.length === 0) return;
-    if (!pairs.includes(pair)) {
-      setPair(pairs[0]);
+    if (instruments.length === 0) return;
+    if (!instruments.includes(pair)) {
+      setPair(instruments[0]);
     }
-  }, [pairs, pair]);
+  }, [instruments, pair]);
 
   const createBacktest = async (e: FormEvent) => {
     e.preventDefault();
@@ -88,12 +87,12 @@ export function BacktestsPage() {
   return (
     <div className="dashboard-grid">
       <section className="card primary">
-        <h2>Backtesting avancé</h2>
+        <h2>Backtesting multi-actifs</h2>
         <form className="form-grid inline" onSubmit={createBacktest}>
           <label>
-            Pair
+            Instrument
             <select value={pair} onChange={(e) => setPair(e.target.value)}>
-              {pairs.map((item) => (
+              {instruments.map((item) => (
                 <option key={item}>{item}</option>
               ))}
             </select>
@@ -135,7 +134,7 @@ export function BacktestsPage() {
           <thead>
             <tr>
               <th>ID</th>
-              <th>Pair</th>
+              <th>Instrument</th>
               <th>TF</th>
               <th>Période</th>
               <th>Status</th>

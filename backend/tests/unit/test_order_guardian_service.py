@@ -87,6 +87,7 @@ def test_order_guardian_evaluate_executes_exit_and_update_actions() -> None:
         symbol: str,
         timeframe: str,
         risk_percent: float,
+        account_ref: int | None = None,
         llm_model_overrides: dict[str, str] | None = None,
     ):
         if symbol == 'EURUSD':

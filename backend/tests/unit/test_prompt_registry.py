@@ -5,7 +5,7 @@ from app.db.base import Base
 from app.db.models.connector_config import ConnectorConfig
 from app.db.models.prompt_template import PromptTemplate
 from app.db.models.user import User  # noqa: F401
-from app.services.prompts.registry import PromptTemplateService
+from app.services.prompts.registry import DEFAULT_PROMPTS, PromptTemplateService
 
 
 def test_prompt_registry_version_activation() -> None:
@@ -97,3 +97,82 @@ def test_prompt_registry_render_marks_missing_variables() -> None:
         assert rendered['missing_variables'] == ['trend']
         assert '<MISSING:trend>' in rendered['user_prompt']
         assert '[WARN_PROMPT_MISSING_VARS] trend' in rendered['user_prompt']
+
+
+def test_prompt_registry_market_context_no_missing_macd_when_provided() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    service = PromptTemplateService()
+    with Session(engine) as db:
+        rendered = service.render(
+            db=db,
+            agent_name='market-context-analyst',
+            fallback_system='system',
+            fallback_user=(
+                'Pair: {pair}\nTimeframe: {timeframe}\nTrend: {trend}\nLast price: {last_price}\n'
+                'Change pct: {change_pct}\nATR: {atr}\nATR ratio: {atr_ratio}\nRSI: {rsi}\n'
+                'EMA fast: {ema_fast}\nEMA slow: {ema_slow}\nMACD diff: {macd_diff}\n'
+            ),
+            variables={
+                'pair': 'EURUSD',
+                'timeframe': 'M5',
+                'trend': 'neutral',
+                'last_price': 1.1,
+                'change_pct': 0.0,
+                'atr': 0.001,
+                'atr_ratio': 0.0009,
+                'rsi': 50.0,
+                'ema_fast': 1.1001,
+                'ema_slow': 1.1,
+                'macd_diff': 0.0002,
+            },
+        )
+
+        assert rendered['missing_variables'] == []
+        assert '[WARN_PROMPT_MISSING_VARS]' not in rendered['user_prompt']
+
+
+def test_prompt_registry_render_handles_literal_json_braces_in_prompt_template() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    service = PromptTemplateService()
+    with Session(engine) as db:
+        db.add(
+            PromptTemplate(
+                agent_name='agentic-runtime-planner',
+                version=1,
+                is_active=True,
+                system_prompt='system',
+                user_prompt_template=(
+                    'Choisis le prochain outil.\n'
+                    'Réponds strictement avec ce JSON: {"tool":"<candidate_tool_name>","reason":"<justification courte>"}\n'
+                    'Contexte runtime JSON:\n{context_json}'
+                ),
+                notes='legacy broken planner prompt',
+            )
+        )
+        db.commit()
+
+        rendered = service.render(
+            db=db,
+            agent_name='agentic-runtime-planner',
+            fallback_system='fallback system',
+            fallback_user='fallback user {context_json}',
+            variables={'context_json': '{"candidate_tools":[{"name":"run_news_analyst"}]}'},
+        )
+
+        assert rendered['missing_variables'] == []
+        assert '{"tool":"<candidate_tool_name>","reason":"<justification courte>"}' in rendered['user_prompt']
+        assert '{"candidate_tools":[{"name":"run_news_analyst"}]}' in rendered['user_prompt']
+
+
+def test_news_analyst_default_prompt_stays_pair_aware_for_fx() -> None:
+    system = DEFAULT_PROMPTS['news-analyst']['system']
+    user = DEFAULT_PROMPTS['news-analyst']['user']
+
+    assert 'devise de base' in system
+    assert 'devise de cotation' in system
+    assert '{base_asset}' in user
+    assert '{quote_asset}' in user

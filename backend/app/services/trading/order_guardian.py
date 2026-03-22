@@ -385,9 +385,15 @@ class OrderGuardianService:
         symbol: str,
         timeframe: str,
         risk_percent: float,
+        account_ref: int | None = None,
         llm_model_overrides: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        market = self.orchestrator.market_provider.get_market_snapshot(symbol, timeframe)
+        market = await self.orchestrator.resolve_market_snapshot(
+            db,
+            pair=symbol,
+            timeframe=timeframe,
+            metaapi_account_ref=account_ref,
+        )
         news = self.orchestrator.market_provider.get_news_context(symbol)
         memory_context = self.orchestrator.memory_service.search(
             db=db,
@@ -467,6 +473,7 @@ class OrderGuardianService:
                     symbol=position['symbol'],
                     timeframe=settings['timeframe'],
                     risk_percent=float(settings['risk_percent']),
+                    account_ref=account_ref,
                     llm_model_overrides=llm_model_overrides,
                 )
                 analysis = self._decision_from_analysis(analysis_bundle)

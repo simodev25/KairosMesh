@@ -14,8 +14,6 @@ from ta.volatility import AverageTrueRange
 
 from app.core.config import get_settings
 from app.services.market.yfinance_provider import YFinanceMarketProvider
-from app.services.orchestrator.agents import AgentContext
-from app.services.orchestrator.engine import ForexOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +26,12 @@ class BacktestResult:
 
 
 class BacktestEngine:
-    SUPPORTED_STRATEGIES = {'ema_rsi', 'agents_v1'}
+    SUPPORTED_STRATEGIES = {'ema_rsi'}
     STRATEGY_ALIASES = {
         'ema-rsi': 'ema_rsi',
         'legacy_ema_rsi': 'ema_rsi',
         'legacy-ema-rsi': 'ema_rsi',
-        'agent': 'agents_v1',
-        'agents': 'agents_v1',
-        'multi_agent': 'agents_v1',
-        'multi-agent': 'agents_v1',
-        'trading_agents': 'agents_v1',
-        'trading-agents': 'agents_v1',
-        'default': 'agents_v1',
+        'default': 'ema_rsi',
     }
 
     PERIODS_PER_YEAR = {
@@ -53,13 +45,12 @@ class BacktestEngine:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.market_provider = YFinanceMarketProvider()
-        self.orchestrator = ForexOrchestrator()
 
     @classmethod
     def normalize_strategy(cls, strategy: str | None) -> str | None:
         value = (strategy or '').strip().lower().replace(' ', '_')
         if not value:
-            return 'agents_v1'
+            return 'ema_rsi'
         if value in cls.SUPPORTED_STRATEGIES:
             return value
         return cls.STRATEGY_ALIASES.get(value)
@@ -105,62 +96,6 @@ class BacktestEngine:
             'atr': round(float(row['atr']), 6),
             'trend': trend,
         }
-
-    def _signal_series_agents(self, pair: str, timeframe: str, frame: pd.DataFrame, db: Session | None = None) -> pd.Series:
-        signals: list[int] = []
-        llm_enabled = bool(self.settings.backtest_enable_llm and db is not None)
-        llm_every = max(int(self.settings.backtest_llm_every), 1)
-        news_context = self.market_provider.get_news_context(pair) if llm_enabled else {'degraded': False, 'pair': pair, 'news': []}
-        log_every = max(int(self.settings.backtest_agent_log_every), 1)
-        for index_pos, ts in enumerate(frame.index):
-            market_snapshot = self._market_snapshot_at(pair, timeframe, frame, index_pos)
-            context = AgentContext(
-                pair=pair,
-                timeframe=timeframe,
-                mode='backtest',
-                risk_percent=1.0,
-                market_snapshot=market_snapshot,
-                news_context=news_context,
-                memory_context=[],
-            )
-            should_log_steps = self.settings.log_agent_steps and (
-                index_pos == 0 or (index_pos + 1) % log_every == 0 or index_pos == len(frame.index) - 1
-            )
-            use_llm_for_candle = llm_enabled and (
-                index_pos == 0 or (index_pos + 1) % llm_every == 0 or index_pos == len(frame.index) - 1
-            )
-            analysis_bundle = self.orchestrator.analyze_context(
-                context=context,
-                db=db if use_llm_for_candle else None,
-                run=None,
-                record_steps=False,
-                emit_step_logs=should_log_steps,
-            )
-            trader = analysis_bundle['trader_decision']
-            risk = analysis_bundle['risk']
-            requested_decision = str(trader.get('decision', 'HOLD')).upper()
-            execution_allowed = bool(trader.get('execution_allowed', requested_decision in {'BUY', 'SELL'}))
-            risk_accepted = bool(risk.get('accepted'))
-            decision = requested_decision if risk_accepted and execution_allowed else 'HOLD'
-            if should_log_steps:
-                logger.info(
-                    'backtest_agent_cycle pair=%s timeframe=%s candle=%s decision=%s accepted=%s execution_allowed=%s llm=%s',
-                    pair,
-                    timeframe,
-                    ts.isoformat(),
-                    decision,
-                    risk_accepted,
-                    execution_allowed,
-                    use_llm_for_candle,
-                )
-            if decision == 'BUY':
-                signals.append(1)
-            elif decision == 'SELL':
-                signals.append(-1)
-            else:
-                signals.append(0)
-
-        return pd.Series(signals, index=frame.index, dtype='int64')
 
     def _extract_trades(self, frame: pd.DataFrame, signals: pd.Series) -> list[dict[str, Any]]:
         trades: list[dict[str, Any]] = []
@@ -226,21 +161,18 @@ class BacktestEngine:
         timeframe: str,
         start_date: str,
         end_date: str,
-        strategy: str = 'agents_v1',
+        strategy: str = 'ema_rsi',
         db: Session | None = None,
     ) -> BacktestResult:
         normalized_strategy = self.normalize_strategy(strategy)
         if not normalized_strategy:
             raise ValueError(f'Unsupported backtest strategy: {strategy}')
-        llm_enabled = bool(self.settings.backtest_enable_llm and db is not None)
         logger.info(
-            'backtest_engine_start pair=%s timeframe=%s strategy_in=%s strategy=%s llm_enabled=%s llm_every=%s',
+            'backtest_engine_start pair=%s timeframe=%s strategy_in=%s strategy=%s',
             pair,
             timeframe,
             strategy,
             normalized_strategy,
-            llm_enabled,
-            int(self.settings.backtest_llm_every),
         )
 
         frame = self.market_provider.get_historical_candles(pair, timeframe, start_date=start_date, end_date=end_date)
@@ -251,10 +183,7 @@ class BacktestEngine:
         if frame.empty or len(frame) < 80:
             raise ValueError('Insufficient indicator-ready candles for backtesting')
 
-        if normalized_strategy == 'ema_rsi':
-            signal_series = self._signal_series_ema_rsi(frame)
-        else:
-            signal_series = self._signal_series_agents(pair, timeframe, frame, db=db)
+        signal_series = self._signal_series_ema_rsi(frame)
 
         frame['signal'] = signal_series
         frame['position'] = signal_series.shift(1).fillna(0)
@@ -281,21 +210,11 @@ class BacktestEngine:
         gross_loss = abs(sum(trade['pnl_pct'] for trade in losses))
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float('inf')
 
-        workflow = (
-            list(ForexOrchestrator.WORKFLOW_STEPS[:-1])
-            if normalized_strategy == 'agents_v1'
-            else ['technical-analyst', 'trader-agent']
-        )
-
         metrics = {
             'strategy': normalized_strategy,
-            'workflow': workflow,
-            'workflow_source': 'ForexOrchestrator.analyze_context' if normalized_strategy == 'agents_v1' else 'BacktestEngine.ema_rsi',
-            'execution_mode': 'disabled-in-backtest' if normalized_strategy == 'agents_v1' else 'strategy-internal',
-            'agent_logging_enabled': bool(self.settings.log_agent_steps),
-            'backtest_agent_log_every': int(self.settings.backtest_agent_log_every),
-            'llm_enabled': llm_enabled,
-            'llm_every': int(self.settings.backtest_llm_every),
+            'workflow': ['ema_rsi'],
+            'workflow_source': 'BacktestEngine.ema_rsi',
+            'execution_mode': 'strategy-internal',
             'total_return_pct': round(float((frame['equity'].iloc[-1] - 1) * 100), 4),
             'annualized_return_pct': round(float(((frame['equity'].iloc[-1]) ** (periods / max(len(frame), 1)) - 1) * 100), 4),
             'max_drawdown_pct': round(max_drawdown * 100, 4),
