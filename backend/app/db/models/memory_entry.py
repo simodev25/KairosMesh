@@ -36,3 +36,8 @@ class MemoryEntry(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     run_id: Mapped[int | None] = mapped_column(ForeignKey('analysis_runs.id'), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Agent-specific memory: which agent created this entry (None = orchestrator-level)
+    agent_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    # Outcome weight: trade result signal [-1.0 loss .. +1.0 win], None = unknown
+    outcome_weight: Mapped[float | None] = mapped_column(nullable=True)

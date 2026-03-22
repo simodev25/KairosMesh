@@ -19,6 +19,7 @@ from app.db.models.agent_step import AgentStep
 from app.db.models.run import AnalysisRun
 from app.db.session import SessionLocal
 from app.observability.metrics import analysis_runs_total, orchestrator_step_duration_seconds
+from app.observability.trace_context import trace_ctx
 from app.services.execution.executor import ExecutionService
 from app.services.llm.model_selector import AgentModelSelector
 from app.services.market.yfinance_provider import YFinanceMarketProvider
@@ -42,7 +43,7 @@ from app.services.trading.metaapi_client import MetaApiClient
 logger = logging.getLogger(__name__)
 
 
-class ForexOrchestrator:
+class TradingOrchestrator:
     WORKFLOW_STEPS = (
         'technical-analyst',
         'news-analyst',
@@ -128,9 +129,9 @@ class ForexOrchestrator:
         if value is None or isinstance(value, (str, int, float, bool)):
             return value
         if isinstance(value, dict):
-            return {str(key): ForexOrchestrator._json_safe(item) for key, item in value.items()}
+            return {str(key): TradingOrchestrator._json_safe(item) for key, item in value.items()}
         if isinstance(value, (list, tuple, set)):
-            return [ForexOrchestrator._json_safe(item) for item in value]
+            return [TradingOrchestrator._json_safe(item) for item in value]
         if hasattr(value, 'isoformat'):
             try:
                 return value.isoformat()
@@ -138,7 +139,7 @@ class ForexOrchestrator:
                 pass
         if hasattr(value, 'item'):
             try:
-                return ForexOrchestrator._json_safe(value.item())
+                return TradingOrchestrator._json_safe(value.item())
             except Exception:
                 pass
         return str(value)
@@ -1240,6 +1241,7 @@ class ForexOrchestrator:
         metaapi_account_ref: int | None = None,
     ) -> AnalysisRun:
         run_id = run.id
+        trace_ctx.set(correlation_id=f'run-{run_id}', causation_id=f'execute-{run_id}')
         run.status = 'running'
         db.commit()
         db.refresh(run)
@@ -1546,6 +1548,7 @@ class ForexOrchestrator:
             }
             run.status = 'completed'
             trace_payload = {
+                'trace_ids': trace_ctx.as_dict(),
                 'market': market,
                 'news': news,
                 'analysis_outputs': analysis_outputs,
@@ -1643,3 +1646,7 @@ class ForexOrchestrator:
             db.refresh(failed_run)
             analysis_runs_total.labels(status='failed').inc()
             return failed_run
+
+
+# Backward-compatible alias
+ForexOrchestrator = TradingOrchestrator

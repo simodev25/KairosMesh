@@ -14,7 +14,6 @@ from app.services.orchestrator.instrument_helpers import (
     build_instrument_context,
     build_instrument_prompt_variables,
     instrument_aware_asset_class,
-    instrument_aware_components,
     instrument_aware_effects_for_item,
     instrument_aware_evidence_profile,
     instrument_aware_headline_sentiment,
