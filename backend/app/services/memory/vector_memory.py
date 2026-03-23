@@ -717,7 +717,7 @@ class VectorMemoryService:
         outcome_weight = getattr(entry, 'outcome_weight', None)
         outcome_boost = self._outcome_boost(outcome_weight)
 
-        base_score = 0.42 * normalized_vector + 0.38 * business_score + 0.13 * recency_score
+        base_score = 0.45 * normalized_vector + 0.38 * business_score + 0.17 * recency_score
         final_score = self._clamp(base_score + outcome_boost, 0.0, 1.0)
 
         has_retrieval_context = bool(retrieval_context)
@@ -787,7 +787,12 @@ class VectorMemoryService:
                     limit=initial_limit,
                     with_payload=True,
                 )
-                memory_ids = [int(item.id) for item in results]
+                memory_ids = []
+                for item in results:
+                    try:
+                        memory_ids.append(int(item.id))
+                    except (ValueError, TypeError):
+                        logger.debug("Skipping non-integer Qdrant point id: %s", item.id)
                 if memory_ids:
                     q = db.query(MemoryEntry).filter(
                         MemoryEntry.id.in_(memory_ids),
@@ -799,7 +804,12 @@ class VectorMemoryService:
                     entries = q.all()
                     by_id = {entry.id: entry for entry in entries}
                     ordered = [by_id[mid] for mid in memory_ids if mid in by_id]
-                    score_by_id = {int(item.id): float(item.score) for item in results}
+                    score_by_id = {}
+                    for item in results:
+                        try:
+                            score_by_id[int(item.id)] = float(item.score)
+                        except (ValueError, TypeError):
+                            pass
                     scored_results = [
                         self._serialize_search_result(
                             entry=entry,
@@ -938,7 +948,12 @@ class VectorMemoryService:
         for entry in entries:
             entry.outcome_weight = outcome_weight
         if entries:
-            db.commit()
+            try:
+                db.commit()
+            except Exception as exc:
+                logger.warning('update_outcome_weights db commit failed: %s', exc)
+                db.rollback()
+                return 0
 
         # Also update Qdrant payload if available
         if self._qdrant and entries:
@@ -1017,8 +1032,6 @@ class VectorMemoryService:
             payload = item.get('payload') if isinstance(item.get('payload'), dict) else {}
             decision_features = payload.get('decision_features') if isinstance(payload.get('decision_features'), dict) else {}
             decision = self._normalize_decision(decision_features.get('decision'))
-            if decision not in {'BUY', 'SELL', 'HOLD'}:
-                continue
 
             similarity = self._safe_float(item.get('score'), 0.0) or 0.0
             if similarity < 0.33:

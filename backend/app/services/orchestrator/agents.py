@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.services.llm.provider_client import LlmClient
 from app.services.llm.model_selector import AGENT_TOOL_DEFINITIONS, AgentModelSelector, normalize_decision_mode
-from app.services.orchestrator.langchain_tools import build_llm_tool_specs, get_langchain_agent_tool
+from app.services.orchestrator.langchain_tools import build_llm_tool_specs
 from app.services.orchestrator.instrument_helpers import (
     build_instrument_context,
     build_instrument_prompt_variables,
@@ -498,22 +498,13 @@ def _run_agent_tool(
     started = time.perf_counter()
     try:
         tool_input = executor()
-        langchain_tool = get_langchain_agent_tool(tool_id)
-        if langchain_tool is not None:
-            if isinstance(tool_input, dict):
-                payload = langchain_tool.invoke({'payload': tool_input})
-            else:
-                payload = langchain_tool.invoke({'payload': {'value': tool_input}})
-        else:
-            payload = tool_input
-        if not isinstance(payload, dict):
-            payload = {'value': payload}
+        payload = tool_input if isinstance(tool_input, dict) else {'value': tool_input}
         return {
             'tool_id': tool_id,
             'label': _tool_label(tool_id),
             'enabled': True,
             'status': 'ok',
-            'runtime': 'langchain_core.tool' if langchain_tool is not None else 'internal_executor',
+            'runtime': 'internal_executor',
             'latency_ms': round((time.perf_counter() - started) * 1000.0, 2),
             'error': None,
             'data': payload,
@@ -524,7 +515,7 @@ def _run_agent_tool(
             'label': _tool_label(tool_id),
             'enabled': True,
             'status': 'error',
-            'runtime': 'langchain_core.tool',
+            'runtime': 'internal_executor',
             'latency_ms': round((time.perf_counter() - started) * 1000.0, 2),
             'error': str(exc),
             'data': {},

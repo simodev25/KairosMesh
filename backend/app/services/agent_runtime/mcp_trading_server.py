@@ -38,6 +38,29 @@ def _safe_series(data: list[float] | None) -> pd.Series:
     return pd.Series(data, dtype=float)
 
 
+def _compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """Compute RSI from a close price series."""
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(span=period, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(span=period, adjust=False).mean()
+    rs = gain / loss.replace(0, 1e-10)
+    return 100 - (100 / (1 + rs))
+
+
+def _compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """Compute ATR from high/low/close series."""
+    tr = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(span=period, adjust=False).mean()
+
+
+# Maximum size (in bytes) for feedback_detail JSON payloads
+_MAX_FEEDBACK_JSON_SIZE = 10_000
+
+
 # ---------------------------------------------------------------------------
 # 1. MARKET DATA TOOLS
 # ---------------------------------------------------------------------------
@@ -112,11 +135,7 @@ def indicator_bundle(
     low = _safe_series(lows) if lows else close
 
     # RSI
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(span=rsi_period, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(span=rsi_period, adjust=False).mean()
-    rs = gain / loss.replace(0, 1e-10)
-    rsi = 100 - (100 / (1 + rs))
+    rsi = _compute_rsi(close, rsi_period)
     rsi_value = round(float(rsi.iloc[-1]), 3)
 
     # EMAs
@@ -131,12 +150,7 @@ def indicator_bundle(
     macd_hist = macd_line - macd_signal
 
     # ATR
-    tr = pd.concat([
-        high - low,
-        (high - close.shift(1)).abs(),
-        (low - close.shift(1)).abs(),
-    ], axis=1).max(axis=1)
-    atr = tr.ewm(span=atr_period, adjust=False).mean()
+    atr = _compute_atr(high, low, close, atr_period)
 
     # Trend
     ema_f_val = float(ema_fast.iloc[-1])
@@ -180,11 +194,7 @@ def divergence_detector(
     if len(close) < rsi_period + lookback:
         return {"divergences": [], "error": "insufficient_data"}
 
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(span=rsi_period, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(span=rsi_period, adjust=False).mean()
-    rs = gain / loss.replace(0, 1e-10)
-    rsi = 100 - (100 / (1 + rs))
+    rsi = _compute_rsi(close, rsi_period)
 
     window = min(lookback, len(close) - 1)
     recent_close = close.iloc[-window:]
@@ -199,7 +209,7 @@ def divergence_detector(
         if (recent_close.iloc[i] < recent_close.iloc[i - 1]
                 and recent_close.iloc[i] < recent_close.iloc[i + 1]):
             # Find previous local minimum
-            for j in range(i - 3, max(0, i - 15), -1):
+            for j in range(i - 3, max(1, i - 15), -1):
                 if (recent_close.iloc[j] < recent_close.iloc[j - 1]
                         and recent_close.iloc[j] < recent_close.iloc[j + 1]):
                     if (recent_close.iloc[i] < recent_close.iloc[j]
@@ -217,7 +227,7 @@ def divergence_detector(
         # Local maximum — bearish divergence candidate
         if (recent_close.iloc[i] > recent_close.iloc[i - 1]
                 and recent_close.iloc[i] > recent_close.iloc[i + 1]):
-            for j in range(i - 3, max(0, i - 15), -1):
+            for j in range(i - 3, max(1, i - 15), -1):
                 if (recent_close.iloc[j] > recent_close.iloc[j - 1]
                         and recent_close.iloc[j] > recent_close.iloc[j + 1]):
                     if (recent_close.iloc[i] > recent_close.iloc[j]
@@ -505,7 +515,8 @@ def correlation_analyzer(
     ret_a = ret_a.iloc[-min_ret_len:]
     ret_b = ret_b.iloc[-min_ret_len:]
 
-    overall_corr = float(ret_a.corr(ret_b)) if min_ret_len > 5 else 0.0
+    raw_corr = ret_a.corr(ret_b) if min_ret_len > 5 else 0.0
+    overall_corr = float(raw_corr) if pd.notna(raw_corr) else 0.0
     rolling_corr = ret_a.rolling(period).corr(ret_b)
     recent_corr = float(rolling_corr.iloc[-1]) if len(rolling_corr) > 0 and pd.notna(rolling_corr.iloc[-1]) else overall_corr
 
@@ -565,12 +576,7 @@ def volatility_analyzer(
     last_price = float(close.iloc[-1])
 
     # ATR
-    tr = pd.concat([
-        high - low,
-        (high - close.shift(1)).abs(),
-        (low - close.shift(1)).abs(),
-    ], axis=1).max(axis=1)
-    atr = tr.ewm(span=atr_period, adjust=False).mean()
+    atr = _compute_atr(high, low, close, atr_period)
     current_atr = float(atr.iloc[-1])
 
     # Historical volatility (annualised)
@@ -895,7 +901,7 @@ def position_size_calculator(
     risk_percent: float,
     equity: float = 10000.0,
     leverage: float = 1.0,
-    contract_size: float = 100000.0,
+    contract_size: float | None = None,
     pip_size: float | None = None,
     pip_value_per_lot: float | None = None,
 ) -> dict[str, Any]:
@@ -910,12 +916,20 @@ def position_size_calculator(
     if stop_distance <= 0:
         return {"error": "stop_loss_same_as_entry", "suggested_volume": 0.0}
 
+    # Default contract sizes per asset class
+    _default_contract_sizes = {
+        "forex": 100_000, "crypto": 1, "index": 1, "cfd": 1,
+        "metal": 100, "energy": 1000, "commodity": 1000,
+        "equity": 1, "etf": 1,
+    }
+    if contract_size is None:
+        contract_size = float(_default_contract_sizes.get(ac, 1))
+
     risk_amount = equity * (risk_percent / 100.0)
 
     # Determine pip size and pip value based on asset class
     if pip_size is None:
         if ac == "forex":
-            pair_upper = ""  # will be overridden
             pip_size = 0.0001
         elif ac == "crypto":
             if entry_price >= 1000:
@@ -1103,10 +1117,14 @@ def memory_query(
         elif action_val == "store_feedback":
             detail_dict: dict[str, Any] = {}
             if feedback_detail:
+                if len(feedback_detail) > _MAX_FEEDBACK_JSON_SIZE:
+                    return {"status": "error", "error": f"feedback_detail exceeds max size ({_MAX_FEEDBACK_JSON_SIZE} bytes)"}
                 try:
                     detail_dict = _json.loads(feedback_detail)
+                    if not isinstance(detail_dict, dict):
+                        detail_dict = {"raw": feedback_detail}
                 except Exception:
-                    detail_dict = {"raw": feedback_detail}
+                    detail_dict = {"raw": feedback_detail[:_MAX_FEEDBACK_JSON_SIZE]}
             ow = float(outcome_weight) if outcome_weight else None
             entry = svc.store_agent_feedback(
                 db=db,
@@ -1135,7 +1153,8 @@ def memory_query(
         else:
             return {"status": "error", "error": f"unknown action: {action_val}"}
     except Exception as exc:
-        return {"status": "error", "error": str(exc)}
+        logger.warning("memory_query failed: %s", exc, exc_info=True)
+        return {"status": "error", "error": f"memory_query_failed: {type(exc).__name__}"}
     finally:
         db.close()
 

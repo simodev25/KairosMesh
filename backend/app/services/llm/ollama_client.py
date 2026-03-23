@@ -57,7 +57,10 @@ class OllamaCloudClient:
                 return cls._shared_client
 
             if cls._shared_client is not None and not cls._shared_client.is_closed:
-                cls._shared_client.close()
+                try:
+                    cls._shared_client.close()
+                except Exception:
+                    pass
 
             cls._shared_client = httpx.Client(
                 timeout=safe_timeout,
@@ -218,16 +221,7 @@ class OllamaCloudClient:
             if not name:
                 continue
             raw_arguments = function.get('arguments')
-            parsed_arguments: dict[str, Any] = {}
-            if isinstance(raw_arguments, dict):
-                parsed_arguments = dict(raw_arguments)
-            elif isinstance(raw_arguments, str):
-                try:
-                    candidate = json.loads(raw_arguments)
-                    if isinstance(candidate, dict):
-                        parsed_arguments = candidate
-                except json.JSONDecodeError:
-                    parsed_arguments = {}
+            parsed_arguments = safe_parse_tool_arguments(raw_arguments)
             call_id = str(raw_call.get('id') or f'call_{index}').strip() or f'call_{index}'
             calls.append(
                 {

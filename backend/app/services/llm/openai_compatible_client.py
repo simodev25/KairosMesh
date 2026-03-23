@@ -41,6 +41,7 @@ def _is_retryable_http_error(exc: BaseException) -> bool:
 class OpenAICompatibleClient:
     _shared_clients: dict[float, httpx.Client] = {}
     _shared_clients_lock = threading.Lock()
+    _MAX_SHARED_CLIENTS = 5
 
     def __init__(self, provider: str) -> None:
         self.settings = get_settings()
@@ -53,6 +54,16 @@ class OpenAICompatibleClient:
             client = cls._shared_clients.get(safe_timeout)
             if client is not None and not client.is_closed:
                 return client
+            # Evict oldest entries if we have too many distinct timeout clients
+            if len(cls._shared_clients) >= cls._MAX_SHARED_CLIENTS:
+                for old_key in list(cls._shared_clients.keys()):
+                    old_client = cls._shared_clients.pop(old_key, None)
+                    if old_client is not None:
+                        try:
+                            old_client.close()
+                        except Exception:
+                            pass
+                    break  # evict one at a time
             cls._shared_clients[safe_timeout] = httpx.Client(
                 timeout=safe_timeout,
                 limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
@@ -68,15 +79,16 @@ class OpenAICompatibleClient:
     def _normalized_api_key(self, db: Session | None = None) -> str:
         del db  # Runtime connector settings are resolved without DB session injection.
         if self.provider == 'mistral':
-            runtime_key = RuntimeConnectorSettings.get_string(
-                'ollama',
-                ('MISTRAL_API_KEY', 'mistral_api_key'),
+            # Try provider-specific connector first, fall back to 'ollama' for backward compat
+            runtime_key = (
+                RuntimeConnectorSettings.get_string('mistral', ('MISTRAL_API_KEY', 'mistral_api_key'))
+                or RuntimeConnectorSettings.get_string('ollama', ('MISTRAL_API_KEY', 'mistral_api_key'))
             )
             key = (runtime_key or self.settings.mistral_api_key or '').strip()
         else:
-            runtime_key = RuntimeConnectorSettings.get_string(
-                'ollama',
-                ('OPENAI_API_KEY', 'openai_api_key'),
+            runtime_key = (
+                RuntimeConnectorSettings.get_string('openai', ('OPENAI_API_KEY', 'openai_api_key'))
+                or RuntimeConnectorSettings.get_string('ollama', ('OPENAI_API_KEY', 'openai_api_key'))
             )
             key = (runtime_key or self.settings.openai_api_key or '').strip()
         if len(key) >= 2 and key[0] == key[-1] and key[0] in {'"', "'"}:
@@ -255,16 +267,7 @@ class OpenAICompatibleClient:
             if not name:
                 continue
             raw_arguments = function.get('arguments')
-            parsed_arguments: dict[str, Any] = {}
-            if isinstance(raw_arguments, dict):
-                parsed_arguments = dict(raw_arguments)
-            elif isinstance(raw_arguments, str):
-                try:
-                    candidate = json.loads(raw_arguments)
-                    if isinstance(candidate, dict):
-                        parsed_arguments = candidate
-                except json.JSONDecodeError:
-                    parsed_arguments = {}
+            parsed_arguments = safe_parse_tool_arguments(raw_arguments)
             call_id = str(raw_call.get('id') or f'call_{index}').strip() or f'call_{index}'
             calls.append(
                 {

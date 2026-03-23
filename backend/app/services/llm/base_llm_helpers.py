@@ -70,8 +70,9 @@ def persist_llm_call_log(
 
     Shared by both Ollama and OpenAI-compatible providers — logic is identical.
     """
-    db = SessionLocal()
+    db = None
     try:
+        db = SessionLocal()
         db.add(
             LlmCallLog(
                 provider=provider,
@@ -86,15 +87,18 @@ def persist_llm_call_log(
             )
         )
         db.commit()
-    except Exception:
-        db.rollback()
+    except Exception as exc:
+        logger.warning("persist_llm_call_log failed: %s", exc)
+        if db is not None:
+            db.rollback()
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 def is_api_key_valid(key: str | None) -> bool:
     """Check if an API key looks valid (not a placeholder)."""
-    if not key:
+    if not key or len(key.strip()) < 8:
         return False
     return key.lower() not in {'replace_me', 'changeme', 'change-me', 'your_api_key'}
 

@@ -71,7 +71,7 @@ def market_snapshot_tool(payload: dict[str, Any]) -> dict[str, Any]:
     """Snapshot marché normalisé avec métriques dérivées (spread ratio, candle ratios) via MCP."""
     adapter = _get_mcp_client()
     result = adapter.call_tool('market_snapshot', _as_dict(payload))
-    return result.data if result.status == 'ok' else _as_dict(payload)
+    return result.data if result.status == 'ok' else {'error': result.error or 'market_snapshot_failed'}
 
 
 @tool('indicator_bundle')
@@ -79,7 +79,7 @@ def indicator_bundle_tool(payload: dict[str, Any]) -> dict[str, Any]:
     """Calcul réel RSI, EMA, MACD, ATR depuis données OHLC via MCP — pas de passthrough."""
     adapter = _get_mcp_client()
     result = adapter.call_tool('indicator_bundle', _as_dict(payload))
-    return result.data if result.status == 'ok' else _as_dict(payload)
+    return result.data if result.status == 'ok' else {'error': result.error or 'indicator_bundle_failed'}
 
 
 @tool('divergence_detector')
@@ -111,7 +111,7 @@ def multi_timeframe_context_tool(payload: dict[str, Any]) -> dict[str, Any]:
     """Synthèse alignement multi‑TF avec confluence et direction dominante via MCP."""
     adapter = _get_mcp_client()
     result = adapter.call_tool('multi_timeframe_context', _as_dict(payload))
-    return result.data if result.status == 'ok' else _as_dict(payload)
+    return result.data if result.status == 'ok' else {'error': result.error or 'multi_timeframe_context_failed'}
 
 
 @tool('market_regime_context')
@@ -253,7 +253,7 @@ def build_llm_tool_specs(tool_ids: list[str]) -> list[dict[str, Any]]:
                             'description': 'Tool arguments.',
                         }
                     },
-                    'additionalProperties': True,
+                    'additionalProperties': False,
                 },
             },
         })

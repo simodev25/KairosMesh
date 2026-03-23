@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any
 from weakref import WeakKeyDictionary
@@ -362,6 +363,7 @@ class AgentModelSelector:
 
     _cache_ttl_seconds = 5.0
     _settings_cache = WeakKeyDictionary()
+    _cache_lock = threading.Lock()
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -376,25 +378,26 @@ class AgentModelSelector:
             return {}
 
         now = time.monotonic()
-        cached = cls._settings_cache.get(db)
-        if cached and now - cached[0] <= cls._cache_ttl_seconds:
-            return cached[1]
+        with cls._cache_lock:
+            cached = cls._settings_cache.get(db)
+            if cached and now - cached[0] <= cls._cache_ttl_seconds:
+                return cached[1]
 
-        connector = (
-            db.query(ConnectorConfig)
-            .filter(ConnectorConfig.connector_name == 'ollama')
-            .first()
-        )
-        settings = connector.settings if connector is not None and isinstance(connector.settings, dict) else {}
-        cls._settings_cache[db] = (now, settings)
+            connector = (
+                db.query(ConnectorConfig)
+                .filter(ConnectorConfig.connector_name == 'ollama')
+                .first()
+            )
+            settings = connector.settings if connector is not None and isinstance(connector.settings, dict) else {}
+            cls._settings_cache[db] = (now, settings)
 
-        if len(cls._settings_cache) > 128:
-            fresh_cache = WeakKeyDictionary()
-            for cache_key, cache_value in cls._settings_cache.items():
-                if now - cache_value[0] <= cls._cache_ttl_seconds:
-                    fresh_cache[cache_key] = cache_value
-            cls._settings_cache = fresh_cache
-        return settings
+            if len(cls._settings_cache) > 128:
+                fresh_cache = WeakKeyDictionary()
+                for cache_key, cache_value in cls._settings_cache.items():
+                    if now - cache_value[0] <= cls._cache_ttl_seconds:
+                        fresh_cache[cache_key] = cache_value
+                cls._settings_cache = fresh_cache
+            return settings
 
     @classmethod
     def _load_ollama_settings(cls, db: Session | None) -> dict:
@@ -426,14 +429,8 @@ class AgentModelSelector:
             candidate_names = (normalized_agent_name, *_legacy_agent_aliases_for(normalized_agent_name))
             for candidate_name in candidate_names:
                 value = raw_enabled.get(candidate_name)
-                if isinstance(value, bool):
-                    return value
-                if isinstance(value, str):
-                    normalized = value.strip().lower()
-                    if normalized in {'1', 'true', 'yes', 'on'}:
-                        return True
-                    if normalized in {'0', 'false', 'no', 'off'}:
-                        return False
+                if value is not None:
+                    return _normalize_bool_setting(value, fallback=default_enabled)
         return default_enabled
 
     def resolve(self, db: Session | None, agent_name: str | None = None) -> str:

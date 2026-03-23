@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -93,10 +95,12 @@ class MCPClientAdapter:
         result = adapter.call_tool("indicator_bundle", {"closes": [...], "rsi_period": 14})
     """
 
+    _MAX_INVOCATION_LOG = 1000
+
     def __init__(self) -> None:
         self._handlers = dict(_MCP_HANDLERS)
         self._catalog = dict(MCP_TOOL_CATALOG)
-        self._invocation_log: list[MCPToolInvocation] = []
+        self._invocation_log: deque[MCPToolInvocation] = deque(maxlen=self._MAX_INVOCATION_LOG)
 
     @property
     def tool_ids(self) -> list[str]:
@@ -248,6 +252,9 @@ class MCPClientAdapter:
                 result = handler(**call_args)
             else:
                 accepted = set(sig.parameters.keys())
+                dropped = set(call_args.keys()) - accepted
+                if dropped:
+                    logger.debug("MCP tool %s: dropped unknown kwargs: %s", key, dropped)
                 result = handler(**{k: v for k, v in call_args.items() if k in accepted})
             elapsed_ms = (time.perf_counter() - started) * 1000
             elapsed_sec = elapsed_ms / 1000.0
@@ -271,7 +278,7 @@ class MCPClientAdapter:
                 tool_id=key,
                 status="error",
                 latency_ms=round(elapsed_ms, 2),
-                error=str(exc),
+                error=f"{type(exc).__name__}: {exc}",
                 data={},
             )
             mcp_tool_calls_total.labels(tool=key, status="error").inc()
@@ -304,11 +311,14 @@ class MCPClientAdapter:
 # ---------------------------------------------------------------------------
 
 _adapter_instance: MCPClientAdapter | None = None
+_adapter_lock = threading.Lock()
 
 
 def get_mcp_client() -> MCPClientAdapter:
     """Return (or create) the global MCP client adapter singleton."""
     global _adapter_instance
     if _adapter_instance is None:
-        _adapter_instance = MCPClientAdapter()
+        with _adapter_lock:
+            if _adapter_instance is None:
+                _adapter_instance = MCPClientAdapter()
     return _adapter_instance

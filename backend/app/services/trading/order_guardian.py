@@ -348,8 +348,15 @@ class OrderGuardianService:
             }
             for item in actions[:25]
         ]
-        summary_json = json.dumps(summary, ensure_ascii=True)
-        actions_json = json.dumps(compact_actions, ensure_ascii=True)
+        # Sanitize data before injecting into LLM prompts to mitigate prompt injection
+        _sanitize = lambda s: s.replace('\n', ' ').replace('\\', '\\\\') if isinstance(s, str) else s
+        sanitized_summary = {k: _sanitize(v) if isinstance(v, str) else v for k, v in summary.items()}
+        sanitized_actions = [
+            {k: _sanitize(v) if isinstance(v, str) else v for k, v in action.items()}
+            for action in compact_actions
+        ]
+        summary_json = json.dumps(sanitized_summary, ensure_ascii=True)
+        actions_json = json.dumps(sanitized_actions, ensure_ascii=True)
 
         prompt_info = self.prompt_service.render(
             db=db,
@@ -468,6 +475,7 @@ class OrderGuardianService:
 
         actions: list[dict[str, Any]] = []
         executed_count = 0
+        _mem_svc: VectorMemoryService | None = None
 
         for position in normalized_positions:
             try:
@@ -512,8 +520,9 @@ class OrderGuardianService:
                                 outcome_label = 'win' if profit > 0 else ('loss' if profit < 0 else 'neutral')
                                 run_id = position.get('raw', {}).get('clientId')
                                 if run_id:
-                                    mem_svc = VectorMemoryService()
-                                    mem_svc.update_outcome_weights(db, int(run_id), outcome_label)
+                                    if _mem_svc is None:
+                                        _mem_svc = VectorMemoryService()
+                                    _mem_svc.update_outcome_weights(db, int(run_id), outcome_label)
                             except Exception:
                                 logger.debug('outcome backfill skipped for position %s', position['position_id'])
                 elif decision == position['side']:
@@ -522,11 +531,14 @@ class OrderGuardianService:
                     if should_update_sl or should_update_tp:
                         # --- RiskEngine validation gate ---
                         market_price = analysis_bundle.get('market', {}).get('last_price') if isinstance(analysis_bundle, dict) else None
-                        ref_price = float(market_price or position.get('raw', {}).get('openPrice', 0) or 0)
+                        ref_price = float(market_price or 0) or float(position.get('raw', {}).get('openPrice', 0) or 0)
+                        if ref_price <= 0:
+                            logger.warning("No valid price for SL/TP validation on %s, skipping", position['symbol'])
+                            continue
                         risk_check = self.risk_engine.validate_sl_tp_update(
                             mode='live',
                             side=position['side'],
-                            current_price=ref_price if ref_price > 0 else 1.0,
+                            current_price=ref_price,
                             new_stop_loss=suggested_sl if should_update_sl else None,
                             new_take_profit=suggested_tp if should_update_tp else None,
                             pair=position['symbol'],
@@ -579,7 +591,7 @@ class OrderGuardianService:
                         'side': position['side'],
                         'decision': 'HOLD',
                         'action': 'HOLD',
-                        'reason': f'Analysis error: {exc}',
+                        'reason': f'Analysis error: {type(exc).__name__}',
                         'current_stop_loss': position['current_stop_loss'],
                         'current_take_profit': position['current_take_profit'],
                         'suggested_stop_loss': None,

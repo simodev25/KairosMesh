@@ -299,7 +299,7 @@ class TradingOrchestrator:
         if decision not in {'BUY', 'SELL'}:
             return False
 
-        execution_allowed = bool(trader_decision.get('execution_allowed', decision in {'BUY', 'SELL'}))
+        execution_allowed = bool(trader_decision.get('execution_allowed', False))
         if not execution_allowed or not bool(risk_output.get('accepted')):
             return False
 
@@ -563,7 +563,7 @@ class TradingOrchestrator:
                 'timeframe': timeframe,
             }
 
-        pct_change = ((latest - prev) / prev) * 100 if prev else 0.0
+        pct_change = ((latest - prev) / prev) * 100 if prev != 0 else 0.0
         trend = 'bullish' if ema_fast_raw > ema_slow_raw else 'bearish'
         if abs(ema_fast_raw - ema_slow_raw) < latest * 0.0003:
             trend = 'neutral'
@@ -921,7 +921,7 @@ class TradingOrchestrator:
         needs_follow_up = bool(trader_decision.get('needs_follow_up', False))
         follow_up_reason = str(trader_decision.get('follow_up_reason') or '').strip().lower() or None
         strong_conflict = bool(trader_decision.get('strong_conflict', False))
-        execution_allowed = bool(trader_decision.get('execution_allowed', decision in {'BUY', 'SELL'}))
+        execution_allowed = bool(trader_decision.get('execution_allowed', False))
         risk_accepted = bool(risk_output.get('accepted', False))
         degraded_agents = self._collect_bundle_degraded_agents(analysis_bundle)
         should_second_pass, second_pass_reason = self._should_trigger_second_pass(trader_decision)
@@ -1141,7 +1141,12 @@ class TradingOrchestrator:
                 }
                 for future in as_completed(future_map):
                     agent_name, _ = future_map[future]
-                    output, elapsed = future.result()
+                    try:
+                        output, elapsed = future.result()
+                    except Exception as exc:
+                        logger.warning("Parallel agent %s failed: %s", agent_name, exc, exc_info=True)
+                        output = {'error': f'{type(exc).__name__}: agent execution failed', 'agent': agent_name}
+                        elapsed = 0.0
                     finished[agent_name] = (output, elapsed)
 
             ordered: dict[str, dict[str, Any]] = {}
@@ -1612,7 +1617,7 @@ class TradingOrchestrator:
                     vector_memory_meta['entry_id'] = getattr(vector_entry, 'id', None)
             except Exception as exc:
                 logger.exception('vector memory persistence failed run_id=%s', run.id)
-                vector_memory_meta['error'] = str(exc)
+                vector_memory_meta['error'] = f'{type(exc).__name__}: vector memory persistence failed'
 
             memori_store_meta = self.memori_memory_service.store_run_memory(run)
             memory_persistence_meta = {
@@ -1641,7 +1646,7 @@ class TradingOrchestrator:
             if failed_run is None:
                 raise
             failed_run.status = 'failed'
-            failed_run.error = str(exc)
+            failed_run.error = f'{type(exc).__name__}: analysis failed'
             db.commit()
             db.refresh(failed_run)
             analysis_runs_total.labels(status='failed').inc()

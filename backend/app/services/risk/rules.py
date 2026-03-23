@@ -110,8 +110,8 @@ class RiskEngine:
             from app.services.market.instrument import InstrumentClassifier
             descriptor = InstrumentClassifier.classify(str(pair or ''))
             return descriptor.asset_class.value.lower()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("InstrumentClassifier.classify failed for %s: %s", pair, exc)
 
         # Fallback heuristic
         normalized = str(pair or '').upper().split('.', 1)[0]
@@ -218,7 +218,7 @@ class RiskEngine:
         min_vol, max_vol = self._volume_limits(pair, asset_class)
 
         risk_amount = equity * (risk_percent / 100)
-        sl_pips = max(stop_distance / pip_size, 0.1)
+        sl_pips = max(stop_distance / pip_size, 0.1) if pip_size > 0 else 0.1
         suggested_volume = risk_amount / (sl_pips * pip_value) if pip_value > 0 else min_vol
         suggested_volume = max(min(suggested_volume, max_vol), min_vol)
 
@@ -267,7 +267,7 @@ class RiskEngine:
 
         if new_stop_loss is not None and new_stop_loss > 0:
             sl_distance = abs(current_price - new_stop_loss)
-            if sl_distance / current_price < 0.0005 and current_price > 0:
+            if current_price > 0 and sl_distance / current_price < 0.0005:
                 reasons.append('Proposed stop loss is too tight.')
             # Verify SL is on correct side
             if side == 'BUY' and new_stop_loss >= current_price:
