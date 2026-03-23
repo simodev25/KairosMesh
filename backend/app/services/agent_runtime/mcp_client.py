@@ -47,6 +47,22 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Tool ID alias map — maps UI/agent tool names → MCP handler names
+# Aliased names are used in AGENT_TOOL_DEFINITIONS for human-readable labels
+# while MCP handlers use shorter canonical names.
+# ---------------------------------------------------------------------------
+
+TOOL_ID_ALIASES: dict[str, str] = {
+    "macro_calendar_or_event_feed": "macro_event_feed",
+    "sentiment_or_event_impact_parser": "sentiment_parser",
+    "support_resistance_or_structure_detector": "support_resistance_detector",
+    "market_regime_context": "market_regime_detector",
+    "correlation_context": "correlation_analyzer",
+    "volatility_context": "volatility_analyzer",
+}
+
+
+# ---------------------------------------------------------------------------
 # MCP Tool Handler Registry — maps tool_id → callable
 # ---------------------------------------------------------------------------
 
@@ -111,7 +127,8 @@ class MCPClientAdapter:
         return dict(self._catalog)
 
     def has_tool(self, tool_id: str) -> bool:
-        return str(tool_id or "").strip() in self._handlers
+        key = str(tool_id or "").strip()
+        return key in self._handlers or TOOL_ID_ALIASES.get(key, key) in self._handlers
 
     def get_tool_meta(self, tool_id: str) -> dict[str, Any] | None:
         return self._catalog.get(str(tool_id or "").strip())
@@ -132,18 +149,29 @@ class MCPClientAdapter:
     # ------------------------------------------------------------------
 
     def build_tool_specs(self, enabled_tool_ids: list[str]) -> list[dict[str, Any]]:
-        """Return OpenAI function-call specs for the given enabled tools."""
+        """Return OpenAI function-call specs for the given enabled tools.
+
+        Aliased tool names (e.g. ``market_regime_context``) are resolved to
+        their canonical MCP handler name for parameter schema generation, while
+        the spec is published under the *original* alias so the LLM calls the
+        tool using the same name that appears in ``enabled_tools``.
+        """
         specs: list[dict[str, Any]] = []
         seen: set[str] = set()
 
         for raw_id in enabled_tool_ids:
             tool_id = str(raw_id or "").strip()
-            if not tool_id or tool_id in seen or tool_id not in self._handlers:
+            if not tool_id or tool_id in seen:
+                continue
+            # Resolve alias to canonical handler name for schema generation
+            canonical_id = TOOL_ID_ALIASES.get(tool_id, tool_id)
+            if canonical_id not in self._handlers:
                 continue
             seen.add(tool_id)
 
-            handler = self._handlers[tool_id]
-            meta = self._catalog.get(tool_id, {})
+            handler = self._handlers[canonical_id]
+            # Prefer description from the alias catalog entry (richer label), fall back to canonical
+            meta = self._catalog.get(tool_id) or self._catalog.get(canonical_id, {})
             description = meta.get("description", f"MCP tool: {tool_id}")
 
             # Extract parameters from function signature
@@ -167,6 +195,19 @@ class MCPClientAdapter:
                     param_schema["type"] = "boolean"
                 elif "list" in str(annotation).lower():
                     param_schema["type"] = "array"
+                    # OpenAI requires 'items' on array schemas; infer element
+                    # type from generic args (e.g. list[float] → number).
+                    ann_str = str(annotation).lower()
+                    if "float" in ann_str or "number" in ann_str:
+                        param_schema["items"] = {"type": "number"}
+                    elif "int" in ann_str:
+                        param_schema["items"] = {"type": "integer"}
+                    elif "str" in ann_str:
+                        param_schema["items"] = {"type": "string"}
+                    elif "bool" in ann_str:
+                        param_schema["items"] = {"type": "boolean"}
+                    else:
+                        param_schema["items"] = {}
                 elif "dict" in str(annotation).lower():
                     param_schema["type"] = "object"
                 else:
@@ -216,18 +257,23 @@ class MCPClientAdapter:
         key = str(tool_id or "").strip()
         args = arguments or {}
 
-        # Check enablement
-        if enabled_tools is not None and key not in set(enabled_tools):
-            invocation = MCPToolInvocation(
-                tool_id=key,
-                status="disabled",
-                latency_ms=0.0,
-                data={},
-            )
-            self._invocation_log.append(invocation)
-            return invocation
+        # Check enablement (alias and canonical both accepted)
+        if enabled_tools is not None:
+            enabled_set = set(enabled_tools)
+            canonical_key = TOOL_ID_ALIASES.get(key, key)
+            if key not in enabled_set and canonical_key not in enabled_set:
+                invocation = MCPToolInvocation(
+                    tool_id=key,
+                    status="disabled",
+                    latency_ms=0.0,
+                    data={},
+                )
+                self._invocation_log.append(invocation)
+                return invocation
 
-        handler = self._handlers.get(key)
+        # Resolve alias to canonical handler
+        canonical_key = TOOL_ID_ALIASES.get(key, key)
+        handler = self._handlers.get(canonical_key) or self._handlers.get(key)
         if handler is None:
             invocation = MCPToolInvocation(
                 tool_id=key,

@@ -20,6 +20,94 @@ from app.services.orchestrator.instrument_helpers import (
 )
 from app.services.prompts.registry import PromptTemplateService
 from app.services.risk.rules import RiskEngine
+from app.observability.metrics import (
+    contradiction_detection_total,
+    debate_impact_abs,
+    decision_gate_blocks_total,
+)
+
+_TIMEFRAME_ORDER = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN']
+_MAX_USEFUL_TF = 'D1'
+
+
+def _higher_timeframes(current_tf: str, max_count: int = 2) -> list[str]:
+    """Return up to *max_count* timeframes above *current_tf*, capped at D1.
+
+    W1/MN are excluded because MetaAPI rarely has enough weekly/monthly
+    candles for reliable indicator computation (EMA, RSI need 60+ bars).
+    """
+    upper = current_tf.strip().upper()
+    try:
+        idx = _TIMEFRAME_ORDER.index(upper)
+    except ValueError:
+        return []
+    ceiling = _TIMEFRAME_ORDER.index(_MAX_USEFUL_TF)
+    candidates = [tf for tf in _TIMEFRAME_ORDER[idx + 1:] if _TIMEFRAME_ORDER.index(tf) <= ceiling]
+    return candidates[:max_count]
+
+
+def _compute_multi_timeframe_context(
+    *,
+    ctx: 'AgentContext',
+    current_trend: str,
+    current_rsi: float,
+) -> dict[str, Any]:
+    from app.services.agent_runtime.mcp_trading_server import (
+        multi_timeframe_context as _mcp_multi_tf,
+    )
+
+    snapshots = ctx.multi_tf_snapshots or {}
+    valid = {
+        tf: snap for tf, snap in snapshots.items()
+        if isinstance(snap, dict) and not snap.get('degraded')
+    }
+
+    if not valid:
+        return {
+            'timeframe': ctx.timeframe,
+            'availability': 'single_timeframe_only',
+            'alignment': current_trend,
+            'higher_tf_data': {},
+        }
+
+    sorted_tfs = sorted(
+        valid.keys(),
+        key=lambda t: _TIMEFRAME_ORDER.index(t.upper()) if t.upper() in _TIMEFRAME_ORDER else 99,
+    )
+
+    first_snap = valid[sorted_tfs[0]]
+    second_snap = valid[sorted_tfs[1]] if len(sorted_tfs) > 1 else {}
+
+    higher_trend = str(first_snap.get('trend', 'neutral')).lower()
+    higher_rsi = _safe_float(first_snap.get('rsi'), 50.0)
+    second_trend = str(second_snap.get('trend', 'neutral')).lower() if second_snap else 'neutral'
+    second_rsi = _safe_float(second_snap.get('rsi'), 50.0) if second_snap else 50.0
+
+    result = _mcp_multi_tf(
+        current_tf_trend=current_trend,
+        current_tf_rsi=current_rsi,
+        higher_tf_trend=higher_trend,
+        higher_tf_rsi=higher_rsi,
+        second_higher_tf_trend=second_trend,
+        second_higher_tf_rsi=second_rsi,
+    )
+
+    result['timeframe'] = ctx.timeframe
+    result['availability'] = 'multi_timeframe'
+    result['higher_tf_data'] = {
+        tf: {
+            'timeframe': tf,
+            'trend': snap.get('trend'),
+            'rsi': snap.get('rsi'),
+            'ema_fast': snap.get('ema_fast'),
+            'ema_slow': snap.get('ema_slow'),
+            'macd_diff': snap.get('macd_diff'),
+            'atr': snap.get('atr'),
+            'last_price': snap.get('last_price'),
+        }
+        for tf, snap in valid.items()
+    }
+    return result
 
 
 @dataclass
@@ -33,6 +121,8 @@ class AgentContext:
     memory_context: list[dict[str, Any]]
     memory_signal: dict[str, Any] = field(default_factory=dict)
     llm_model_overrides: dict[str, str] = field(default_factory=dict)
+    price_history: list[dict[str, Any]] = field(default_factory=list)
+    multi_tf_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _parse_signal_from_text(text: str) -> str:
@@ -836,7 +926,8 @@ def _chat_with_runtime_tools(
             return llm_res, executed_tool_calls
 
         llm_text, _ = _normalize_llm_text_and_degraded(llm_res, require_text=False)
-        assistant_message: dict[str, Any] = {'role': 'assistant', 'content': llm_text}
+        assistant_content = llm_text if llm_text.strip() else None
+        assistant_message: dict[str, Any] = {'role': 'assistant', 'content': assistant_content}
         assistant_tool_calls: list[dict[str, Any]] = []
         for call in tool_calls:
             assistant_tool_calls.append(
@@ -1639,19 +1730,35 @@ class TechnicalAnalystAgent:
         self.prompt_service = PromptTemplateService()
 
     def run(self, ctx: AgentContext, db: Session | None = None) -> dict[str, Any]:
+        from app.services.agent_runtime.mcp_trading_server import (
+            divergence_detector as _mcp_divergence_detector,
+            pattern_detector as _mcp_pattern_detector,
+            support_resistance_detector as _mcp_support_resistance_detector,
+        )
+
         enabled_tools = _resolve_enabled_tools(self.model_selector, db, self.name)
         tool_invocations: dict[str, dict[str, Any]] = {}
+
+        # Extract OHLC arrays from raw candle data for MCP tool dispatchers
+        _candles = list(ctx.price_history or [])
+        _opens = [_safe_float(c.get('open'), 0.0) for c in _candles if isinstance(c, dict)]
+        _highs = [_safe_float(c.get('high'), 0.0) for c in _candles if isinstance(c, dict)]
+        _lows = [_safe_float(c.get('low'), 0.0) for c in _candles if isinstance(c, dict)]
+        _closes = [_safe_float(c.get('close'), 0.0) for c in _candles if isinstance(c, dict)]
+        _has_candles = len(_closes) >= 30
 
         market_snapshot_tool = _run_agent_tool(
             tool_id='market_snapshot',
             enabled_tools=enabled_tools,
-            executor=lambda: dict(ctx.market_snapshot or {}),
+            executor=lambda: {k: v for k, v in (ctx.market_snapshot or {}).items() if k != '_raw_candles'},
         )
         tool_invocations['market_snapshot'] = market_snapshot_tool
 
         m = dict(ctx.market_snapshot or {})
+        m.pop('_raw_candles', None)
         if market_snapshot_tool.get('status') == 'ok' and isinstance(market_snapshot_tool.get('data'), dict):
             m = dict(market_snapshot_tool.get('data') or {})
+            m.pop('_raw_candles', None)
 
         if m.get('degraded'):
             return {
@@ -1709,30 +1816,35 @@ class TechnicalAnalystAgent:
             score -= 0.2
 
         signal = 'bullish' if score > 0.15 else 'bearish' if score < -0.15 else 'neutral'
+        _sr_fallback = {
+            'validation': (
+                f"Conserver un biais {signal} tant que le prix reste dans la direction du trend ({trend})."
+                if trend in {'bullish', 'bearish'}
+                else 'Validation conditionnelle: attendre une reprise de momentum.'
+            ),
+            'invalidation': (
+                f"Invalider si RSI passe en zone opposée (rsi={round(rsi, 2)}) "
+                f"et MACD diff inverse durablement ({round(macd_diff, 6)})."
+            ),
+        }
         structure_tool = _run_agent_tool(
             tool_id='support_resistance_or_structure_detector',
             enabled_tools=enabled_tools,
-            executor=lambda: {
-                'validation': (
-                    f"Conserver un biais {signal} tant que le prix reste dans la direction du trend ({trend})."
-                    if trend in {'bullish', 'bearish'}
-                    else 'Validation conditionnelle: attendre une reprise de momentum.'
-                ),
-                'invalidation': (
-                    f"Invalider si RSI passe en zone opposée (rsi={round(rsi, 2)}) "
-                    f"et MACD diff inverse durablement ({round(macd_diff, 6)})."
-                ),
-            },
+            executor=lambda: (
+                _mcp_support_resistance_detector(highs=_highs, lows=_lows, closes=_closes)
+                if _has_candles
+                else _sr_fallback
+            ),
         )
         tool_invocations['support_resistance_or_structure_detector'] = structure_tool
         multi_timeframe_tool = _run_agent_tool(
             tool_id='multi_timeframe_context',
             enabled_tools=enabled_tools,
-            executor=lambda: {
-                'timeframe': ctx.timeframe,
-                'availability': 'single_timeframe_snapshot',
-                'alignment': trend,
-            },
+            executor=lambda: _compute_multi_timeframe_context(
+                ctx=ctx,
+                current_trend=trend,
+                current_rsi=rsi,
+            ),
         )
         tool_invocations['multi_timeframe_context'] = multi_timeframe_tool
 
@@ -1753,6 +1865,8 @@ class TechnicalAnalystAgent:
                 'enabled_tools': enabled_tools,
                 'invocations': tool_invocations,
                 'llm_tool_calls': _finalize_llm_tool_calls([], tool_invocations=tool_invocations),
+                'mcp_candles_available': _has_candles,
+                'mcp_candles_count': len(_closes),
             },
         }
         if structure_tool.get('status') == 'ok':
@@ -1852,12 +1966,26 @@ class TechnicalAnalystAgent:
                 'ema_fast': m_effective.get('ema_fast'),
                 'ema_slow': m_effective.get('ema_slow'),
             },
-            'support_resistance_or_structure_detector': lambda _args: dict(structure_tool.get('data') or {}),
-            'multi_timeframe_context': lambda _args: {
-                'timeframe': ctx.timeframe,
-                'availability': 'single_timeframe_snapshot',
-                'alignment': trend,
-            },
+            'divergence_detector': lambda _args: (
+                _mcp_divergence_detector(closes=_closes)
+                if _has_candles
+                else {'divergences': [], 'note': 'Raw OHLC candles not available; use indicator_bundle.'}
+            ),
+            'pattern_detector': lambda _args: (
+                _mcp_pattern_detector(opens=_opens, highs=_highs, lows=_lows, closes=_closes)
+                if _has_candles
+                else {'patterns': [], 'note': 'Raw OHLC candles not available; use indicator_bundle.'}
+            ),
+            'support_resistance_or_structure_detector': lambda _args: (
+                _mcp_support_resistance_detector(highs=_highs, lows=_lows, closes=_closes)
+                if _has_candles
+                else dict(structure_tool.get('data') or {})
+            ),
+            'multi_timeframe_context': lambda _args: _compute_multi_timeframe_context(
+                ctx=ctx,
+                current_trend=trend,
+                current_rsi=rsi,
+            ),
         }
         llm_res, llm_tool_calls = _chat_with_runtime_tools(
             llm_client=self.llm,
@@ -4285,6 +4413,32 @@ class TraderAgent:
                 'memory_refs': [m.get('summary', '') for m in ctx.memory_context[:3]],
             },
         }
+        # --- Empirical metrics: debate impact, contradictions, gate blocks ---
+        try:
+            debate_impact_abs.labels(
+                decision=decision,
+                strong_conflict=str(strong_conflict).lower(),
+            ).observe(abs(debate_score))
+
+            if contradiction_level != 'none':
+                contradiction_detection_total.labels(level=contradiction_level).inc()
+
+            if decision == 'HOLD':
+                for gate in gate_reasons:
+                    if gate in {
+                        'combined_score_below_minimum',
+                        'confidence_below_minimum',
+                        'insufficient_aligned_sources',
+                        'major_contradiction_execution_block',
+                        'strong_conflict',
+                        'technical_neutral_gate',
+                        'memory_risk_block',
+                        'low_edge',
+                    }:
+                        decision_gate_blocks_total.labels(gate=gate).inc()
+        except Exception:
+            pass  # metrics must never break the trading pipeline
+
         llm_model = _resolve_llm_model(ctx, self.model_selector, db, self.name)
         output['prompt_meta'] = {
             'prompt_id': None,

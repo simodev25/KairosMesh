@@ -169,6 +169,12 @@ class OpenAICompatibleClient:
             response = client.get(url, headers=headers)
         else:
             response = client.post(url, json=payload or {}, headers=headers)
+        if response.status_code >= 400:
+            body_text = response.text[:500] if response.text else '<empty>'
+            logger.error(
+                'LLM API error %s %s – status=%d body=%s',
+                method, url, response.status_code, body_text,
+            )
         response.raise_for_status()
         return response.json() if response.content else {}
 

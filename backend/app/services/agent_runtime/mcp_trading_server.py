@@ -323,18 +323,19 @@ def multi_timeframe_context(
     current_tf_rsi: float = 50.0,
     higher_tf_trend: str = "neutral",
     higher_tf_rsi: float = 50.0,
-    lower_tf_trend: str = "neutral",
-    lower_tf_rsi: float = 50.0,
+    second_higher_tf_trend: str = "neutral",
+    second_higher_tf_rsi: float = 50.0,
 ) -> dict[str, Any]:
     """Synthesise a multi‑timeframe alignment assessment.
 
+    Compares the current timeframe with one or two higher timeframes.
     Returns alignment score, dominant direction and confluence quality.
     """
     direction_map = {"bullish": 1, "bearish": -1, "neutral": 0}
     signals = [
         direction_map.get(current_tf_trend, 0),
         direction_map.get(higher_tf_trend, 0),
-        direction_map.get(lower_tf_trend, 0),
+        direction_map.get(second_higher_tf_trend, 0),
     ]
     avg_signal = sum(signals) / len(signals)
 
@@ -351,8 +352,7 @@ def multi_timeframe_context(
 
     dominant = "bullish" if avg_signal > 0.2 else "bearish" if avg_signal < -0.2 else "neutral"
 
-    # RSI divergence across timeframes
-    rsi_values = [current_tf_rsi, higher_tf_rsi, lower_tf_rsi]
+    rsi_values = [current_tf_rsi, higher_tf_rsi, second_higher_tf_rsi]
     rsi_spread = max(rsi_values) - min(rsi_values)
 
     return {
@@ -361,9 +361,9 @@ def multi_timeframe_context(
         "confluence": confluence,
         "all_aligned": all_aligned,
         "rsi_spread": round(rsi_spread, 2),
-        "higher_tf_bias": higher_tf_trend,
         "current_tf_bias": current_tf_trend,
-        "lower_tf_bias": lower_tf_trend,
+        "higher_tf_bias": higher_tf_trend,
+        "second_higher_tf_bias": second_higher_tf_trend,
         "rsi_avg": round(sum(rsi_values) / 3, 2),
     }
 
@@ -907,89 +907,22 @@ def position_size_calculator(
 ) -> dict[str, Any]:
     """Calculate correct position size based on asset class and risk parameters.
 
-    Unlike the legacy hardcoded pip_value=10, this tool adapts to each
-    asset class: forex, crypto, indices, commodities, metals, equities.
+    Delegates to RiskEngine.calculate_position_size — the single source of
+    truth for position sizing across the platform.  The ``contract_size``,
+    ``pip_size`` and ``pip_value_per_lot`` overrides are accepted for backward
+    compatibility but ignored in favour of the canonical contract specs.
     """
-    ac = asset_class.lower()
-    stop_distance = abs(entry_price - stop_loss)
+    from app.services.risk.rules import RiskEngine
 
-    if stop_distance <= 0:
-        return {"error": "stop_loss_same_as_entry", "suggested_volume": 0.0}
-
-    # Default contract sizes per asset class
-    _default_contract_sizes = {
-        "forex": 100_000, "crypto": 1, "index": 1, "cfd": 1,
-        "metal": 100, "energy": 1000, "commodity": 1000,
-        "equity": 1, "etf": 1,
-    }
-    if contract_size is None:
-        contract_size = float(_default_contract_sizes.get(ac, 1))
-
-    risk_amount = equity * (risk_percent / 100.0)
-
-    # Determine pip size and pip value based on asset class
-    if pip_size is None:
-        if ac == "forex":
-            pip_size = 0.0001
-        elif ac == "crypto":
-            if entry_price >= 1000:
-                pip_size = 1.0
-            elif entry_price >= 1:
-                pip_size = 0.01
-            else:
-                pip_size = 0.0001
-        elif ac in ("index", "cfd"):
-            pip_size = 1.0
-        elif ac in ("metal",):
-            pip_size = 0.01
-        elif ac in ("energy", "commodity"):
-            pip_size = 0.01
-        elif ac == "equity":
-            pip_size = 0.01
-        else:
-            pip_size = 0.01
-
-    if pip_value_per_lot is None:
-        if ac == "forex":
-            pip_value_per_lot = 10.0
-        elif ac == "crypto":
-            pip_value_per_lot = contract_size * pip_size
-        elif ac in ("index", "cfd"):
-            pip_value_per_lot = 1.0
-        elif ac == "metal":
-            pip_value_per_lot = 10.0
-        elif ac in ("energy", "commodity"):
-            pip_value_per_lot = 10.0
-        elif ac == "equity":
-            pip_value_per_lot = 1.0
-        else:
-            pip_value_per_lot = 10.0
-
-    sl_pips = max(stop_distance / pip_size, 0.1)
-    raw_volume = risk_amount / (sl_pips * pip_value_per_lot) if pip_value_per_lot > 0 else 0.01
-
-    # Volume limits by asset class
-    max_vol = {"forex": 10.0, "crypto": 100.0, "index": 50.0, "equity": 1000.0}.get(ac, 10.0)
-    min_vol = {"forex": 0.01, "crypto": 0.001, "equity": 1.0}.get(ac, 0.01)
-
-    suggested = max(min(raw_volume, max_vol), min_vol)
-
-    # Margin check
-    margin_required = (suggested * contract_size * entry_price) / leverage if leverage > 0 else float("inf")
-    margin_ok = margin_required <= equity
-
-    return {
-        "suggested_volume": round(suggested, 4),
-        "sl_pips": round(sl_pips, 2),
-        "pip_size": pip_size,
-        "pip_value_per_lot": round(pip_value_per_lot, 4),
-        "risk_amount": round(risk_amount, 2),
-        "margin_required": round(margin_required, 2),
-        "margin_ok": margin_ok,
-        "asset_class": ac,
-        "max_volume": max_vol,
-        "min_volume": min_vol,
-    }
+    engine = RiskEngine()
+    return engine.calculate_position_size(
+        asset_class=asset_class,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        risk_percent=risk_percent,
+        equity=equity,
+        leverage=leverage,
+    )
 
 
 # ---------------------------------------------------------------------------

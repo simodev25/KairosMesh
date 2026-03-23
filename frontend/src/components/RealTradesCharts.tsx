@@ -526,7 +526,7 @@ export function RealTradesCharts({
 
       {activeTab === 'summary' && (
         <>
-          <div className="stats-grid">
+          <div className="grid grid-cols-4 gap-4">
             <div>
               <span>Net total</span>
               <strong>{formatMoney(analytics.totalNet)}</strong>
@@ -628,7 +628,7 @@ export function RealTradesCharts({
 
       {activeTab === 'profit' && (
         <>
-          <div className="stats-grid">
+          <div className="grid grid-cols-4 gap-4">
             <div>
               <span>Gross profit</span>
               <strong>{formatMoney(analytics.grossProfit)}</strong>
@@ -691,7 +691,7 @@ export function RealTradesCharts({
 
       {activeTab === 'direction' && (
         <>
-          <div className="stats-grid">
+          <div className="grid grid-cols-4 gap-4">
             <div>
               <span>Long trades</span>
               <strong>{analytics.longSide.count}</strong>

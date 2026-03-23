@@ -574,22 +574,22 @@ export function OrdersPage() {
   }, [platformOrdersPage, platformOrdersTotalPages]);
 
   return (
-    <div className="dashboard-grid orders-page">
+    <div className="flex flex-col gap-5">
       {pageError && (
-        <section className="card">
+        <section className="hw-surface p-5">
           <p className="alert">{pageError}</p>
         </section>
       )}
-      <section className="card primary orders-top-toolbar">
+      <section className="hw-surface p-5">
         <form
-          className="form-grid inline orders-top-controls"
+          className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end"
           onSubmit={(e) => {
             e.preventDefault();
             void loadMetaTrading(accountRef, 'manual');
           }}
         >
-          <label>
-            Compte
+          <div>
+            <label className="micro-label block mb-1.5">Compte</label>
             <select value={accountRef ?? ''} onChange={(e) => setAccountRef(e.target.value ? Number(e.target.value) : null)}>
               {accounts.length === 0 && <option value="">Default</option>}
               {accounts.map((account) => (
@@ -598,9 +598,9 @@ export function OrdersPage() {
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            Fenêtre
+          </div>
+          <div>
+            <label className="micro-label block mb-1.5">Fenêtre</label>
             <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
               {runtimeConfig.metaApiRealTradesDaysOptions.map((daysOption) => (
                 <option key={daysOption} value={daysOption}>
@@ -608,10 +608,12 @@ export function OrdersPage() {
                 </option>
               ))}
             </select>
-          </label>
-          <button className="btn-primary" disabled={metaLoading}>{metaLoading ? 'Rafraîchir...' : 'Rafraîchir'}</button>
-          <label className="orders-guardian-toggle">
-            Guardian MT5
+          </div>
+          <div>
+            <button className="btn-primary w-full" disabled={metaLoading}>{metaLoading ? 'Rafraîchir...' : 'Rafraîchir'}</button>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="micro-label">Guardian MT5</label>
             <input
               className="ui-switch"
               type="checkbox"
@@ -619,32 +621,36 @@ export function OrdersPage() {
               onChange={(e) => void setGuardianEnabled(e.target.checked)}
               disabled={guardianLoading || guardianActioning || !canOperateGuardian}
             />
-          </label>
-          <button
-            type="button"
-            className="btn-ghost"
-            disabled={!guardianStatus?.enabled || guardianActioning || !canOperateGuardian}
-            onClick={() => void runGuardianNow('manual')}
-          >
-            {guardianActioning ? 'Analyse...' : 'Analyser positions'}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            disabled={!hasGuardianReport}
-            onClick={() => setGuardianReportVisible((previous) => !previous)}
-          >
-            {guardianReportVisible ? 'Masquer dernier rapport' : 'Afficher dernier rapport'}
-          </button>
-          <p className="orders-top-meta">
+          </div>
+          <div>
+            <button
+              type="button"
+              className="btn-ghost w-full"
+              disabled={!guardianStatus?.enabled || guardianActioning || !canOperateGuardian}
+              onClick={() => void runGuardianNow('manual')}
+            >
+              {guardianActioning ? 'Analyse...' : 'Analyser positions'}
+            </button>
+          </div>
+          <div>
+            <button
+              type="button"
+              className="btn-ghost w-full"
+              disabled={!hasGuardianReport}
+              onClick={() => setGuardianReportVisible((previous) => !previous)}
+            >
+              {guardianReportVisible ? 'Masquer rapport' : 'Voir rapport'}
+            </button>
+          </div>
+          <p className="model-source col-span-2">
             Provider: <code>{provider || 'unknown'}</code> | Sync: <code>{syncing ? 'yes' : 'no'}</code>
           </p>
-          <p className="orders-top-meta">
+          <p className="model-source col-span-2">
             Guardian: <code>{guardianStatus?.enabled ? 'on' : 'off'}</code> | Dernier scan:{' '}
             <code>{formatNullableDateTime(guardianStatus?.last_run_at ?? guardianLastRun?.generated_at)}</code>
           </p>
           {!canOperateGuardian && (
-            <p className="orders-top-meta">
+            <p className="model-source col-span-2">
               Droits requis pour agir: <code>trader-operator/admin</code>
             </p>
           )}
@@ -657,30 +663,30 @@ export function OrdersPage() {
           </p>
         )}
         {guardianReportVisible && guardianReportStats && (
-          <section className="orders-guardian-report">
+          <section className="hw-surface-alt p-4 mt-3">
             <p className="model-source">
               Rapport guardian du <code>{formatNullableDateTime(guardianReportDate)}</code>
             </p>
-            <div className="orders-guardian-report-grid">
-              <article className="orders-guardian-report-stat">
-                <span>Positions vues</span>
-                <strong>{guardianReportStats.positionsSeen}</strong>
+            <div className="grid grid-cols-5 gap-3 mt-2">
+              <article className="hw-surface-alt p-3 text-center">
+                <span className="micro-label">Positions vues</span>
+                <strong className="block text-lg font-bold font-mono text-text mt-1">{guardianReportStats.positionsSeen}</strong>
               </article>
-              <article className="orders-guardian-report-stat">
-                <span>Positions analysées</span>
-                <strong>{guardianReportStats.positionsAnalyzed}</strong>
+              <article className="hw-surface-alt p-3 text-center">
+                <span className="micro-label">Positions analysées</span>
+                <strong className="block text-lg font-bold font-mono text-text mt-1">{guardianReportStats.positionsAnalyzed}</strong>
               </article>
-              <article className="orders-guardian-report-stat">
-                <span>Actions proposées</span>
-                <strong>{guardianReportStats.actionsTotal}</strong>
+              <article className="hw-surface-alt p-3 text-center">
+                <span className="micro-label">Actions proposées</span>
+                <strong className="block text-lg font-bold font-mono text-text mt-1">{guardianReportStats.actionsTotal}</strong>
               </article>
-              <article className="orders-guardian-report-stat">
-                <span>Actions exécutées</span>
-                <strong>{guardianReportStats.actionsExecuted}</strong>
+              <article className="hw-surface-alt p-3 text-center">
+                <span className="micro-label">Actions exécutées</span>
+                <strong className="block text-lg font-bold font-mono text-text mt-1">{guardianReportStats.actionsExecuted}</strong>
               </article>
-              <article className="orders-guardian-report-stat">
-                <span>Mode</span>
-                <strong>{guardianReportStats.dryRun ? 'dry-run' : 'live'}</strong>
+              <article className="hw-surface-alt p-3 text-center">
+                <span className="micro-label">Mode</span>
+                <strong className="block text-lg font-bold font-mono text-text mt-1">{guardianReportStats.dryRun ? 'dry-run' : 'live'}</strong>
               </article>
             </div>
             {guardianReportText && (
@@ -722,15 +728,13 @@ export function OrdersPage() {
         )}
       </section>
 
-      <section className="card orders-signal-card" id="orders-summary">
-        <div className="orders-signal-head">
-          <h3>Analyses Trading</h3>
-        </div>
-        <div className="orders-summary-grid">
+      <section className="hw-surface p-5" id="orders-summary">
+        <div className="section-header"><span className="section-title">TRADE_ANALYTICS</span></div>
+        <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
           {tradingSummaryCards.map((card) => (
-            <article key={card.label} className={`orders-summary-card ${card.tone}`}>
-              <span>{card.label}</span>
-              <strong>
+            <article key={card.label} className="hw-surface-alt p-3 text-center">
+              <span className="micro-label">{card.label}</span>
+              <strong className={`block text-lg font-bold font-mono mt-1 ${card.tone === 'up' ? 'text-success' : card.tone === 'down' ? 'text-danger' : 'text-text'}`}>
                 {card.value}
                 {card.suffix}
               </strong>
@@ -739,48 +743,45 @@ export function OrdersPage() {
         </div>
       </section>
 
-      <section className="orders-layout">
-        <aside className="card orders-left-rail">
-          <h3>Navigation</h3>
-          <nav className="orders-nav-menu" aria-label="Navigation ordres">
+      <section className="grid grid-cols-[200px_1fr_220px] gap-5">
+        <aside className="hw-surface p-4">
+          <div className="section-header"><span className="section-title">NAV_PANEL</span></div>
+          <nav className="flex flex-col gap-1" aria-label="Navigation ordres">
             <button
-              className={`orders-nav-item ${activePanel === 'analysis' ? 'active' : ''}`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${activePanel === 'analysis' ? 'bg-accent/10 text-accent border border-accent/20' : 'text-text-muted hover:text-text border border-transparent'}`}
               type="button"
               onClick={() => quickNavigate('orders-summary', 'analysis')}
             >
-              <span className="orders-nav-icon" aria-hidden>A</span>
-              <span className="orders-nav-label">Analyses Trading</span>
-              <span className="orders-nav-arrow" aria-hidden>&gt;</span>
+              <span className="w-5 h-5 rounded bg-surface-alt border border-border flex items-center justify-center text-[9px] font-bold">A</span>
+              <span>Analyses Trading</span>
             </button>
             <button
-              className={`orders-nav-item ${activePanel === 'metaapi' ? 'active' : ''}`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${activePanel === 'metaapi' ? 'bg-accent/10 text-accent border border-accent/20' : 'text-text-muted hover:text-text border border-transparent'}`}
               type="button"
               onClick={() => quickNavigate('orders-metaapi', 'metaapi')}
             >
-              <span className="orders-nav-icon" aria-hidden>M</span>
-              <span className="orders-nav-label">Trades MT5</span>
-              <span className="orders-nav-arrow" aria-hidden>&gt;</span>
+              <span className="w-5 h-5 rounded bg-surface-alt border border-border flex items-center justify-center text-[9px] font-bold">M</span>
+              <span>Trades MT5</span>
             </button>
             <button
-              className={`orders-nav-item ${activePanel === 'queue' ? 'active' : ''}`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${activePanel === 'queue' ? 'bg-accent/10 text-accent border border-accent/20' : 'text-text-muted hover:text-text border border-transparent'}`}
               type="button"
               onClick={() => quickNavigate('orders-platform', 'queue')}
             >
-              <span className="orders-nav-icon" aria-hidden>F</span>
-              <span className="orders-nav-label">File ordres</span>
-              <span className="orders-nav-arrow" aria-hidden>&gt;</span>
+              <span className="w-5 h-5 rounded bg-surface-alt border border-border flex items-center justify-center text-[9px] font-bold">F</span>
+              <span>File ordres</span>
             </button>
           </nav>
-          <div className="orders-left-rail-meta">
-            <p>BUY: <strong>{buyCount}</strong></p>
-            <p>SELL: <strong>{sellCount}</strong></p>
-            <p>Pending: <strong>{openOrders.length}</strong></p>
+          <div className="mt-4 pt-3 border-t border-border space-y-1">
+            <p className="text-[10px] font-mono text-text-muted">BUY: <strong className="text-success">{buyCount}</strong></p>
+            <p className="text-[10px] font-mono text-text-muted">SELL: <strong className="text-danger">{sellCount}</strong></p>
+            <p className="text-[10px] font-mono text-text-muted">Pending: <strong className="text-text">{openOrders.length}</strong></p>
           </div>
         </aside>
 
-        <div className="orders-main-column">
-          <section className="card open-orders-card orders-chart-card" id="orders-chart">
-            <h2>Ordres ouverts (TradingView)</h2>
+        <div className="flex flex-col gap-5">
+          <section className="hw-surface p-5" id="orders-chart">
+            <div className="section-header"><span className="section-title">OPEN_ORDERS // TRADINGVIEW</span></div>
             {metaFeatureDisabled ? (
               <>
                 <p className="model-source">
@@ -790,48 +791,45 @@ export function OrdersPage() {
               </>
             ) : (
               <>
-                <p className="model-source open-orders-source">
+                <p className="model-source">
                   Sources: positions <code>{openPositionsProvider || 'unknown'}</code> | ordres <code>{openOrdersProvider || 'unknown'}</code>
                 </p>
-                <div className="form-grid inline open-orders-filter-row">
-                  <div className="open-orders-meta-stack">
-                    <p className="model-source open-orders-meta" data-testid="open-orders-chart-filter">
+                <div className="flex flex-wrap items-center justify-between gap-3 mt-2">
+                  <div className="space-y-1">
+                    <p className="model-source" data-testid="open-orders-chart-filter">
                       Filtre actif: <code>{selectedChartTicket ?? 'Tous les ordres'}</code>
                     </p>
-                    <p className="model-source open-orders-meta" data-testid="open-orders-chart-context">
+                    <p className="model-source" data-testid="open-orders-chart-context">
                       Symbole: <code>{chartSelection.displaySymbol ?? '-'}</code> | Timeframe: <code>{chartSelection.timeframe ?? '-'}</code>{' '}
                       {chartTimeframeOverride ? '' : `(auto: ${chartSelection.autoTimeframe ?? '-'})`} | Provider marché: <code>{marketProvider || 'unknown'}</code>
                     </p>
                   </div>
-                  <div className="open-orders-meta-stack open-orders-meta-stack--right">
-                    <p className="model-source open-orders-meta" data-testid="open-orders-chart-timer">
+                  <div className="space-y-1 text-right">
+                    <p className="model-source" data-testid="open-orders-chart-timer">
                       Timer bougie ({chartSelection.timeframe ?? '-'}): <code>{chartCountdownLabel}</code> | Prochaine MAJ: <code>{chartNextRefreshAtLabel}</code>
                     </p>
-                    <label className="open-orders-timeframe-control">
-                      Timeframe graphique
+                    <div className="flex items-center gap-2 justify-end">
+                      <label className="micro-label">Timeframe graphique</label>
                       <select
                         aria-label="Timeframe graphique"
                         value={chartTimeframeOverride}
                         onChange={(e) => setChartTimeframeOverride(e.target.value)}
                         disabled={!chartSelection.symbol}
+                        className="w-auto"
                       >
                         <option value="">Auto (TF ouverture)</option>
                         {DEFAULT_TIMEFRAMES.map((item) => (
                           <option key={item} value={item}>{item}</option>
                         ))}
                       </select>
-                    </label>
+                    </div>
                   </div>
                 </div>
-                {marketLoading && marketCandles.length > 0 && <p className="model-source open-orders-status">Mise à jour de la courbe...</p>}
-                {marketError && <p className="alert">{marketError}</p>}
+                {marketLoading && marketCandles.length > 0 && <p className="model-source mt-2">Mise à jour de la courbe...</p>}
+                {marketError && <p className="alert mt-2">{marketError}</p>}
                 {marketLoading && marketCandles.length === 0 ? (
-                  <div className="open-orders-chart-skeleton" data-testid="open-orders-chart-skeleton" aria-label="Chargement graphique ordres ouverts">
-                    <div className="open-orders-chart-skeleton-meta">
-                      <span className="skeleton-block skeleton-line skeleton-w-35" />
-                      <span className="skeleton-block skeleton-line skeleton-w-55" />
-                    </div>
-                    <div className="skeleton-block open-orders-chart-skeleton-canvas" />
+                  <div className="h-64 bg-bg rounded-lg border border-border flex items-center justify-center mt-3" data-testid="open-orders-chart-skeleton" aria-label="Chargement graphique ordres ouverts">
+                    <span className="text-text-muted text-xs font-mono animate-pulse">Chargement graphique...</span>
                   </div>
                 ) : (
                   <OpenOrdersChart
@@ -846,8 +844,8 @@ export function OrdersPage() {
             )}
           </section>
 
-          <section className="card" id="orders-metaapi">
-            <h2>Trades réels MT5 (MetaApi)</h2>
+          <section className="hw-surface p-5" id="orders-metaapi">
+            <div className="section-header"><span className="section-title">REAL_TRADES // MT5_METAAPI</span></div>
             {metaFeatureDisabled ? (
               <>
                 <p className="model-source">
@@ -862,7 +860,7 @@ export function OrdersPage() {
                 </p>
                 {metaError && <p className="alert">{metaError}</p>}
 
-                <h3>Ordres ouverts MT5 (MetaApi)</h3>
+                <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mt-4 mb-2">OPEN_POSITIONS_MT5</span>
                 <p className="model-source">
                   Provider positions: <code>{openPositionsProvider || 'unknown'}</code>
                 </p>
@@ -874,7 +872,7 @@ export function OrdersPage() {
                   onToggleTicket={(ticket) => setSelectedChartTicket((prev) => (prev === ticket ? null : ticket))}
                 />
 
-                <h3>Ordres en attente MT5 MetaApi</h3>
+                <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mt-4 mb-2">PENDING_ORDERS_MT5</span>
                 <p className="model-source">
                   Provider ordres: <code>{openOrdersProvider || 'unknown'}</code>
                 </p>
@@ -890,7 +888,7 @@ export function OrdersPage() {
                   <RealTradesCharts deals={deals} historyOrders={historyOrders} />
                 </Suspense>
 
-                <h3>Deals exécutés</h3>
+                <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mt-4 mb-2">EXECUTED_DEALS</span>
                 <DealsTable
                   metaLoading={metaLoading}
                   deals={deals}
@@ -905,8 +903,8 @@ export function OrdersPage() {
             )}
           </section>
 
-          <section className="card" id="orders-platform">
-            <h2>Ordres plateforme</h2>
+          <section className="hw-surface p-5" id="orders-platform">
+            <div className="section-header"><span className="section-title">PLATFORM_ORDERS</span></div>
             <PlatformOrdersTable
               bootstrapLoading={bootstrapLoading}
               orders={orders}
@@ -920,31 +918,31 @@ export function OrdersPage() {
           </section>
         </div>
 
-        <aside className="orders-right-column">
-          <section className="card orders-side-card">
-            <h3>File ordres</h3>
+        <aside className="flex flex-col gap-5">
+          <section className="hw-surface p-4">
+            <div className="section-header"><span className="section-title">ORDER_QUEUE</span></div>
             <p className="model-source">
               MAJ live: {Math.max(1, Math.round(liveExposurePollMs / 1000))}s (onglet visible)
             </p>
-            <div className="orders-watchlist">
+            <div className="space-y-2">
               {watchlist.rows.length === 0 ? (
                 <p className="model-source">Aucun symbole actif.</p>
               ) : (
                 <>
                   {watchlist.rows.map((row) => (
-                    <p key={row.symbol}>
-                      <span>{row.symbol}</span>
-                      <span>{row.last > 0 ? row.last.toFixed(5) : '-'}</span>
-                      <strong className={row.pnl >= 0 ? 'ok-text' : 'danger-text'}>{formatSigned(row.pnl)}</strong>
-                    </p>
+                    <div key={row.symbol} className="flex items-center justify-between text-[10px] font-mono">
+                      <span className="text-text">{row.symbol}</span>
+                      <span className="text-text-muted">{row.last > 0 ? row.last.toFixed(5) : '-'}</span>
+                      <strong className={row.pnl >= 0 ? 'text-success' : 'text-danger'}>{formatSigned(row.pnl)}</strong>
+                    </div>
                   ))}
-                  <p className="orders-watchlist-total">
-                    <span>Total</span>
-                    <span>{watchlist.totalOrders} ordres</span>
-                    <strong className={watchlist.totalPnl >= 0 ? 'ok-text' : 'danger-text'}>
+                  <div className="flex items-center justify-between text-[10px] font-mono pt-2 border-t border-border">
+                    <span className="text-text font-semibold">Total</span>
+                    <span className="text-text-muted">{watchlist.totalOrders} ordres</span>
+                    <strong className={watchlist.totalPnl >= 0 ? 'text-success' : 'text-danger'}>
                       {formatSigned(watchlist.totalPnl)}
                     </strong>
-                  </p>
+                  </div>
                 </>
               )}
             </div>

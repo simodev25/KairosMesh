@@ -62,15 +62,15 @@ export function DealsTable({
       </table>
 
       {deals.length > 0 && (
-        <div className="table-pagination">
-          <p className="table-pagination-meta">
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
+          <span className="text-[10px] font-mono text-text-muted">
             {(dealsPage - 1) * dealsPerPage + 1}-{Math.min(deals.length, dealsPage * dealsPerPage)} sur {deals.length}
-          </p>
-          <div className="table-pagination-actions">
+          </span>
+          <div className="flex items-center gap-2">
             <button className="btn-ghost btn-small" type="button" disabled={dealsPage <= 1} onClick={onPreviousPage}>
               Précédent
             </button>
-            <span>
+            <span className="text-[10px] font-mono text-text-muted">
               Page {dealsPage} / {dealsTotalPages} ({dealsPerPage} par page)
             </span>
             <button className="btn-ghost btn-small" type="button" disabled={dealsPage >= dealsTotalPages} onClick={onNextPage}>

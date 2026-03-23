@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, wsRunUrl } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
+import { Download, FileJson, Layers, Radio, Server, Info } from 'lucide-react';
 import type {
   AgentStep,
   InstrumentDescriptor,
@@ -472,7 +473,7 @@ export function RunDetailPage() {
   }, [token, runId]);
 
   if (error) return <div className="alert">{error}</div>;
-  if (!run) return <div>Chargement...</div>;
+  if (!run) return <div className="loading-screen">Chargement...</div>;
 
   const instrument = instrumentPanel?.instrument ?? null;
   const providerResolution = instrumentPanel?.providerResolution ?? null;
@@ -519,15 +520,18 @@ export function RunDetailPage() {
   };
 
   return (
-    <div className="dashboard-grid">
-      <section className="card primary">
-        <div className="run-detail-header">
+    <div className="flex flex-col gap-5">
+      {/* ── Header + Decision ─────────────────────────── */}
+      <section className="hw-surface p-5">
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h2>Run #{run.id} - {instrumentTitle} {run.timeframe}</h2>
-            <div className="run-header-meta">
-              <span>Symbole brut: <code>{run.pair}</code></span>
-              {instrument?.asset_class ? <span>Asset class: <code>{humanizeValue(instrument.asset_class)}</code></span> : null}
-              {instrument?.instrument_type ? <span>Instrument type: <code>{humanizeValue(instrument.instrument_type)}</code></span> : null}
+            <span className="text-[11px] font-bold tracking-[0.12em] text-text uppercase">
+              RUN_#{run.id} // {instrumentTitle} // {run.timeframe}
+            </span>
+            <div className="flex flex-wrap gap-3 mt-1">
+              <span className="text-[10px] font-mono text-text-muted">Symbole brut: <code>{run.pair}</code></span>
+              {instrument?.asset_class ? <span className="text-[10px] font-mono text-text-muted">Asset class: <code>{humanizeValue(instrument.asset_class)}</code></span> : null}
+              {instrument?.instrument_type ? <span className="text-[10px] font-mono text-text-muted">Instrument type: <code>{humanizeValue(instrument.instrument_type)}</code></span> : null}
             </div>
           </div>
           <button
@@ -537,83 +541,53 @@ export function RunDetailPage() {
             disabled={llmStepExports.length === 0}
             title={llmStepExports.length === 0 ? 'Aucune analyse LLM detectee sur ce run' : 'Telecharger toutes les analyses LLM'}
           >
-            Télécharger analyses LLM ({llmStepExports.length})
+            <Download className="w-3.5 h-3.5" />
+            LLM ({llmStepExports.length})
           </button>
         </div>
-        <p>
-          Status: <span className={`badge ${run.status}`}>{run.status}</span>
-        </p>
-        <h3>Decision finale</h3>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="micro-label">Status:</span>
+          <span className={`badge ${run.status}`}>{run.status}</span>
+        </div>
+        <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mb-2">FINAL_DECISION</span>
         <pre className="json-view">{asPrettyJson(run.decision)}</pre>
       </section>
 
-      <section className="card instrument-summary-card">
-        <h3>Instrument & résolution</h3>
-        <div className="instrument-meta-grid">
-          <div className="instrument-meta-item">
-            <span>Symbole brut</span>
-            <strong>{run.pair}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Symbole canonique</span>
-            <strong>{instrument?.canonical_symbol ?? '-'}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Display symbol</span>
-            <strong>{instrument?.display_symbol ?? '-'}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Asset class</span>
-            <strong>{humanizeValue(instrument?.asset_class)}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Instrument type</span>
-            <strong>{humanizeValue(instrument?.instrument_type)}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Primary asset</span>
-            <strong>{instrument?.primary_asset ?? instrument?.base_asset ?? '-'}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Secondary asset</span>
-            <strong>{instrument?.secondary_asset ?? instrument?.quote_asset ?? '-'}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Reference asset</span>
-            <strong>{instrument?.reference_asset ?? '-'}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Marché / venue</span>
-            <strong>{instrument?.market ?? instrument?.venue ?? instrument?.exchange ?? '-'}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Provider</span>
-            <strong>{providerResolution?.provider ?? instrument?.provider ?? '-'}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Provider symbol</span>
-            <strong>{resolvedProviderSymbol}</strong>
-          </div>
-          <div className="instrument-meta-item">
-            <span>Timeframe</span>
-            <strong>{run.timeframe}</strong>
-          </div>
+      {/* ── Instrument & resolution ───────────────────── */}
+      <section className="hw-surface p-5">
+        <div className="section-header">
+          <span className="section-title">INSTRUMENT_RESOLUTION</span>
+          <Info className="section-icon" />
         </div>
-
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {[
+            ['Symbole brut', run.pair],
+            ['Symbole canonique', instrument?.canonical_symbol ?? '-'],
+            ['Display symbol', instrument?.display_symbol ?? '-'],
+            ['Asset class', humanizeValue(instrument?.asset_class)],
+            ['Instrument type', humanizeValue(instrument?.instrument_type)],
+            ['Primary asset', instrument?.primary_asset ?? instrument?.base_asset ?? '-'],
+            ['Secondary asset', instrument?.secondary_asset ?? instrument?.quote_asset ?? '-'],
+            ['Reference asset', instrument?.reference_asset ?? '-'],
+            ['Marché / venue', instrument?.market ?? instrument?.venue ?? instrument?.exchange ?? '-'],
+            ['Provider', providerResolution?.provider ?? instrument?.provider ?? '-'],
+            ['Provider symbol', resolvedProviderSymbol],
+            ['Timeframe', run.timeframe],
+          ].map(([label, value]) => (
+            <div key={label} className="hw-surface-alt p-3">
+              <span className="micro-label">{label}</span>
+              <div className="text-xs font-semibold font-mono text-text mt-1">{value}</div>
+            </div>
+          ))}
+        </div>
         {resolutionPath ? (
-          <p className="model-source">
-            Résolution provider: <code>{resolutionPath}</code>
-          </p>
+          <p className="model-source mt-3">Résolution provider: <code>{resolutionPath}</code></p>
         ) : null}
         {instrumentPanel?.instrumentSources.length ? (
-          <p className="model-source">
-            Sources instrument: <code>{instrumentPanel.instrumentSources.join(' | ')}</code>
-          </p>
+          <p className="model-source">Sources instrument: <code>{instrumentPanel.instrumentSources.join(' | ')}</code></p>
         ) : null}
         {instrumentPanel?.providerSources.length ? (
-          <p className="model-source">
-            Sources résolution: <code>{instrumentPanel.providerSources.join(' | ')}</code>
-          </p>
+          <p className="model-source">Sources résolution: <code>{instrumentPanel.providerSources.join(' | ')}</code></p>
         ) : null}
         {instrument?.classification_trace ? (
           <details className="trace-details">
@@ -629,41 +603,49 @@ export function RunDetailPage() {
         ) : null}
       </section>
 
-      <section className="card">
-        <h3>Étapes agents</h3>
-        <div className="steps-list">
+      {/* ── Agent steps ───────────────────────────────── */}
+      <section className="hw-surface p-5">
+        <div className="section-header">
+          <span className="section-title">AGENT_STEPS</span>
+          <Layers className="section-icon" />
+        </div>
+        <div className="flex flex-col gap-3">
           {run.steps.map((step) => (
-            <article key={step.id} className="step-card">
-              <header className="step-header">
-                <strong>{step.agent_name}</strong>
+            <article key={step.id} className="hw-surface-alt p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold font-mono text-text">{step.agent_name}</span>
                 <span className={`badge ${step.status}`}>{step.status}</span>
-              </header>
+              </div>
               <pre className="json-view">{asPrettyJson(step.output_payload)}</pre>
             </article>
           ))}
         </div>
       </section>
 
-      <section className="card">
-        <h3>Sessions runtime</h3>
-        <div className="steps-list">
-          {runtimeSessions.length === 0 ? <p>Aucune session runtime.</p> : null}
+      {/* ── Runtime sessions ──────────────────────────── */}
+      <section className="hw-surface p-5">
+        <div className="section-header">
+          <span className="section-title">RUNTIME_SESSIONS</span>
+          <Server className="section-icon" />
+        </div>
+        <div className="flex flex-col gap-3">
+          {runtimeSessions.length === 0 ? <p className="text-xs text-text-muted">Aucune session runtime.</p> : null}
           {runtimeSessions.map((session) => (
-            <article key={session.session_key} className="step-card">
-              <header className="step-header">
-                <strong>{session.label ?? session.name ?? session.session_key}</strong>
+            <article key={session.session_key} className="hw-surface-alt p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold font-mono text-text">{session.label ?? session.name ?? session.session_key}</span>
                 <span className={`badge ${session.status}`}>{session.status}</span>
-              </header>
+              </div>
               <pre className="json-view">{asPrettyJson(session)}</pre>
               {runtimeSessionHistory[session.session_key]?.length ? (
-                <div className="steps-list">
+                <div className="flex flex-col gap-2 mt-3 pl-3 border-l-2 border-border">
                   {runtimeSessionHistory[session.session_key].map((message) => (
-                    <article key={message.id} className="step-card">
-                      <header className="step-header">
-                        <strong>{message.role}</strong>
+                    <article key={message.id} className="hw-surface-alt p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-bold font-mono text-text">{message.role}</span>
                         <span className="badge completed">msg {message.id}</span>
-                      </header>
-                      {message.sender_session_key ? <p><code>{message.sender_session_key}</code></p> : null}
+                      </div>
+                      {message.sender_session_key ? <p className="text-[10px] font-mono text-text-muted mb-1"><code>{message.sender_session_key}</code></p> : null}
                       <pre className="json-view">{asPrettyJson(message)}</pre>
                     </article>
                   ))}
@@ -674,28 +656,36 @@ export function RunDetailPage() {
         </div>
       </section>
 
-      <section className="card">
-        <h3>Événements runtime</h3>
-        <div className="steps-list">
-          {runtimeEvents.length === 0 ? <p>Aucun événement runtime.</p> : null}
+      {/* ── Runtime events ────────────────────────────── */}
+      <section className="hw-surface p-5">
+        <div className="section-header">
+          <span className="section-title">RUNTIME_EVENTS</span>
+          <Radio className="section-icon" />
+        </div>
+        <div className="flex flex-col gap-3">
+          {runtimeEvents.length === 0 ? <p className="text-xs text-text-muted">Aucun événement runtime.</p> : null}
           {runtimeEvents.map((event) => (
-            <article key={event.id} className="step-card">
-              <header className="step-header">
-                <strong>
+            <article key={event.id} className="hw-surface-alt p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold font-mono text-text">
                   {getRuntimeEventStream(event)} / {event.name}
                   {getRuntimeEventPhase(event) ? ` / ${getRuntimeEventPhase(event)}` : ''}
-                </strong>
+                </span>
                 <span className="badge completed">seq {event.seq ?? event.id}</span>
-              </header>
-              {getRuntimeEventSessionKey(event) ? <p><code>{getRuntimeEventSessionKey(event)}</code></p> : null}
+              </div>
+              {getRuntimeEventSessionKey(event) ? <p className="text-[10px] font-mono text-text-muted mb-1"><code>{getRuntimeEventSessionKey(event)}</code></p> : null}
               <pre className="json-view">{asPrettyJson(getRuntimeEventData(event))}</pre>
             </article>
           ))}
         </div>
       </section>
 
-      <section className="card">
-        <h3>Trace run</h3>
+      {/* ── Full trace ────────────────────────────────── */}
+      <section className="hw-surface p-5">
+        <div className="section-header">
+          <span className="section-title">RAW_TRACE</span>
+          <FileJson className="section-icon" />
+        </div>
         <pre className="json-view">{asPrettyJson(run.trace)}</pre>
       </section>
     </div>

@@ -247,6 +247,57 @@ class RiskEngine:
             asset_class=ac,
         )
 
+    def calculate_position_size(
+        self,
+        asset_class: str,
+        entry_price: float,
+        stop_loss: float,
+        risk_percent: float,
+        equity: float = 10000.0,
+        leverage: float = 1.0,
+        pair: str | None = None,
+    ) -> dict[str, Any]:
+        """Standalone position sizing using the canonical contract specs.
+
+        This is the **single source of truth** for position sizing across the
+        platform.  The MCP ``position_size_calculator`` tool delegates here so
+        that specs are never duplicated.
+        """
+        ac = self._resolve_asset_class(pair, asset_class)
+        spec = _CONTRACT_SPECS.get(ac, _CONTRACT_SPECS.get('forex', {}))
+        stop_distance = abs(entry_price - stop_loss)
+
+        if stop_distance <= 0:
+            return {'error': 'stop_loss_same_as_entry', 'suggested_volume': 0.0}
+
+        pip_size = self._pip_size(pair, entry_price, ac)
+        pip_value = self._pip_value_per_lot(pair, ac)
+        min_vol, max_vol = self._volume_limits(pair, ac)
+        contract_size = float(spec.get('contract_size', 100_000))
+
+        risk_amount = equity * (risk_percent / 100.0)
+        sl_pips = max(stop_distance / pip_size, 0.1) if pip_size > 0 else 0.1
+        raw_volume = risk_amount / (sl_pips * pip_value) if pip_value > 0 else min_vol
+
+        suggested = max(min(raw_volume, max_vol), min_vol)
+
+        effective_leverage = leverage if leverage > 0 else 1.0
+        margin_required = (suggested * contract_size * entry_price) / effective_leverage
+        margin_ok = margin_required <= equity
+
+        return {
+            'suggested_volume': round(suggested, 4),
+            'sl_pips': round(sl_pips, 2),
+            'pip_size': pip_size,
+            'pip_value_per_lot': round(pip_value, 4),
+            'risk_amount': round(risk_amount, 2),
+            'margin_required': round(margin_required, 2),
+            'margin_ok': margin_ok,
+            'asset_class': ac,
+            'max_volume': max_vol,
+            'min_volume': min_vol,
+        }
+
     def validate_sl_tp_update(
         self,
         mode: str,

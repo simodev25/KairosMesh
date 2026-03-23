@@ -267,6 +267,8 @@ class AgenticTradingRuntime:
             memory_context=state.context.get('memory_context') if isinstance(state.context.get('memory_context'), list) else [],
             memory_signal=state.context.get('memory_signal') if isinstance(state.context.get('memory_signal'), dict) else {},
             llm_model_overrides={},
+            price_history=state.context.get('_price_history') if isinstance(state.context.get('_price_history'), list) else [],
+            multi_tf_snapshots=state.context.get('_multi_tf_snapshots') if isinstance(state.context.get('_multi_tf_snapshots'), dict) else {},
         )
 
     @staticmethod
@@ -1133,7 +1135,7 @@ class AgenticTradingRuntime:
             trace_payload = run.trace if isinstance(run.trace, dict) else {}
             trace_payload = {
                 **trace_payload,
-                'market': state.context.get('market', {}),
+                'market': self._json_safe(state.context.get('market', {})),
                 'news': state.context.get('news', {}),
                 'analysis_outputs': analysis_outputs,
                 'bullish': bullish,
@@ -1222,7 +1224,7 @@ class AgenticTradingRuntime:
             failed_trace = run.trace if isinstance(run.trace, dict) else {}
             failed_trace = {
                 **failed_trace,
-                'market': state.context.get('market', {}),
+                'market': self._json_safe(state.context.get('market', {})),
                 'news': state.context.get('news', {}),
                 'analysis_outputs': self._analysis_outputs(state),
                 'bullish': state.artifacts.get('bullish') if isinstance(state.artifacts.get('bullish'), dict) else {},
@@ -1285,8 +1287,18 @@ class AgenticTradingRuntime:
             metaapi_account_ref=metaapi_account_ref,
         )
         news = self.orchestrator.market_provider.get_news_context(run.pair)
+        raw_candles = market.pop('_raw_candles', [])
+        multi_tf_snapshots = await self.orchestrator._fetch_multi_tf_snapshots(
+            db,
+            pair=run.pair,
+            current_timeframe=run.timeframe,
+            symbol=str(market.get('symbol') or run.pair),
+            metaapi_account_ref=metaapi_account_ref,
+        )
         state.context['market'] = market
         state.context['news'] = news
+        state.context['_price_history'] = raw_candles
+        state.context['_multi_tf_snapshots'] = multi_tf_snapshots
         return {'market': market, 'news': news}
 
     async def _tool_load_memory_context(

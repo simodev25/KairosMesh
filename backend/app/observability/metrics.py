@@ -142,6 +142,26 @@ memory_outcome_backfill_total = Counter(
 # ---------------------------------------------------------------------------
 # Risk engine metrics
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Trading decision quality metrics
+# ---------------------------------------------------------------------------
+debate_impact_abs = Histogram(
+    'debate_impact_abs',
+    'Absolute debate_score contribution to combined_score (measures debate value)',
+    ['decision', 'strong_conflict'],
+    buckets=(0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12),
+)
+contradiction_detection_total = Counter(
+    'contradiction_detection_total',
+    'Trend/momentum contradiction detections',
+    ['level'],
+)
+decision_gate_blocks_total = Counter(
+    'decision_gate_blocks_total',
+    'Decision gate blocks that forced HOLD',
+    ['gate'],
+)
+
 risk_evaluation_total = Counter(
     'risk_evaluation_total',
     'Risk engine evaluations',

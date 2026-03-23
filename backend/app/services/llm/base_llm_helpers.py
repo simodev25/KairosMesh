@@ -35,9 +35,15 @@ def normalize_messages(
             if role not in {'system', 'user', 'assistant', 'tool'}:
                 continue
             payload: dict[str, Any] = {'role': role}
+            has_tool_calls = role == 'assistant' and isinstance(message.get('tool_calls'), list)
             if 'content' in message:
-                payload['content'] = message.get('content')
-            if role == 'assistant' and isinstance(message.get('tool_calls'), list):
+                content = message.get('content')
+                # OpenAI rejects assistant messages with empty content + tool_calls;
+                # normalise to None so the API receives a valid payload.
+                if has_tool_calls and isinstance(content, str) and not content.strip():
+                    content = None
+                payload['content'] = content
+            if has_tool_calls:
                 payload['tool_calls'] = message.get('tool_calls')
             if role == 'tool':
                 tool_call_id = message.get('tool_call_id')

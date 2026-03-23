@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import json
 import math
@@ -92,8 +93,8 @@ class TradingOrchestrator:
             run_id=run.id,
             agent_name=agent_name,
             status='completed',
-            input_payload=input_payload,
-            output_payload=output_payload,
+            input_payload=self._json_safe(input_payload),
+            output_payload=self._json_safe(output_payload),
         )
         db.add(step)
         db.flush()
@@ -124,12 +125,18 @@ class TradingOrchestrator:
         orchestrator_step_duration_seconds.labels(agent=agent_name).observe(elapsed)
         return output
 
+    _JSON_SAFE_DROP_KEYS: frozenset[str] = frozenset({'_raw_candles'})
+
     @staticmethod
     def _json_safe(value: Any) -> Any:
         if value is None or isinstance(value, (str, int, float, bool)):
             return value
         if isinstance(value, dict):
-            return {str(key): TradingOrchestrator._json_safe(item) for key, item in value.items()}
+            return {
+                str(key): TradingOrchestrator._json_safe(item)
+                for key, item in value.items()
+                if key not in TradingOrchestrator._JSON_SAFE_DROP_KEYS
+            }
         if isinstance(value, (list, tuple, set)):
             return [TradingOrchestrator._json_safe(item) for item in value]
         if hasattr(value, 'isoformat'):
@@ -667,6 +674,7 @@ class TradingOrchestrator:
                 },
             )
 
+        snapshot['_raw_candles'] = metaapi_market.get('candles', []) if isinstance(metaapi_market.get('candles'), list) else []
         snapshot['market_data_source'] = 'metaapi'
         snapshot['market_data_provider'] = metaapi_market.get('provider')
         snapshot['requested_symbol'] = metaapi_market.get('requested_symbol')
@@ -678,6 +686,48 @@ class TradingOrchestrator:
             selected_account.account_id if selected_account is not None else str(self.settings.metaapi_account_id or '').strip() or None
         )
         return snapshot
+
+    async def _fetch_multi_tf_snapshots(
+        self,
+        db: Session,
+        *,
+        pair: str,
+        current_timeframe: str,
+        symbol: str,
+        metaapi_account_ref: int | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        from app.services.orchestrator.agents import _higher_timeframes
+
+        higher_tfs = _higher_timeframes(current_timeframe, max_count=2)
+        if not higher_tfs:
+            return {}
+
+        async def _fetch_one(tf: str) -> tuple[str, dict[str, Any]]:
+            try:
+                candles = await self.resolve_recent_candles(
+                    db,
+                    pair=pair,
+                    timeframe=tf,
+                    limit=200,
+                    metaapi_account_ref=metaapi_account_ref,
+                )
+                if not candles:
+                    return tf, {'degraded': True, 'error': 'no candles', 'timeframe': tf}
+                raw = [
+                    {'open': c.get('open'), 'high': c.get('high'), 'low': c.get('low'), 'close': c.get('close'), 'time': c.get('ts', c.get('time', ''))}
+                    for c in candles if isinstance(c, dict)
+                ]
+                snapshot = self._build_snapshot_from_market_candles(
+                    pair=pair, timeframe=tf, candles=raw, symbol=symbol,
+                )
+                snapshot['timeframe'] = tf
+                return tf, snapshot
+            except Exception as exc:
+                logger.warning('multi_tf fetch failed tf=%s pair=%s: %s', tf, pair, exc)
+                return tf, {'degraded': True, 'error': str(exc), 'timeframe': tf}
+
+        results = await asyncio.gather(*[_fetch_one(tf) for tf in higher_tfs])
+        return dict(results)
 
     async def resolve_recent_candles(
         self,
@@ -1279,6 +1329,14 @@ class TradingOrchestrator:
             limit=memory_limit,
         )
 
+        raw_candles = market.pop('_raw_candles', [])
+        multi_tf_snapshots = await self._fetch_multi_tf_snapshots(
+            db,
+            pair=run.pair,
+            current_timeframe=run.timeframe,
+            symbol=str(market.get('symbol') or run.pair),
+            metaapi_account_ref=metaapi_account_ref,
+        )
         context = AgentContext(
             pair=run.pair,
             timeframe=run.timeframe,
@@ -1289,19 +1347,23 @@ class TradingOrchestrator:
             memory_context=memory_context,
             memory_signal=memory_signal,
             llm_model_overrides={},
+            price_history=raw_candles,
+            multi_tf_snapshots=multi_tf_snapshots,
         )
-        price_history: list[dict[str, Any]] = []
+        price_history: list[dict[str, Any]] = list(raw_candles) if raw_candles else []
         if self.settings.debug_trade_json_enabled and self.settings.debug_trade_json_include_price_history:
-            try:
-                price_history = await self.resolve_recent_candles(
-                    db,
-                    pair=run.pair,
-                    timeframe=run.timeframe,
-                    limit=self.settings.debug_trade_json_price_history_limit,
-                    metaapi_account_ref=metaapi_account_ref,
-                )
-            except Exception:
-                logger.exception('debug price history fetch failed run_id=%s', run_id)
+            debug_limit = self.settings.debug_trade_json_price_history_limit
+            if len(price_history) < debug_limit:
+                try:
+                    price_history = await self.resolve_recent_candles(
+                        db,
+                        pair=run.pair,
+                        timeframe=run.timeframe,
+                        limit=debug_limit,
+                        metaapi_account_ref=metaapi_account_ref,
+                    )
+                except Exception:
+                    logger.exception('debug price history fetch failed run_id=%s', run_id)
 
         try:
             autonomy_enabled = bool(self.settings.orchestrator_autonomy_enabled)
@@ -1554,7 +1616,7 @@ class TradingOrchestrator:
             run.status = 'completed'
             trace_payload = {
                 'trace_ids': trace_ctx.as_dict(),
-                'market': market,
+                'market': self._json_safe(market),
                 'news': news,
                 'analysis_outputs': analysis_outputs,
                 'bullish': bullish,
