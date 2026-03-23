@@ -39,9 +39,10 @@ export function useMetaTradingData(token: string | null) {
   const [initialMetaLoadDone, setInitialMetaLoadDone] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(true);
 
+  const [lastPositionUpdate, setLastPositionUpdate] = useState<Date | null>(null);
   const metaLoadingRef = useRef(false);
   const openExposureLoadingRef = useRef(false);
-  const openExposurePollTargetRef = useRef<'positions' | 'orders'>('positions');
+  const openExposurePollCycleRef = useRef(0);
   const openExposureCooldownUntilMsRef = useRef(0);
   const lastManualRefreshMsRef = useRef(0);
   const lastEventRefreshMsRef = useRef(0);
@@ -112,6 +113,7 @@ export function useMetaTradingData(token: string | null) {
           setOpenPositionsProvider(typeof openPositionsPayload.provider === 'string' ? openPositionsPayload.provider : '');
           setOpenPositionsError(openPositionsPayload.reason ?? null);
           registerRateLimitCooldown(openPositionsPayload.reason);
+          setLastPositionUpdate(new Date());
         } else {
           const message = openPositionsResult.reason instanceof Error ? openPositionsResult.reason.message : 'Unable to load MetaApi open positions';
           setOpenPositionsError(message);
@@ -149,6 +151,7 @@ export function useMetaTradingData(token: string | null) {
         setOpenPositionsProvider(typeof openPositionsPayload.provider === 'string' ? openPositionsPayload.provider : '');
         setOpenPositionsError(openPositionsPayload.reason ?? null);
         registerRateLimitCooldown(openPositionsPayload.reason);
+        setLastPositionUpdate(new Date());
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to load MetaApi open positions';
         setOpenPositionsError(message);

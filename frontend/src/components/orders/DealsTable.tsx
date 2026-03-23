@@ -54,7 +54,7 @@ export function DealsTable({
                 <td>{String(deal.type ?? deal.entryType ?? '-')}</td>
                 <td>{typeof deal.volume === 'number' ? deal.volume.toFixed(2) : '-'}</td>
                 <td>{typeof deal.price === 'number' ? deal.price.toFixed(5) : '-'}</td>
-                <td>{typeof deal.profit === 'number' ? deal.profit.toFixed(2) : '-'}</td>
+                <td className={typeof deal.profit === 'number' ? (deal.profit >= 0 ? 'text-success' : 'text-danger') : ''}>{typeof deal.profit === 'number' ? deal.profit.toFixed(2) : '-'}</td>
               </tr>
             ))
           )}

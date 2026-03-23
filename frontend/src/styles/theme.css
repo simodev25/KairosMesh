@@ -355,6 +355,8 @@ tbody td {
   white-space: nowrap;
   font-size: 11px;
 }
+tbody td.text-success { color: var(--color-success); }
+tbody td.text-danger { color: var(--color-danger); }
 
 tbody tr:hover {
   background: rgba(75, 123, 245, 0.04);

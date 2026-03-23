@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, wsRunUrl } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
-import { Download, FileJson, Layers, Radio, Server, Info } from 'lucide-react';
+import { Download, FileJson, Layers, Radio, Server, Info, ChevronDown, Copy, Check } from 'lucide-react';
 import type {
   AgentStep,
   InstrumentDescriptor,
@@ -312,6 +312,198 @@ function buildLlmStepExport(step: AgentStep) {
   };
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="w-7 h-7 rounded-md flex items-center justify-center border border-[#2A2B2F] bg-[#0D0D0F] hover:border-[#3A3B40] transition-colors shrink-0"
+      title="Copier JSON"
+    >
+      {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-[#4A4B50]" />}
+    </button>
+  );
+}
+
+function ExpansionPanel({
+  title,
+  icon: Icon,
+  defaultOpen = false,
+  headerRight,
+  copyText,
+  children,
+}: {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  defaultOpen?: boolean;
+  headerRight?: React.ReactNode;
+  copyText?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="hw-surface overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="w-full flex items-center justify-between px-5 py-3 border-b border-border hover:bg-surface-alt/30 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <Icon className="w-4 h-4 text-[#4A4B50]" />
+          <span className="text-[10px] font-bold text-[#8E9299] uppercase tracking-[0.2em]">{title}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {headerRight}
+          {copyText && <CopyButton text={copyText} />}
+          <ChevronDown className={`w-4 h-4 text-[#4A4B50] transition-transform duration-200 ${open ? '' : '-rotate-90'}`} />
+        </div>
+      </button>
+      {open && <div className="p-5">{children}</div>}
+    </section>
+  );
+}
+
+function AgentStepPanel({ step, jsonText }: { step: AgentStep; jsonText: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="hw-surface-alt overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-surface-raised/40 transition-colors"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-[10px] font-bold text-text-muted tracking-[0.1em] uppercase truncate">
+            {step.agent_name}
+          </span>
+          <span className={`badge ${step.status}`}>{step.status}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] text-[#4A4B50] tabular-nums shrink-0">{step.created_at}</span>
+          <CopyButton text={jsonText} />
+          <ChevronDown className={`w-3.5 h-3.5 text-[#4A4B50] transition-transform duration-200 ${open ? '' : '-rotate-90'}`} />
+        </div>
+      </button>
+      {open && (
+        <div className="px-4 pb-4">
+          {step.error && <div className="alert mb-3">{step.error}</div>}
+          <pre className="json-view">{jsonText}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionPanel({ session, history }: { session: RuntimeSessionEntry; history: RuntimeSessionMessage[] }) {
+  const [open, setOpen] = useState(false);
+  const sessionJson = asPrettyJson(session);
+  const label = session.label ?? session.name ?? session.session_key;
+  return (
+    <div className="hw-surface-alt overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-surface-raised/40 transition-colors"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-[10px] font-bold text-text-muted tracking-[0.1em] uppercase truncate">
+            {label}
+          </span>
+          <span className={`badge ${session.status}`}>{session.status}</span>
+          {session.depth != null && (
+            <span className="text-[9px] text-[#4A4B50]">depth:{session.depth}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <CopyButton text={sessionJson} />
+          <ChevronDown className={`w-3.5 h-3.5 text-[#4A4B50] transition-transform duration-200 ${open ? '' : '-rotate-90'}`} />
+        </div>
+      </button>
+      {open && (
+        <div className="px-4 pb-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            {[
+              ['Role', session.role ?? '-'],
+              ['Mode', session.mode ?? '-'],
+              ['Phase', session.current_phase ?? '-'],
+              ['Turn', session.turn != null ? String(session.turn) : '-'],
+            ].map(([lbl, val]) => (
+              <div key={lbl} className="bg-bg rounded-lg p-2">
+                <span className="text-[8px] text-[#4A4B50] tracking-[0.12em] uppercase">{lbl}</span>
+                <div className="text-[10px] font-semibold text-text mt-0.5">{val}</div>
+              </div>
+            ))}
+          </div>
+          {history.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[9px] font-bold text-[#4A4B50] tracking-[0.12em] uppercase mb-1">MESSAGE_HISTORY ({history.length})</span>
+              {history.map((msg) => (
+                <div key={msg.id} className="bg-bg rounded-lg p-3 border border-border">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-[9px] font-bold tracking-[0.1em] uppercase ${msg.role === 'assistant' ? 'text-accent' : 'text-text-muted'}`}>
+                      {msg.role}
+                    </span>
+                    <span className="text-[8px] text-[#4A4B50] tabular-nums">{msg.created_at}</span>
+                  </div>
+                  <pre className="text-[10px] text-text whitespace-pre-wrap break-words bg-transparent border-none p-0 m-0">{msg.content}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+          <details className="trace-details mt-3">
+            <summary>Session JSON</summary>
+            <pre className="json-view">{sessionJson}</pre>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EventPanel({ event }: { event: RuntimeEvent }) {
+  const [open, setOpen] = useState(false);
+  const eventJson = asPrettyJson(event);
+  const stream = getRuntimeEventStream(event);
+  const phase = getRuntimeEventPhase(event);
+  const sessionKey = getRuntimeEventSessionKey(event);
+  return (
+    <div className="hw-surface-alt overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-surface-raised/40 transition-colors"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-[9px] font-bold text-[#4A4B50] tabular-nums shrink-0">#{event.id}</span>
+          <span className="text-[10px] font-bold text-text-muted tracking-[0.1em] uppercase truncate">
+            {event.name}
+          </span>
+          <span className="terminal-tag terminal-tag-blue">{stream}</span>
+          {phase && <span className="text-[9px] text-[#4A4B50]">{phase}</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          {sessionKey && <span className="text-[9px] text-[#4A4B50] truncate max-w-[120px]">{sessionKey}</span>}
+          <CopyButton text={eventJson} />
+          <ChevronDown className={`w-3.5 h-3.5 text-[#4A4B50] transition-transform duration-200 ${open ? '' : '-rotate-90'}`} />
+        </div>
+      </button>
+      {open && (
+        <div className="px-4 pb-4">
+          <pre className="json-view">{eventJson}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RunDetailPage() {
   const { runId = '' } = useParams();
   const { token } = useAuth();
@@ -549,16 +741,15 @@ export function RunDetailPage() {
           <span className="micro-label">Status:</span>
           <span className={`badge ${run.status}`}>{run.status}</span>
         </div>
-        <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mb-2">FINAL_DECISION</span>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase">FINAL_DECISION</span>
+          <CopyButton text={asPrettyJson(run.decision)} />
+        </div>
         <pre className="json-view">{asPrettyJson(run.decision)}</pre>
       </section>
 
       {/* ── Instrument & resolution ───────────────────── */}
-      <section className="hw-surface p-5">
-        <div className="section-header">
-          <span className="section-title">INSTRUMENT_RESOLUTION</span>
-          <Info className="section-icon" />
-        </div>
+      <ExpansionPanel title="INSTRUMENT_RESOLUTION" icon={Info} copyText={asPrettyJson({ instrument, providerResolution })}>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {[
             ['Symbole brut', run.pair],
@@ -601,93 +792,56 @@ export function RunDetailPage() {
             <pre className="json-view">{asPrettyJson(providerResolution)}</pre>
           </details>
         ) : null}
-      </section>
+      </ExpansionPanel>
 
       {/* ── Agent steps ───────────────────────────────── */}
-      <section className="hw-surface p-5">
-        <div className="section-header">
-          <span className="section-title">AGENT_STEPS</span>
-          <Layers className="section-icon" />
+      <ExpansionPanel
+        title="AGENT_STEPS"
+        icon={Layers}
+        headerRight={<span className="text-[9px] font-bold text-[#4A4B50] tabular-nums">{run.steps.length} steps</span>}
+      >
+        <div className="flex flex-col gap-2">
+          {run.steps.map((step) => {
+            const stepJson = asPrettyJson(step.output_payload);
+            return (
+              <AgentStepPanel key={step.id} step={step} jsonText={stepJson} />
+            );
+          })}
         </div>
-        <div className="flex flex-col gap-3">
-          {run.steps.map((step) => (
-            <article key={step.id} className="hw-surface-alt p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold font-mono text-text">{step.agent_name}</span>
-                <span className={`badge ${step.status}`}>{step.status}</span>
-              </div>
-              <pre className="json-view">{asPrettyJson(step.output_payload)}</pre>
-            </article>
-          ))}
-        </div>
-      </section>
+      </ExpansionPanel>
 
       {/* ── Runtime sessions ──────────────────────────── */}
-      <section className="hw-surface p-5">
-        <div className="section-header">
-          <span className="section-title">RUNTIME_SESSIONS</span>
-          <Server className="section-icon" />
-        </div>
-        <div className="flex flex-col gap-3">
+      <ExpansionPanel
+        title="RUNTIME_SESSIONS"
+        icon={Server}
+        headerRight={<span className="text-[9px] font-bold text-[#4A4B50] tabular-nums">{runtimeSessions.length} sessions</span>}
+      >
+        <div className="flex flex-col gap-2">
           {runtimeSessions.length === 0 ? <p className="text-xs text-text-muted">Aucune session runtime.</p> : null}
           {runtimeSessions.map((session) => (
-            <article key={session.session_key} className="hw-surface-alt p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold font-mono text-text">{session.label ?? session.name ?? session.session_key}</span>
-                <span className={`badge ${session.status}`}>{session.status}</span>
-              </div>
-              <pre className="json-view">{asPrettyJson(session)}</pre>
-              {runtimeSessionHistory[session.session_key]?.length ? (
-                <div className="flex flex-col gap-2 mt-3 pl-3 border-l-2 border-border">
-                  {runtimeSessionHistory[session.session_key].map((message) => (
-                    <article key={message.id} className="hw-surface-alt p-3">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-bold font-mono text-text">{message.role}</span>
-                        <span className="badge completed">msg {message.id}</span>
-                      </div>
-                      {message.sender_session_key ? <p className="text-[10px] font-mono text-text-muted mb-1"><code>{message.sender_session_key}</code></p> : null}
-                      <pre className="json-view">{asPrettyJson(message)}</pre>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-            </article>
+            <SessionPanel key={session.session_key} session={session} history={runtimeSessionHistory[session.session_key] ?? []} />
           ))}
         </div>
-      </section>
+      </ExpansionPanel>
 
       {/* ── Runtime events ────────────────────────────── */}
-      <section className="hw-surface p-5">
-        <div className="section-header">
-          <span className="section-title">RUNTIME_EVENTS</span>
-          <Radio className="section-icon" />
-        </div>
-        <div className="flex flex-col gap-3">
+      <ExpansionPanel
+        title="RUNTIME_EVENTS"
+        icon={Radio}
+        headerRight={<span className="text-[9px] font-bold text-[#4A4B50] tabular-nums">{runtimeEvents.length} events</span>}
+      >
+        <div className="flex flex-col gap-2">
           {runtimeEvents.length === 0 ? <p className="text-xs text-text-muted">Aucun événement runtime.</p> : null}
           {runtimeEvents.map((event) => (
-            <article key={event.id} className="hw-surface-alt p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold font-mono text-text">
-                  {getRuntimeEventStream(event)} / {event.name}
-                  {getRuntimeEventPhase(event) ? ` / ${getRuntimeEventPhase(event)}` : ''}
-                </span>
-                <span className="badge completed">seq {event.seq ?? event.id}</span>
-              </div>
-              {getRuntimeEventSessionKey(event) ? <p className="text-[10px] font-mono text-text-muted mb-1"><code>{getRuntimeEventSessionKey(event)}</code></p> : null}
-              <pre className="json-view">{asPrettyJson(getRuntimeEventData(event))}</pre>
-            </article>
+            <EventPanel key={event.id} event={event} />
           ))}
         </div>
-      </section>
+      </ExpansionPanel>
 
       {/* ── Full trace ────────────────────────────────── */}
-      <section className="hw-surface p-5">
-        <div className="section-header">
-          <span className="section-title">RAW_TRACE</span>
-          <FileJson className="section-icon" />
-        </div>
+      <ExpansionPanel title="RAW_TRACE" icon={FileJson} copyText={asPrettyJson(run.trace)}>
         <pre className="json-view">{asPrettyJson(run.trace)}</pre>
-      </section>
+      </ExpansionPanel>
     </div>
   );
 }
