@@ -482,17 +482,147 @@ a:hover {
   background: white;
 }
 
-/* ── Loading screen ────────────────────────────────────────── */
+/* ── Loading: keyframes ───────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes loading-dots {
+  0%, 20%  { content: '.'; }
+  40%      { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+@keyframes progress-stripe {
+  0%   { background-position: 1rem 0; }
+  100% { background-position: 0 0; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Loading screen (full page) ──────────────────────────── */
 .loading-screen {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 16px;
   min-height: 100vh;
   color: var(--color-text-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  animation: fade-in 300ms ease;
+}
+
+/* ── Spinner (indeterminate, >2s waits) ──────────────────── */
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.loading-spinner-sm { width: 14px; height: 14px; border-width: 1.5px; }
+.loading-spinner-lg { width: 28px; height: 28px; border-width: 2.5px; }
+
+/* ── Animated dots suffix (appended via ::after) ─────────── */
+.loading-dots::after {
+  content: '';
+  animation: loading-dots 1.4s steps(1) infinite;
+}
+
+/* ── Shimmer skeleton block ──────────────────────────────── */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-alt) 25%,
+    var(--color-surface-raised) 50%,
+    var(--color-surface-alt) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+/* ── Table skeleton rows ─────────────────────────────────── */
+.table-skeleton-row td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(35, 37, 48, 0.4);
+}
+.table-skeleton-bar {
+  display: block;
+  height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-alt) 25%,
+    var(--color-surface-raised) 50%,
+    var(--color-surface-alt) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+.skeleton-w-45 { width: 45%; }
+.skeleton-w-65 { width: 65%; }
+.skeleton-w-85 { width: 85%; }
+
+/* ── Section skeleton placeholder ────────────────────────── */
+.section-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+  animation: fade-in 200ms ease;
+}
+.section-skeleton-bar {
+  height: 10px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-alt) 25%,
+    var(--color-surface-raised) 50%,
+    var(--color-surface-alt) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* ── Determinate progress bar ────────────────────────────── */
+.progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--color-surface-alt);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+.progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 3px;
+  transition: width 300ms ease;
+}
+.progress-fill-striped {
+  height: 100%;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-accent),
+    var(--color-accent) 4px,
+    var(--color-accent-hover) 4px,
+    var(--color-accent-hover) 8px
+  );
+  background-size: 1rem 1rem;
+  animation: progress-stripe 0.6s linear infinite;
+  transition: width 300ms ease;
 }
 
 /* ── Model source / meta text ──────────────────────────────── */

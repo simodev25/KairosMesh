@@ -415,6 +415,14 @@ export function ConnectorsPage() {
   const [newsProvidersEnabled, setNewsProvidersEnabled] = useState<Record<NewsProviderKey, boolean>>(DEFAULT_NEWS_PROVIDER_ENABLED);
   const [savingNewsProviders, setSavingNewsProviders] = useState(false);
 
+  const [cacheEnabled, setCacheEnabled] = useState(false);
+  const [cachePositionsTtl, setCachePositionsTtl] = useState(3);
+  const [cacheOpenOrdersTtl, setCacheOpenOrdersTtl] = useState(5);
+  const [cacheDealsTtl, setCacheDealsTtl] = useState(60);
+  const [cacheHistoryOrdersTtl, setCacheHistoryOrdersTtl] = useState(60);
+  const [cacheAccountInfoTtl, setCacheAccountInfoTtl] = useState(5);
+  const [savingCache, setSavingCache] = useState(false);
+
   const hydrateAgentModels = (connectorRows: ConnectorConfig[]) => {
     const ollama = connectorRows.find((item) => item.connector_name === 'ollama');
     const settings = (ollama?.settings ?? {}) as Record<string, unknown>;
@@ -574,6 +582,17 @@ export function ConnectorsPage() {
     setNewsProvidersEnabled(next);
   };
 
+  const hydrateCacheSettings = (connectorRows: ConnectorConfig[]) => {
+    const metaapi = connectorRows.find((item) => item.connector_name === 'metaapi');
+    const s = (metaapi?.settings ?? {}) as Record<string, unknown>;
+    setCacheEnabled(typeof s.cache_enabled === 'boolean' ? s.cache_enabled : false);
+    setCachePositionsTtl(typeof s.cache_positions_ttl === 'number' ? s.cache_positions_ttl : 3);
+    setCacheOpenOrdersTtl(typeof s.cache_open_orders_ttl === 'number' ? s.cache_open_orders_ttl : 5);
+    setCacheDealsTtl(typeof s.cache_deals_ttl === 'number' ? s.cache_deals_ttl : 60);
+    setCacheHistoryOrdersTtl(typeof s.cache_history_orders_ttl === 'number' ? s.cache_history_orders_ttl : 60);
+    setCacheAccountInfoTtl(typeof s.cache_account_info_ttl === 'number' ? s.cache_account_info_ttl : 5);
+  };
+
   const loadAll = async () => {
     if (!token) return;
     try {
@@ -629,6 +648,7 @@ export function ConnectorsPage() {
       hydrateAgentModels(connectorRows);
       hydrateSecretFields(connectorRows);
       hydrateNewsProviders(connectorRows);
+      hydrateCacheSettings(connectorRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Cannot load admin data');
     }
@@ -1033,6 +1053,35 @@ export function ConnectorsPage() {
       setError(err instanceof Error ? err.message : 'Cannot save providers config');
     } finally {
       setSavingNewsProviders(false);
+    }
+  };
+
+  const saveCacheSettings = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token) return;
+    const metaapi = connectors.find((item) => item.connector_name === 'metaapi');
+    const existingSettings = (metaapi?.settings ?? {}) as Record<string, unknown>;
+
+    setSavingCache(true);
+    setError(null);
+    try {
+      await api.updateConnector(token, 'metaapi', {
+        enabled: metaapi?.enabled ?? true,
+        settings: {
+          ...existingSettings,
+          cache_enabled: cacheEnabled,
+          cache_positions_ttl: cachePositionsTtl,
+          cache_open_orders_ttl: cacheOpenOrdersTtl,
+          cache_deals_ttl: cacheDealsTtl,
+          cache_history_orders_ttl: cacheHistoryOrdersTtl,
+          cache_account_info_ttl: cacheAccountInfoTtl,
+        },
+      });
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Cannot save cache settings');
+    } finally {
+      setSavingCache(false);
     }
   };
 
@@ -1550,6 +1599,49 @@ export function ConnectorsPage() {
                   ))}
                 </tbody>
               </table>
+            </section>
+
+            <section className="hw-surface-alt p-4">
+              <div className="section-header"><span className="section-title">CACHE_REDIS_METAAPI</span></div>
+              <p className="model-source">
+                Cache Redis pour réduire les appels MetaAPI. TTL en secondes (0 = désactivé pour la ressource).
+              </p>
+              <form className="flex flex-col gap-3" onSubmit={saveCacheSettings}>
+                <label>
+                  Cache activé
+                  <input
+                    className="ui-switch"
+                    type="checkbox"
+                    checked={cacheEnabled}
+                    onChange={(e) => setCacheEnabled(e.target.checked)}
+                  />
+                </label>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <label>
+                    Positions TTL
+                    <input type="number" min={0} max={300} value={cachePositionsTtl} disabled={!cacheEnabled} onChange={(e) => setCachePositionsTtl(Math.max(0, Number(e.target.value)))} />
+                  </label>
+                  <label>
+                    Open Orders TTL
+                    <input type="number" min={0} max={300} value={cacheOpenOrdersTtl} disabled={!cacheEnabled} onChange={(e) => setCacheOpenOrdersTtl(Math.max(0, Number(e.target.value)))} />
+                  </label>
+                  <label>
+                    Deals TTL
+                    <input type="number" min={0} max={600} value={cacheDealsTtl} disabled={!cacheEnabled} onChange={(e) => setCacheDealsTtl(Math.max(0, Number(e.target.value)))} />
+                  </label>
+                  <label>
+                    History Orders TTL
+                    <input type="number" min={0} max={600} value={cacheHistoryOrdersTtl} disabled={!cacheEnabled} onChange={(e) => setCacheHistoryOrdersTtl(Math.max(0, Number(e.target.value)))} />
+                  </label>
+                  <label>
+                    Account Info TTL
+                    <input type="number" min={0} max={300} value={cacheAccountInfoTtl} disabled={!cacheEnabled} onChange={(e) => setCacheAccountInfoTtl(Math.max(0, Number(e.target.value)))} />
+                  </label>
+                </div>
+                <button className="btn-primary" disabled={savingCache}>
+                  {savingCache ? 'Enregistrement...' : 'Enregistrer cache'}
+                </button>
+              </form>
             </section>
 
             <section className="hw-surface-alt p-4">

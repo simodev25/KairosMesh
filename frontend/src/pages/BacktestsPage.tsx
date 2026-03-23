@@ -1,5 +1,7 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { ButtonSpinner, ProgressBar } from '../components/LoadingIndicators';
+import { TableSkeletonRows } from '../components/orders/TableSkeletonRows';
 import { DEFAULT_PAIR, DEFAULT_TIMEFRAMES } from '../constants/markets';
 import { useAuth } from '../hooks/useAuth';
 import { useMarketSymbols } from '../hooks/useMarketSymbols';
@@ -31,6 +33,9 @@ export function BacktestsPage() {
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [selected, setSelected] = useState<BacktestRun | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadRuns = async () => {
@@ -40,6 +45,8 @@ export function BacktestsPage() {
       setRuns(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Cannot load backtests');
+    } finally {
+      setInitialLoadDone(true);
     }
   };
 
@@ -54,11 +61,30 @@ export function BacktestsPage() {
     }
   }, [instruments, pair]);
 
+  const startProgress = () => {
+    setLoadingProgress(0);
+    const start = Date.now();
+    // Asymptotic curve: approaches 90% over ~60s, never reaches 100 until done
+    progressRef.current = setInterval(() => {
+      const elapsed = (Date.now() - start) / 1000;
+      setLoadingProgress(Math.min(90, 90 * (1 - Math.exp(-elapsed / 20))));
+    }, 500);
+  };
+
+  const stopProgress = () => {
+    if (progressRef.current) clearInterval(progressRef.current);
+    progressRef.current = null;
+    setLoadingProgress(100);
+    // Reset after animation completes
+    setTimeout(() => setLoadingProgress(0), 600);
+  };
+
   const createBacktest = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
     setLoading(true);
     setError(null);
+    startProgress();
     try {
       await api.createBacktest(token, {
         pair,
@@ -71,6 +97,7 @@ export function BacktestsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Cannot create backtest');
     } finally {
+      stopProgress();
       setLoading(false);
     }
   };
@@ -128,11 +155,16 @@ export function BacktestsPage() {
           </div>
           <div>
             <button className="btn-primary w-full" disabled={loading}>
-              <Play className="w-3.5 h-3.5" />
-              {loading ? 'Calcul...' : 'Lancer'}
+              {loading ? <ButtonSpinner /> : <Play className="w-3.5 h-3.5" />}
+              {loading ? 'Calcul en cours' : 'Lancer'}
             </button>
           </div>
         </form>
+        {loading && (
+          <div className="mt-3">
+            <ProgressBar percent={loadingProgress} label="Backtest" striped />
+          </div>
+        )}
         {error && <p className="alert mt-3">{error}</p>}
       </section>
 
@@ -156,6 +188,9 @@ export function BacktestsPage() {
               </tr>
             </thead>
             <tbody>
+              {!initialLoadDone && runs.length === 0 && (
+                <TableSkeletonRows prefix="backtests" columns={8} rows={3} />
+              )}
               {runs.map((run) => (
                 <tr key={run.id}>
                   <td className="font-mono text-text-muted">{run.id}</td>

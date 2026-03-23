@@ -1,18 +1,29 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { ButtonSpinner, ChartSkeleton, TableSkeleton, SectionSkeleton } from '../components/LoadingIndicators';
 import { runtimeConfig } from '../config/runtime';
 import { useAuth } from '../hooks/useAuth';
 import { useMetaTradingData } from '../hooks/useMetaTradingData';
 import { useOpenOrdersMarketChart } from '../hooks/useOpenOrdersMarketChart';
 import { usePlatformOrders } from '../hooks/usePlatformOrders';
-import { OpenOrdersChart } from '../components/OpenOrdersChart';
 import { DEFAULT_TIMEFRAMES } from '../constants/markets';
-import { OpenPositionsTable } from '../components/orders/OpenPositionsTable';
-import { OpenPendingOrdersTable } from '../components/orders/OpenPendingOrdersTable';
-import { DealsTable } from '../components/orders/DealsTable';
-import { PlatformOrdersTable } from '../components/orders/PlatformOrdersTable';
 import type { OrderGuardianEvaluation, OrderGuardianStatus } from '../types';
 
+const OpenOrdersChart = lazy(() =>
+  import('../components/OpenOrdersChart').then((module) => ({ default: module.OpenOrdersChart })),
+);
+const OpenPositionsTable = lazy(() =>
+  import('../components/orders/OpenPositionsTable').then((module) => ({ default: module.OpenPositionsTable })),
+);
+const OpenPendingOrdersTable = lazy(() =>
+  import('../components/orders/OpenPendingOrdersTable').then((module) => ({ default: module.OpenPendingOrdersTable })),
+);
+const DealsTable = lazy(() =>
+  import('../components/orders/DealsTable').then((module) => ({ default: module.DealsTable })),
+);
+const PlatformOrdersTable = lazy(() =>
+  import('../components/orders/PlatformOrdersTable').then((module) => ({ default: module.PlatformOrdersTable })),
+);
 const RealTradesCharts = lazy(() =>
   import('../components/RealTradesCharts').then((module) => ({ default: module.RealTradesCharts })),
 );
@@ -170,7 +181,7 @@ export function OrdersPage() {
     setChartTimeframeOverride,
     chartSelection,
     marketCandles,
-    marketProvider,
+    marketProvider: _marketProvider,
     marketError,
     marketLoading,
     chartCountdownLabel,
@@ -630,7 +641,8 @@ export function OrdersPage() {
               disabled={!guardianStatus?.enabled || guardianActioning || !canOperateGuardian}
               onClick={() => void runGuardianNow('manual')}
             >
-              {guardianActioning ? 'Analyse...' : 'Analyser positions'}
+              {guardianActioning && <ButtonSpinner />}
+              {guardianActioning ? 'Analyse en cours' : 'Analyser positions'}
             </button>
           </div>
           <div>
@@ -867,21 +879,24 @@ export function OrdersPage() {
                 {/* ── Chart area ── */}
                 <div className="p-3">
                   {marketLoading && marketCandles.length > 0 && (
-                    <p className="text-[10px] font-mono text-accent animate-pulse mb-2 px-2">Mise à jour de la courbe...</p>
+                    <p className="text-[10px] font-mono text-accent mb-2 px-2 flex items-center gap-1.5">
+                      <span className="loading-spinner loading-spinner-sm" style={{ borderTopColor: 'var(--color-accent)' }} />
+                      <span className="loading-dots">Mise à jour de la courbe</span>
+                    </p>
                   )}
                   {marketError && <p className="alert mb-2">{marketError}</p>}
                   {marketLoading && marketCandles.length === 0 ? (
-                    <div className="flex items-center justify-center border border-border rounded-lg bg-bg" style={{ height: '520px' }} data-testid="open-orders-chart-skeleton" aria-label="Chargement graphique ordres ouverts">
-                      <span className="text-text-muted text-xs font-mono animate-pulse">Chargement graphique...</span>
-                    </div>
+                    <ChartSkeleton height={520} />
                   ) : (
-                    <OpenOrdersChart
-                      openPositions={openPositions}
-                      openOrders={openOrders}
-                      marketCandles={marketCandles}
-                      selectedTicket={selectedChartTicket}
-                      selectedSymbol={chartSelection.symbol}
-                    />
+                    <Suspense fallback={<ChartSkeleton height={520} />}>
+                      <OpenOrdersChart
+                        openPositions={openPositions}
+                        openOrders={openOrders}
+                        marketCandles={marketCandles}
+                        selectedTicket={selectedChartTicket}
+                        selectedSymbol={chartSelection.symbol}
+                      />
+                    </Suspense>
                   )}
                 </div>
               </>
@@ -912,56 +927,64 @@ export function OrdersPage() {
                   )}
                 </p>
                 {openPositionsError && <p className="alert">{openPositionsError}</p>}
-                <OpenPositionsTable
-                  metaLoading={metaLoading}
-                  openPositions={openPositions}
-                  selectedChartTicket={selectedChartTicket}
-                  onToggleTicket={(ticket) => setSelectedChartTicket((prev) => (prev === ticket ? null : ticket))}
-                />
+                <Suspense fallback={<TableSkeleton columns={8} rows={3} />}>
+                  <OpenPositionsTable
+                    metaLoading={metaLoading}
+                    openPositions={openPositions}
+                    selectedChartTicket={selectedChartTicket}
+                    onToggleTicket={(ticket) => setSelectedChartTicket((prev) => (prev === ticket ? null : ticket))}
+                  />
+                </Suspense>
 
                 <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mt-4 mb-2">PENDING_ORDERS_MT5</span>
                 <p className="model-source">
                   Provider ordres: <code>{openOrdersProvider || 'unknown'}</code>
                 </p>
                 {openOrdersError && <p className="alert">{openOrdersError}</p>}
-                <OpenPendingOrdersTable
-                  metaLoading={metaLoading}
-                  openOrders={openOrders}
-                  selectedChartTicket={selectedChartTicket}
-                  onToggleTicket={(ticket) => setSelectedChartTicket((prev) => (prev === ticket ? null : ticket))}
-                />
+                <Suspense fallback={<TableSkeleton columns={9} rows={3} />}>
+                  <OpenPendingOrdersTable
+                    metaLoading={metaLoading}
+                    openOrders={openOrders}
+                    selectedChartTicket={selectedChartTicket}
+                    onToggleTicket={(ticket) => setSelectedChartTicket((prev) => (prev === ticket ? null : ticket))}
+                  />
+                </Suspense>
 
-                <Suspense fallback={<p className="model-source">Chargement des graphiques...</p>}>
+                <Suspense fallback={<SectionSkeleton rows={5} />}>
                   <RealTradesCharts deals={deals} historyOrders={historyOrders} />
                 </Suspense>
 
                 <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mt-4 mb-2">EXECUTED_DEALS</span>
-                <DealsTable
-                  metaLoading={metaLoading}
-                  deals={deals}
-                  pagedDeals={pagedDeals}
-                  dealsPage={dealsPage}
-                  dealsTotalPages={dealsTotalPages}
-                  dealsPerPage={DEALS_PER_PAGE}
-                  onPreviousPage={() => setDealsPage((prev) => Math.max(1, prev - 1))}
-                  onNextPage={() => setDealsPage((prev) => Math.min(dealsTotalPages, prev + 1))}
-                />
+                <Suspense fallback={<TableSkeleton columns={7} rows={4} />}>
+                  <DealsTable
+                    metaLoading={metaLoading}
+                    deals={deals}
+                    pagedDeals={pagedDeals}
+                    dealsPage={dealsPage}
+                    dealsTotalPages={dealsTotalPages}
+                    dealsPerPage={DEALS_PER_PAGE}
+                    onPreviousPage={() => setDealsPage((prev) => Math.max(1, prev - 1))}
+                    onNextPage={() => setDealsPage((prev) => Math.min(dealsTotalPages, prev + 1))}
+                  />
+                </Suspense>
               </>
             )}
           </section>
 
           <section className="hw-surface p-5" id="orders-platform">
             <div className="section-header"><span className="section-title">PLATFORM_ORDERS</span></div>
-            <PlatformOrdersTable
-              bootstrapLoading={bootstrapLoading}
-              orders={orders}
-              pagedOrders={pagedPlatformOrders}
-              ordersPage={platformOrdersPage}
-              ordersTotalPages={platformOrdersTotalPages}
-              ordersPerPage={PLATFORM_ORDERS_PER_PAGE}
-              onPreviousPage={() => setPlatformOrdersPage((prev) => Math.max(1, prev - 1))}
-              onNextPage={() => setPlatformOrdersPage((prev) => Math.min(platformOrdersTotalPages, prev + 1))}
-            />
+            <Suspense fallback={<TableSkeleton columns={11} rows={5} />}>
+              <PlatformOrdersTable
+                bootstrapLoading={bootstrapLoading}
+                orders={orders}
+                pagedOrders={pagedPlatformOrders}
+                ordersPage={platformOrdersPage}
+                ordersTotalPages={platformOrdersTotalPages}
+                ordersPerPage={PLATFORM_ORDERS_PER_PAGE}
+                onPreviousPage={() => setPlatformOrdersPage((prev) => Math.max(1, prev - 1))}
+                onNextPage={() => setPlatformOrdersPage((prev) => Math.min(platformOrdersTotalPages, prev + 1))}
+              />
+            </Suspense>
           </section>
         </div>
 

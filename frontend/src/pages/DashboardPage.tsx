@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { ButtonSpinner } from '../components/LoadingIndicators';
+import { TableSkeletonRows } from '../components/orders/TableSkeletonRows';
 import { DEFAULT_PAIR, DEFAULT_TIMEFRAMES } from '../constants/markets';
 import { useAuth } from '../hooks/useAuth';
 import { useMarketSymbols } from '../hooks/useMarketSymbols';
@@ -137,6 +139,8 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
   const [runsPage, setRunsPage] = useState(1);
+  const [initialRunsLoaded, setInitialRunsLoaded] = useState(false);
+  const [initialSchedulesLoaded, setInitialSchedulesLoaded] = useState(false);
   const runsLoadingRef = useRef(false);
   const schedulesLoadingRef = useRef(false);
   const schedulesPollTickRef = useRef(0);
@@ -151,6 +155,7 @@ export function DashboardPage() {
       setError(err instanceof Error ? err.message : 'Failed to load runs');
     } finally {
       runsLoadingRef.current = false;
+      setInitialRunsLoaded(true);
     }
   }, [token]);
 
@@ -168,6 +173,7 @@ export function DashboardPage() {
       setError(err instanceof Error ? err.message : 'Failed to load schedules');
     } finally {
       schedulesLoadingRef.current = false;
+      setInitialSchedulesLoaded(true);
     }
   }, [token]);
 
@@ -444,8 +450,8 @@ export function DashboardPage() {
           </div>
           <div>
             <button className="btn-primary w-full" disabled={loading}>
-              <Zap className="w-3.5 h-3.5" />
-              {loading ? 'En cours...' : 'Démarrer'}
+              {loading ? <ButtonSpinner /> : <Zap className="w-3.5 h-3.5" />}
+              {loading ? 'Analyse en cours' : 'Démarrer'}
             </button>
           </div>
         </form>
@@ -553,8 +559,8 @@ export function DashboardPage() {
           </div>
           <div>
             <button className="btn-primary w-full" disabled={scheduleLoading}>
-              <CalendarClock className="w-3.5 h-3.5" />
-              {scheduleLoading ? 'Création...' : 'Créer plan'}
+              {scheduleLoading ? <ButtonSpinner /> : <CalendarClock className="w-3.5 h-3.5" />}
+              {scheduleLoading ? 'Création du plan' : 'Créer plan'}
             </button>
           </div>
         </form>
@@ -620,8 +626,8 @@ export function DashboardPage() {
             </div>
             <div>
               <button className="btn-primary w-full" disabled={autoGenerating}>
-                <Bot className="w-3.5 h-3.5" />
-                {autoGenerating ? 'Génération...' : 'Auto-générer'}
+                {autoGenerating ? <ButtonSpinner /> : <Bot className="w-3.5 h-3.5" />}
+                {autoGenerating ? 'Génération en cours' : 'Auto-générer'}
               </button>
             </div>
           </form>
@@ -667,6 +673,9 @@ export function DashboardPage() {
               </tr>
             </thead>
             <tbody>
+              {!initialSchedulesLoaded && schedules.length === 0 && (
+                <TableSkeletonRows prefix="schedules" columns={12} rows={3} />
+              )}
               {schedules.map((schedule) => (
                 <tr key={schedule.id}>
                   <td className="font-mono text-text-muted">{schedule.id}</td>
@@ -726,6 +735,9 @@ export function DashboardPage() {
               </tr>
             </thead>
             <tbody>
+              {!initialRunsLoaded && runs.length === 0 && (
+                <TableSkeletonRows prefix="runs" columns={9} rows={4} />
+              )}
               {pagedRuns.map((run) => (
                 <tr key={run.id}>
                   <td className="font-mono text-text-muted">{run.id}</td>

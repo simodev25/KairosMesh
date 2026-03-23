@@ -308,19 +308,48 @@ class YFinanceMarketProvider:
             self._cache_degrade(exc)
             return None
 
+    def _provider_cache_key(self, provider_name: str, pair: str, max_items: int) -> str:
+        pair_key = self._normalize_pair(pair) or str(pair or '').strip().upper()
+        return self._cache_key('provider', provider_name, pair_key, max_items)
+
+    def _provider_cache_ttl(self, provider_cfg: dict[str, Any]) -> int:
+        explicit = provider_cfg.get('cache_ttl_seconds')
+        if explicit is not None:
+            return max(int(self._safe_float(explicit, 0)), 0)
+        return self.settings.news_provider_cache_ttl_seconds
+
+    def _provider_cache_get(self, provider_name: str, pair: str, max_items: int) -> list[dict[str, Any]] | None:
+        key = self._provider_cache_key(provider_name, pair, max_items)
+        cached = self._cache_get_json(key, resource='news_provider')
+        if cached is None:
+            return None
+        items = cached.get('items')
+        if isinstance(items, list):
+            logger.debug('news provider cache hit provider=%s pair=%s items=%s', provider_name, pair, len(items))
+            return items
+        return None
+
+    def _provider_cache_set(self, provider_name: str, pair: str, max_items: int, items: list[dict[str, Any]], ttl: int) -> None:
+        if ttl <= 0:
+            return
+        key = self._provider_cache_key(provider_name, pair, max_items)
+        self._cache_set_json(key, {'items': items, 'provider': provider_name, 'pair': pair}, ttl)
+        logger.debug('news provider cache set provider=%s pair=%s items=%s ttl=%ss', provider_name, pair, len(items), ttl)
+
     def clear_news_cache(self) -> int:
         if not self._cache_enabled():
             return 0
-        pattern = self._cache_key('news', '*')
         deleted = 0
         try:
-            cursor: int | str = 0
-            while True:
-                cursor, keys = self._redis.scan(cursor=cursor, match=pattern, count=200)
-                if keys:
-                    deleted += int(self._redis.delete(*keys))
-                if str(cursor) == '0':
-                    break
+            for prefix in ('news', 'provider'):
+                pattern = self._cache_key(prefix, '*')
+                cursor: int | str = 0
+                while True:
+                    cursor, keys = self._redis.scan(cursor=cursor, match=pattern, count=200)
+                    if keys:
+                        deleted += int(self._redis.delete(*keys))
+                    if str(cursor) == '0':
+                        break
             if deleted > 0:
                 logger.info('yfinance news cache invalidated keys=%s', deleted)
         except Exception as exc:  # pragma: no cover
@@ -1761,8 +1790,11 @@ class YFinanceMarketProvider:
                         api_key = ''
 
                     callable_providers += 1
+                    is_api_key_provider = provider_name in {'newsapi', 'tradingeconomics', 'finnhub', 'alphavantage'}
+                    provider_ttl = self._provider_cache_ttl(cfg) if is_api_key_provider else 0
                     try:
                         fetched_count = 0
+                        cached_items: list[dict[str, Any]] | None = None
                         if provider_name == 'yahoo_finance':
                             items, meta = self._fetch_yahoo_news_items(
                                 pair,
@@ -1780,43 +1812,63 @@ class YFinanceMarketProvider:
                             aggregated_articles.extend(items)
                             fetched_count = len(items)
                         elif provider_name == 'newsapi':
-                            items, _ = self._fetch_newsapi_items(
-                                pair,
-                                max_items=max_items_per_provider,
-                                timeout_seconds=timeout_seconds,
-                                provider_cfg=cfg,
-                                api_key=api_key,
-                            )
+                            cached_items = self._provider_cache_get(provider_name, pair, max_items_per_provider)
+                            if cached_items is not None:
+                                items = cached_items
+                            else:
+                                items, _ = self._fetch_newsapi_items(
+                                    pair,
+                                    max_items=max_items_per_provider,
+                                    timeout_seconds=timeout_seconds,
+                                    provider_cfg=cfg,
+                                    api_key=api_key,
+                                )
+                                self._provider_cache_set(provider_name, pair, max_items_per_provider, items, provider_ttl)
                             aggregated_articles.extend(items)
                             fetched_count = len(items)
                         elif provider_name == 'tradingeconomics':
-                            events, _ = self._fetch_tradingeconomics_items(
-                                pair,
-                                max_items=max_items_per_provider,
-                                timeout_seconds=timeout_seconds,
-                                provider_cfg=cfg,
-                                api_key=api_key,
-                            )
+                            cached_items = self._provider_cache_get(provider_name, pair, max_items_per_provider)
+                            if cached_items is not None:
+                                events = cached_items
+                            else:
+                                events, _ = self._fetch_tradingeconomics_items(
+                                    pair,
+                                    max_items=max_items_per_provider,
+                                    timeout_seconds=timeout_seconds,
+                                    provider_cfg=cfg,
+                                    api_key=api_key,
+                                )
+                                self._provider_cache_set(provider_name, pair, max_items_per_provider, events, provider_ttl)
                             aggregated_events.extend(events)
                             fetched_count = len(events)
                         elif provider_name == 'finnhub':
-                            items, _ = self._fetch_finnhub_items(
-                                pair,
-                                max_items=max_items_per_provider,
-                                timeout_seconds=timeout_seconds,
-                                provider_cfg=cfg,
-                                api_key=api_key,
-                            )
+                            cached_items = self._provider_cache_get(provider_name, pair, max_items_per_provider)
+                            if cached_items is not None:
+                                items = cached_items
+                            else:
+                                items, _ = self._fetch_finnhub_items(
+                                    pair,
+                                    max_items=max_items_per_provider,
+                                    timeout_seconds=timeout_seconds,
+                                    provider_cfg=cfg,
+                                    api_key=api_key,
+                                )
+                                self._provider_cache_set(provider_name, pair, max_items_per_provider, items, provider_ttl)
                             aggregated_articles.extend(items)
                             fetched_count = len(items)
                         elif provider_name == 'alphavantage':
-                            items, _ = self._fetch_alphavantage_items(
-                                pair,
-                                max_items=max_items_per_provider,
-                                timeout_seconds=timeout_seconds,
-                                provider_cfg=cfg,
-                                api_key=api_key,
-                            )
+                            cached_items = self._provider_cache_get(provider_name, pair, max_items_per_provider)
+                            if cached_items is not None:
+                                items = cached_items
+                            else:
+                                items, _ = self._fetch_alphavantage_items(
+                                    pair,
+                                    max_items=max_items_per_provider,
+                                    timeout_seconds=timeout_seconds,
+                                    provider_cfg=cfg,
+                                    api_key=api_key,
+                                )
+                                self._provider_cache_set(provider_name, pair, max_items_per_provider, items, provider_ttl)
                             aggregated_articles.extend(items)
                             fetched_count = len(items)
                         else:
@@ -1824,7 +1876,8 @@ class YFinanceMarketProvider:
                             status_payload['error'] = 'unsupported_provider'
                             continue
 
-                        status_payload['status'] = 'ok' if fetched_count > 0 else 'empty'
+                        was_cached = cached_items is not None
+                        status_payload['status'] = ('cached' if was_cached else 'ok') if fetched_count > 0 else 'empty'
                         status_payload['count'] = fetched_count
                     except Exception as exc:  # pragma: no cover - external APIs are unstable by nature
                         message = str(exc)

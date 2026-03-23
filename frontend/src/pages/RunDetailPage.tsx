@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, wsRunUrl } from '../api/client';
+import { LoadingSpinner, SectionSkeleton } from '../components/LoadingIndicators';
 import { useAuth } from '../hooks/useAuth';
 import { Download, FileJson, Layers, Radio, Server, Info, ChevronDown, Copy, Check } from 'lucide-react';
 import type {
@@ -665,7 +666,20 @@ export function RunDetailPage() {
   }, [token, runId]);
 
   if (error) return <div className="alert">{error}</div>;
-  if (!run) return <div className="loading-screen">Chargement...</div>;
+  if (!run) return (
+    <div className="flex flex-col gap-5 p-5">
+      <section className="hw-surface p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <LoadingSpinner size="md" />
+          <span className="text-[10px] font-mono text-text-muted tracking-[0.1em] uppercase loading-dots">Chargement du run</span>
+        </div>
+        <SectionSkeleton rows={6} />
+      </section>
+      <section className="hw-surface p-5">
+        <SectionSkeleton rows={4} barWidths={['65%', '85%', '45%', '70%']} />
+      </section>
+    </div>
+  );
 
   const instrument = instrumentPanel?.instrument ?? null;
   const providerResolution = instrumentPanel?.providerResolution ?? null;
