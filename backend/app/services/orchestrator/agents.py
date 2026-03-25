@@ -314,6 +314,28 @@ def _build_empty_llm_summary(llm_res: dict[str, Any], *, retried: bool) -> str:
     )
 
 
+def _looks_like_infrastructure_error_text(text: str) -> bool:
+    lowered = str(text or '').strip().lower()
+    if not lowered:
+        return False
+    signals = (
+        '429',
+        'too many requests',
+        'rate limit',
+        'rate-limit',
+        'openai',
+        'ollama',
+        'http error',
+        'connection error',
+        'timed out',
+        'timeout',
+        'service unavailable',
+        'api key',
+        'provider unavailable',
+    )
+    return any(token in lowered for token in signals)
+
+
 def _compact_outputs_for_debate(agent_outputs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     compact: dict[str, dict[str, Any]] = {}
     for name, output in (agent_outputs or {}).items():
@@ -1681,6 +1703,8 @@ def _validate_news_output(
     directional_evidence_count = sum(1 for item in selected_evidence if _has_directional_instrument_effect(item))
     no_signal_summary = _news_summary_implies_no_signal(summary) or _news_summary_implies_no_signal(llm_summary)
     score = float(output.get('score', 0.0) or 0.0)
+    raw_score = float(output.get('raw_score', output.get('score', 0.0) or 0.0) or 0.0)
+    output['raw_score'] = round(_clamp(raw_score, -1.0, 1.0), 3)
 
     if no_signal_summary and output.get('signal') != 'neutral':
         actions.append('summary_forced_neutral')
@@ -1769,10 +1793,46 @@ def _validate_news_output(
         output['score'] = round(-max(abs(float(output.get('score', 0.0) or 0.0)), 0.01), 3)
         actions.append('score_sign_corrected_bearish')
 
+    macro_event_count = int(_safe_float(output.get('macro_event_count', 0), 0.0))
+    retained_macro_count = int(_safe_float(output.get('retained_macro_event_count', 0), 0.0))
+    if macro_event_count == 0 and retained_macro_count == 0:
+        reason_lower = str(output.get('reason') or '').lower()
+        if 'news and macro evidence produced' in reason_lower:
+            output['reason'] = 'Relevant news evidence produced a directional effect on the instrument'
+            actions.append('macro_reason_sanitized_without_events')
+        summary_text = str(output.get('summary') or '')
+        summary_lower = summary_text.lower()
+        if 'macro' in summary_lower and ('directional' in summary_lower or 'biais' in summary_lower):
+            replacement_signal = str(output.get('signal') or 'neutral').strip().lower()
+            if replacement_signal in {'bullish', 'bearish'}:
+                output['summary'] = _format_news_summary(
+                    replacement_signal,
+                    'Les évidences news retenues produisent un biais directionnel exploitable sur cet instrument.',
+                )
+            else:
+                output['summary'] = _format_news_summary(
+                    'neutral',
+                    "Les évidences news sont insuffisantes pour un signal directionnel exploitable sur cet instrument.",
+                )
+            actions.append('macro_summary_sanitized_without_events')
+
     if output.get('signal') == 'neutral':
         output['signal_contract_case'] = 'no_signal' if (not selected_evidence or no_signal_summary) else 'weak_signal'
     else:
         output['signal_contract_case'] = 'directional_signal'
+    signal_value = str(output.get('signal') or 'neutral').strip().lower()
+    score_value = float(output.get('score', 0.0) or 0.0)
+    if signal_value == 'neutral':
+        if not selected_evidence:
+            output['signal_threshold_reason'] = 'no_relevant_evidence'
+        elif abs(score_value) < signal_threshold:
+            output['signal_threshold_reason'] = 'directional_score_below_threshold'
+        else:
+            output['signal_threshold_reason'] = 'neutralized_by_consistency_guardrails'
+    else:
+        output['signal_threshold_reason'] = 'directional_score_above_threshold'
+    output['final_signal'] = output.get('signal')
+    output['final_confidence'] = float(output.get('confidence', 0.0) or 0.0)
     output['validation_actions'] = actions
     output['selected_evidence_count'] = len(selected_evidence)
     output['rejected_evidence_count'] = len(rejected_evidence)
@@ -1791,18 +1851,42 @@ class TechnicalAnalystAgent:
 
     @staticmethod
     def _compute_confidence(score: float, setup_quality: str) -> float:
-        """Quality-weighted confidence: abs(score) adjusted by setup quality.
-
-        - high quality: up to +20% boost (max 0.95)
-        - medium quality: no adjustment
-        - low quality: capped at 0.40
-        """
-        base = abs(float(score))
+        """Quality-weighted confidence with non-linear scaling."""
+        magnitude = _clamp(abs(float(score)), 0.0, 1.0)
+        curved = magnitude ** 0.9
         if setup_quality == 'high':
-            return min(base * 1.2, 0.95)
+            return round(_clamp(0.06 + curved * 0.92, 0.0, 0.95), 3)
         if setup_quality == 'low':
-            return min(base, 0.40)
-        return base
+            return round(min(0.40, 0.04 + curved * 0.60), 3)
+        return round(_clamp(0.05 + curved * 0.78, 0.0, 0.90), 3)
+
+    @staticmethod
+    def _signal_threshold_reason(*, score: float, signal: str, market_bias: str, setup_quality: str) -> str:
+        magnitude = abs(float(score))
+        if signal in {'bullish', 'bearish'}:
+            return 'directional_score_above_threshold'
+        if market_bias in {'bullish', 'bearish'} and setup_quality == 'low' and magnitude < 0.30:
+            return 'low_quality_bias_below_activation_threshold'
+        if magnitude < 0.15:
+            return 'score_within_neutral_threshold'
+        return 'insufficient_directional_confirmation'
+
+    @staticmethod
+    def _business_summary(*, signal: str, setup_quality: str, market_bias: str) -> str:
+        if signal == 'neutral':
+            if market_bias in {'bullish', 'bearish'}:
+                return (
+                    f'neutral\nsetup_quality={setup_quality}\n'
+                    f'Contexte technique non-actionnable (biais brut {market_bias}).'
+                )
+            return (
+                f'neutral\nsetup_quality={setup_quality}\n'
+                'Contexte technique non-actionnable (pas de biais directionnel exploitable).'
+            )
+        return (
+            f'{signal}\nsetup_quality={setup_quality}\n'
+            f'Biais technique {signal} confirmé par les indicateurs principaux.'
+        )
 
     def run(self, ctx: AgentContext, db: Session | None = None) -> dict[str, Any]:
         from app.services.agent_runtime.mcp_trading_server import (
@@ -1840,14 +1924,26 @@ class TechnicalAnalystAgent:
                 'signal': 'neutral',
                 'score': 0.0,
                 'raw_score': 0.0,
+                'final_signal': 'neutral',
                 'confidence': 0.0,
+                'final_confidence': 0.0,
                 'confidence_method': 'degraded',
+                'signal_threshold_reason': 'market_data_unavailable',
                 'market_bias': 'neutral',
                 'setup_quality': 'low',
                 'reason': 'Market data unavailable',
+                'summary': 'neutral\nsetup_quality=low\nContexte technique indisponible: signal non-actionnable.',
+                'asset_class': instrument_aware_asset_class(ctx.pair),
                 'degraded': True,
                 'llm_call_attempted': False,
                 'llm_fallback_used': False,
+                'diagnostics': {
+                    'llm': {
+                        'attempted': False,
+                        'fallback_used': False,
+                        'error': None,
+                    },
+                },
                 'tooling': {
                     'enabled_tools': enabled_tools,
                     'invocations': tool_invocations,
@@ -2013,21 +2109,53 @@ class TechnicalAnalystAgent:
         runtime_skills = _resolve_runtime_skills(self.model_selector, db, self.name)
         llm_enabled = self.model_selector.is_enabled(db, self.name)
         deterministic_score = round(score, 3)
+        deterministic_confidence = self._compute_confidence(score, setup_quality)
+        signal_threshold_reason = self._signal_threshold_reason(
+            score=deterministic_score,
+            signal=signal,
+            market_bias=market_bias,
+            setup_quality=setup_quality,
+        )
         output: dict[str, Any] = {
             'signal': signal,
             'score': deterministic_score,
             'raw_score': deterministic_score,
-            'confidence': round(self._compute_confidence(score, setup_quality), 3),
+            'final_signal': signal,
+            'confidence': deterministic_confidence,
+            'final_confidence': deterministic_confidence,
             'confidence_method': 'deterministic_quality_weighted',
-            'summary': None,
+            'signal_threshold_reason': signal_threshold_reason,
+            'summary': self._business_summary(
+                signal=signal,
+                setup_quality=setup_quality,
+                market_bias=market_bias,
+            ),
+            'reason': (
+                'Directional setup passes technical activation thresholds.'
+                if signal in {'bullish', 'bearish'}
+                else 'Directional bias remains below technical activation thresholds; non-actionable setup.'
+            ),
             'market_bias': market_bias,
             'setup_quality': setup_quality,
+            'asset_class': instrument_aware_asset_class(ctx.pair),
             'indicators': m_effective,
             'degraded': False,
             'llm_enabled': llm_enabled,
             'llm_call_attempted': False,
             'llm_fallback_used': False,
             'llm_summary': None,
+            'diagnostics': {
+                'llm': {
+                    'attempted': False,
+                    'fallback_used': False,
+                    'provider': None,
+                    'error': None,
+                },
+                'thresholds': {
+                    'signal_threshold': 0.15,
+                    'low_quality_activation_threshold': 0.30,
+                },
+            },
             'tooling': {
                 'enabled_tools': enabled_tools,
                 'invocations': tool_invocations,
@@ -2057,6 +2185,20 @@ class TechnicalAnalystAgent:
             )
             output['score'] = adjusted_score
             output['signal'] = adjusted_signal
+            output['final_signal'] = adjusted_signal
+            output['confidence'] = self._compute_confidence(adjusted_score, setup_quality)
+            output['final_confidence'] = output['confidence']
+            output['signal_threshold_reason'] = self._signal_threshold_reason(
+                score=adjusted_score,
+                signal=adjusted_signal,
+                market_bias=market_bias,
+                setup_quality=setup_quality,
+            )
+            output['summary'] = self._business_summary(
+                signal=adjusted_signal,
+                setup_quality=setup_quality,
+                market_bias=market_bias,
+            )
             if changed:
                 output['reason'] = 'Skill guardrails applied (deterministic mode)'
             return output
@@ -2176,6 +2318,9 @@ class TechnicalAnalystAgent:
             tool_invocations=tool_invocations,
         )
         llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+        llm_error_like = _looks_like_infrastructure_error_text(llm_text)
+        if llm_error_like and not llm_degraded:
+            llm_degraded = True
         llm_signal = _parse_signal_from_text(llm_text)
         merged_score, merged_signal = _merge_llm_signal(
             float(output['score']),
@@ -2197,17 +2342,51 @@ class TechnicalAnalystAgent:
         if setup_quality == 'low' and abs(merged_score) < 0.30:
             merged_signal = 'neutral'
 
+        summary_text = _compact_prompt_text(llm_text, max_chars=220) if llm_text.strip() else None
+        if llm_degraded:
+            summary_text = self._business_summary(
+                signal=merged_signal,
+                setup_quality=setup_quality,
+                market_bias=market_bias,
+            )
+
+        merged_confidence = self._compute_confidence(merged_score, setup_quality)
+        signal_threshold_reason = self._signal_threshold_reason(
+            score=merged_score,
+            signal=merged_signal,
+            market_bias=market_bias,
+            setup_quality=setup_quality,
+        )
+
         output['llm_call_attempted'] = True
         output['llm_fallback_used'] = llm_degraded
         output['market_bias'] = market_bias
         output['setup_quality'] = setup_quality
+        output['diagnostics']['llm'] = {
+            'attempted': True,
+            'fallback_used': llm_degraded,
+            'provider': str(llm_res.get('provider') or '').strip() or None,
+            'error': (
+                _compact_prompt_text(llm_text, max_chars=220)
+                if llm_degraded and llm_text.strip()
+                else None
+            ),
+        }
         output.update(
             {
                 'signal': merged_signal,
                 'score': merged_score,
-                'confidence': round(self._compute_confidence(merged_score, setup_quality), 3),
+                'final_signal': merged_signal,
+                'confidence': merged_confidence,
+                'final_confidence': merged_confidence,
                 'confidence_method': 'llm_merged_quality_weighted',
-                'summary': _compact_prompt_text(llm_text, max_chars=220) if llm_text.strip() else None,
+                'signal_threshold_reason': signal_threshold_reason,
+                'summary': summary_text,
+                'reason': (
+                    'Directional setup passes technical activation thresholds.'
+                    if merged_signal in {'bullish', 'bearish'}
+                    else 'Directional bias remains below technical activation thresholds; non-actionable setup.'
+                ),
                 'llm_summary': llm_text,
                 'degraded': llm_degraded,
                 'prompt_meta': {
@@ -2742,6 +2921,7 @@ class NewsAnalystAgent:
         llm_call_attempted = False
         llm_skipped_reason: str | None = None
         llm_tool_calls: list[dict[str, Any]] = []
+        llm_res: dict[str, Any] = {}
         prompt_info: dict[str, Any] = {'prompt_id': None, 'version': 0}
         system = ''
         user = ''
@@ -2950,6 +3130,9 @@ class NewsAnalystAgent:
                 request_timeout_seconds=45.0,
             )
             llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+            llm_error_like = _looks_like_infrastructure_error_text(llm_text)
+            if llm_error_like and not llm_degraded:
+                llm_degraded = True
 
             if _should_retry_empty_llm_response(llm_res, llm_text, llm_degraded):
                 llm_retry_used = True
@@ -2970,6 +3153,9 @@ class NewsAnalystAgent:
                 )
                 llm_tool_calls.extend(retry_tool_calls)
                 llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+                llm_error_like = _looks_like_infrastructure_error_text(llm_text)
+                if llm_error_like and not llm_degraded:
+                    llm_degraded = True
 
             llm_summary = llm_text
             if not llm_degraded and llm_text.strip():
@@ -3012,8 +3198,7 @@ class NewsAnalystAgent:
                 degraded = True
                 if not llm_summary.strip():
                     llm_summary = _build_empty_llm_summary(llm_res, retried=llm_retry_used)
-                if llm_degraded:
-                    summary = 'LLM degraded for news-analyst. Deterministic skill-aware fallback used.'
+                # Keep business summary based on deterministic evidence; diagnostics captures LLM infra details.
                 self._record_llm_failure(
                     threshold=llm_circuit_failure_threshold,
                     open_seconds=llm_circuit_open_seconds,
@@ -3084,6 +3269,14 @@ class NewsAnalystAgent:
 
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
         _news_conf_method = 'llm_semantic' if llm_semantic_mode else ('evidence_weighted' if llm_call_attempted else 'deterministic_evidence')
+        macro_integration_status = (
+            'enabled_with_events'
+            if len(valid_macro_events) > 0
+            else ('unavailable' if fetch_status == 'error' else 'enabled_no_events')
+        )
+        llm_diag_error = None
+        if llm_call_attempted and llm_fallback_used and llm_summary.strip():
+            llm_diag_error = _compact_prompt_text(llm_summary, max_chars=220)
         output = {
             'signal': signal,
             'score': round(_clamp(score, -1.0, 1.0), 3),
@@ -3131,6 +3324,21 @@ class NewsAnalystAgent:
             'llm_circuit_open': self._is_llm_circuit_open(),
             'degraded': degraded,
             'fetch_status': fetch_status,
+            'macro_integration_status': macro_integration_status,
+            'diagnostics': {
+                'llm': {
+                    'attempted': llm_call_attempted,
+                    'fallback_used': llm_fallback_used,
+                    'provider': str(llm_res.get('provider') or '').strip() if isinstance(llm_res, dict) else None,
+                    'error': llm_diag_error,
+                    'skipped_reason': llm_skipped_reason,
+                },
+                'providers': {
+                    'status': provider_status,
+                    'fetch_status': fetch_status,
+                    'selected_symbol': str(ctx.news_context.get('selected_news_symbol') or '').strip() or None,
+                },
+            },
             'tooling': {
                 'enabled_tools': enabled_tools,
                 'invocations': tool_invocations,
@@ -3320,6 +3528,35 @@ class MarketContextAnalystAgent:
         return f'Le contexte ne contredit pas un biais {signal} faible, sans le renforcer nettement.'
 
     @staticmethod
+    def _signal_threshold_reason(*, score: float, signal: str, mixed_context: bool) -> str:
+        if signal in {'bullish', 'bearish'}:
+            return 'context_score_above_actionable_threshold'
+        magnitude = abs(float(score))
+        if mixed_context and magnitude == 0.0:
+            return 'mixed_context_cancelled_direction'
+        if magnitude < 0.12:
+            return 'raw_score_below_actionable_threshold'
+        return 'neutral_due_to_context_guardrail'
+
+    @staticmethod
+    def _business_summary(
+        *,
+        signal: str,
+        score: float,
+        market_bias: str,
+        reason: str,
+        signal_threshold_reason: str,
+    ) -> str:
+        if signal == 'neutral':
+            if market_bias in {'bullish', 'bearish'} and abs(float(score)) > 0.0:
+                return (
+                    f'NEUTRAL: {reason} '
+                    f'Biais brut {market_bias} (score={round(float(score), 3)}) sous seuil, non-actionable.'
+                )
+            return f'NEUTRAL: {reason} Signal non-actionable ({signal_threshold_reason}).'
+        return f'{signal.upper()}: {reason}'
+
+    @staticmethod
     def _aligned_summary(output: dict[str, Any]) -> str:
         signal = str(output.get('signal') or 'neutral')
         score = round(_safe_float(output.get('score'), 0.0), 3)
@@ -3339,9 +3576,13 @@ class MarketContextAnalystAgent:
             return {
                 'signal': 'neutral',
                 'score': 0.0,
+                'raw_score': 0.0,
+                'final_signal': 'neutral',
                 'market_bias': 'neutral',
                 'confidence': 0.0,
+                'final_confidence': 0.0,
                 'confidence_method': 'degraded',
+                'signal_threshold_reason': 'market_snapshot_degraded',
                 'summary': 'Market snapshot degraded; no reliable context bias.',
                 'regime': 'unstable',
                 'momentum_bias': 'neutral',
@@ -3350,6 +3591,14 @@ class MarketContextAnalystAgent:
                 'execution_penalty': 1.0,
                 'hard_block': True,
                 'reason': 'Market snapshot degraded; no reliable context bias.',
+                'asset_class': instrument_aware_asset_class(str(market.get('pair') or '')),
+                'diagnostics': {
+                    'llm': {
+                        'attempted': False,
+                        'fallback_used': False,
+                        'error': None,
+                    },
+                },
                 'degraded': True,
                 '_mixed_context': True,
             }
@@ -3465,13 +3714,29 @@ class MarketContextAnalystAgent:
 
         # market_bias shows the raw directional lean before thresholding
         market_bias = 'bullish' if score > 0.03 else 'bearish' if score < -0.03 else 'neutral'
+        signal_threshold_reason = self._signal_threshold_reason(
+            score=score,
+            signal=signal,
+            mixed_context=mixed_context,
+        )
+        summary = self._business_summary(
+            signal=signal,
+            score=score,
+            market_bias=market_bias,
+            reason=reason,
+            signal_threshold_reason=signal_threshold_reason,
+        )
         return {
             'signal': signal,
             'score': score,
+            'raw_score': score,
+            'final_signal': signal,
             'market_bias': market_bias,
             'confidence': confidence,
+            'final_confidence': confidence,
             'confidence_method': 'magnitude_regime_weighted',
-            'summary': reason,
+            'signal_threshold_reason': signal_threshold_reason,
+            'summary': summary,
             'regime': regime,
             'momentum_bias': momentum_bias,
             'volatility_context': volatility_context,
@@ -3479,6 +3744,17 @@ class MarketContextAnalystAgent:
             'execution_penalty': execution_penalty,
             'hard_block': hard_block,
             'reason': reason,
+            'asset_class': instrument_aware_asset_class(''),
+            'diagnostics': {
+                'llm': {
+                    'attempted': False,
+                    'fallback_used': False,
+                    'error': None,
+                },
+                'thresholds': {
+                    'signal_threshold': 0.12,
+                },
+            },
             'degraded': False,
             '_mixed_context': mixed_context,
         }
@@ -3572,10 +3848,34 @@ class MarketContextAnalystAgent:
                 volatility_context=str(output.get('volatility_context') or 'neutral'),
             )
 
+        output['signal_threshold_reason'] = self._signal_threshold_reason(
+            score=adjusted_score,
+            signal=adjusted_signal,
+            mixed_context=bool(output.get('_mixed_context', False)),
+        )
+        output['summary'] = self._business_summary(
+            signal=adjusted_signal,
+            score=adjusted_score,
+            market_bias=str(output.get('market_bias') or 'neutral'),
+            reason=str(output.get('reason') or ''),
+            signal_threshold_reason=str(output.get('signal_threshold_reason') or ''),
+        )
+        output['final_signal'] = adjusted_signal
+        output['final_confidence'] = output['confidence']
+        output['asset_class'] = instrument_aware_asset_class(ctx.pair)
+
         output['llm_enabled'] = llm_enabled
         output['llm_call_attempted'] = False
         output['llm_fallback_used'] = False
         output['llm_note'] = ''
+        if not isinstance(output.get('diagnostics'), dict):
+            output['diagnostics'] = {}
+        output['diagnostics']['llm'] = {
+            'attempted': False,
+            'fallback_used': False,
+            'provider': None,
+            'error': None,
+        }
         llm_tool_calls: list[dict[str, Any]] = []
         output['tooling'] = {
             'enabled_tools': enabled_tools,
@@ -3705,11 +4005,24 @@ class MarketContextAnalystAgent:
                 tool_invocations=tool_invocations,
             )
             llm_text, llm_degraded = _normalize_llm_text_and_degraded(llm_res, require_text=True)
+            llm_error_like = _looks_like_infrastructure_error_text(llm_text)
+            if llm_error_like and not llm_degraded:
+                llm_degraded = True
             if not llm_degraded and llm_text.strip():
                 output['llm_note'] = _compact_prompt_text(llm_text, max_chars=220)
             else:
                 output['llm_fallback_used'] = True
                 output['degraded'] = True
+            output['diagnostics']['llm'] = {
+                'attempted': True,
+                'fallback_used': bool(output.get('llm_fallback_used')),
+                'provider': str(llm_res.get('provider') or '').strip() or None,
+                'error': (
+                    _compact_prompt_text(llm_text, max_chars=220)
+                    if llm_degraded and llm_text.strip()
+                    else None
+                ),
+            }
 
         output['llm_summary'] = self._aligned_summary(output)
         output.pop('_mixed_context', None)

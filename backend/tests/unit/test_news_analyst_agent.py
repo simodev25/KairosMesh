@@ -273,6 +273,22 @@ def test_news_analyst_keeps_directional_signal_for_clean_fx_catalysts(monkeypatc
     assert out['retained_news_count'] >= 2
 
 
+def test_news_analyst_never_claims_macro_contribution_when_macro_counts_are_zero(monkeypatch) -> None:
+    agent = NewsAnalystAgent(PromptTemplateService())
+    ctx = _news_context()
+    _configure_llm(agent, monkeypatch, 'neutral\ncase=no_signal\nLLM disabled for deterministic test.', enabled=False)
+
+    out = agent.run(ctx, db=None)
+
+    assert out['signal'] == 'bullish'
+    assert out['macro_event_count'] == 0
+    assert out['retained_macro_event_count'] == 0
+    combined_text = f"{out.get('reason', '')} {out.get('summary', '')}".lower()
+    assert 'news and macro evidence produced' not in combined_text
+    assert 'macro evidence produced' not in combined_text
+    assert out.get('macro_integration_status') in {'disabled', 'enabled_no_events', 'unavailable'}
+
+
 @pytest.mark.parametrize(
     ('pair', 'expected_signal'),
     [

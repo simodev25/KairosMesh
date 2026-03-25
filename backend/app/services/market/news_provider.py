@@ -425,8 +425,12 @@ class MarketProvider:
             return normalized
         without_suffix = re.sub(r'\.[A-Z0-9_]+$', '', normalized)
         compact = without_suffix.replace('/', '').replace('-', '')
-        match = re.search(r'[A-Z]{6}', compact)
-        return match.group(0) if match else without_suffix
+        if len(compact) == 6 and compact.isalpha():
+            base = compact[:3]
+            quote = compact[3:]
+            if base in MarketProvider.currency_aliases and quote in MarketProvider.currency_aliases:
+                return compact
+        return compact or without_suffix
 
     @classmethod
     def _symbol_resolution_trace(cls, pair: str) -> dict[str, Any]:
@@ -631,9 +635,8 @@ class MarketProvider:
             for symbol in cls.macro_news_fallback_symbols:
                 add_fallback(symbol)
         elif asset_class == 'crypto':
-            base_asset = instrument.base_asset
-            add_direct(base_asset)
-            if base_asset not in {'BTC', 'ETH'}:
+            base_asset = str(instrument.base_asset or '').strip().upper()
+            if base_asset and base_asset not in {'BTC', 'ETH'}:
                 for symbol in cls.crypto_market_fallback_symbols:
                     add_fallback(symbol)
         else:
@@ -1256,11 +1259,13 @@ class MarketProvider:
         min_dt = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
 
         direct, fallback = self._news_symbol_candidates_tiered(pair)
+        primary_symbol = direct[0] if direct else None
 
         # Phase 1: try direct/primary symbols first
         selected, last_symbol = self._fetch_yahoo_news_for_symbols(
             direct, pair, max_items=max_items, min_dt=min_dt, symbols_scanned=symbols_scanned,
         )
+        selected_from_fallback = False
 
         # Phase 2: if no direct results, try fallback/proxy symbols
         if not selected and fallback:
@@ -1269,9 +1274,17 @@ class MarketProvider:
             )
             if fb_symbol:
                 last_symbol = fb_symbol
+            if selected:
+                selected_from_fallback = True
+
+        selected_symbol = str(selected[0].get('source_symbol') or last_symbol or '') if selected else last_symbol
+        preferred_symbol = str(primary_symbol or selected_symbol or '').strip() or None
 
         return selected, {
-            'symbol': str(selected[0].get('source_symbol') or last_symbol or '') if selected else last_symbol,
+            'symbol': preferred_symbol,
+            'primary_symbol': primary_symbol,
+            'selected_symbol': selected_symbol,
+            'selected_from_fallback': selected_from_fallback,
             'symbols_scanned': symbols_scanned,
             'timeout_seconds': timeout_seconds,
             'lookback_hours': lookback_hours,
@@ -2099,6 +2112,7 @@ class MarketProvider:
                 aggregated_events: list[dict[str, Any]] = []
                 symbols_scanned: list[str] = []
                 primary_symbol: str | None = None
+                selected_news_symbol: str | None = None
                 provider_errors = 0
                 callable_providers = 0
 
@@ -2134,6 +2148,9 @@ class MarketProvider:
                             )
                             if meta.get('symbol'):
                                 primary_symbol = str(meta.get('symbol') or primary_symbol or '')
+                            selected_symbol = str(meta.get('selected_symbol') or '').strip()
+                            if selected_symbol:
+                                selected_news_symbol = selected_symbol
                             scanned = meta.get('symbols_scanned') if isinstance(meta.get('symbols_scanned'), list) else []
                             for item in scanned:
                                 value = str(item or '').strip()
@@ -2244,6 +2261,8 @@ class MarketProvider:
 
                 if primary_symbol is None:
                     primary_symbol = self._news_symbol_candidates(pair)[0] if self._news_symbol_candidates(pair) else None
+                if selected_news_symbol is None:
+                    selected_news_symbol = primary_symbol
                 if not symbols_scanned:
                     symbols_scanned = self._news_symbol_candidates(pair)[:1]
 
@@ -2274,6 +2293,7 @@ class MarketProvider:
                     'degraded': degraded,
                     'pair': pair,
                     'symbol': primary_symbol,
+                    'selected_news_symbol': selected_news_symbol,
                     'symbols_scanned': symbols_scanned,
                     **self._symbol_resolution_trace(pair),
                     'news_candidates': get_news_candidates_for_instrument(normalize_instrument(pair), provider='yfinance'),

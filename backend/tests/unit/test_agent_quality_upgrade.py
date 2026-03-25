@@ -11,6 +11,8 @@ Covers:
 """
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.services.market.news_provider import MarketProvider
 from app.services.orchestrator.agents import (
     AgentContext,
@@ -63,6 +65,29 @@ def test_news_symbol_candidates_tiered_btc_has_no_sector_fallback() -> None:
     """BTC-USD should not add itself as a sector fallback."""
     direct, fallback = MarketProvider._news_symbol_candidates_tiered('BTCUSD')
     assert 'BTC-USD' not in fallback
+
+
+@pytest.mark.parametrize(
+    ('pair', 'expected_direct'),
+    [
+        ('USDCHF', 'USDCHF=X'),
+        ('USDCAD', 'USDCAD=X'),
+        ('NZDUSD', 'NZDUSD=X'),
+        ('EURJPY', 'EURJPY=X'),
+        ('GBPJPY', 'GBPJPY=X'),
+        ('AVAXUSD', 'AVAX-USD'),
+        ('BCHUSD', 'BCH-USD'),
+        ('DOTUSD', 'DOT-USD'),
+        ('LTCUSD', 'LTC-USD'),
+        ('MATICUSD', 'MATIC-USD'),
+        ('UNIUSD', 'UNI-USD'),
+    ],
+)
+def test_news_symbol_candidates_regression_pairs_keep_exact_mapping_first(pair: str, expected_direct: str) -> None:
+    direct, fallback = MarketProvider._news_symbol_candidates_tiered(pair)
+    assert direct, f'{pair}: direct candidates must not be empty'
+    assert direct[0] == expected_direct, f'{pair}: first direct candidate must be exact mapped symbol'
+    assert expected_direct not in set(fallback), f'{pair}: exact mapped symbol must not move to fallback'
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +326,39 @@ def test_technical_degraded_output_has_full_contract() -> None:
     assert 'setup_quality' in out
 
 
+def test_technical_infra_error_stays_in_diagnostics_not_summary(monkeypatch) -> None:
+    agent = TechnicalAnalystAgent()
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_a, **_k: True)
+    monkeypatch.setattr(agent.model_selector, 'resolve', lambda *_a, **_k: 'test-model')
+    monkeypatch.setattr(agent.model_selector, 'resolve_decision_mode', lambda *_a, **_k: 'conservative')
+    monkeypatch.setattr(
+        agent.llm,
+        'chat',
+        lambda *_a, **_k: {
+            'text': 'OpenAI 429 Too Many Requests after retries',
+            'degraded': True,
+            'provider': 'openai',
+        },
+    )
+
+    out = agent.run(AgentContext(
+        pair='EURUSD', timeframe='H1', mode='simulation', risk_percent=1.0,
+        market_snapshot={
+            'trend': 'bullish', 'rsi': 55, 'macd_diff': 0.0003,
+            'atr': 0.001, 'last_price': 1.1, 'change_pct': 0.1,
+            'ema_fast': 1.101, 'ema_slow': 1.099,
+        },
+        news_context={'news': []}, memory_context=[],
+    ))
+
+    assert out['llm_fallback_used'] is True
+    assert out['degraded'] is True
+    assert '429' not in str(out.get('summary', '')).lower()
+    diagnostics = out.get('diagnostics')
+    assert isinstance(diagnostics, dict)
+    assert '429' in str(diagnostics).lower()
+
+
 # ---------------------------------------------------------------------------
 # TG7 — Market-context market_bias clarity
 # ---------------------------------------------------------------------------
@@ -367,6 +425,52 @@ def test_all_agents_expose_confidence_method() -> None:
 
     assert 'confidence_method' in ta_out
     assert 'confidence_method' in mc_out
+
+
+def test_all_agents_expose_raw_vs_final_contract_fields(monkeypatch) -> None:
+    ta = TechnicalAnalystAgent()
+    mc = MarketContextAnalystAgent()
+    news = NewsAnalystAgent(PromptTemplateService())
+    monkeypatch.setattr(news.model_selector, 'is_enabled', lambda *_a, **_k: False)
+    monkeypatch.setattr(ta.model_selector, 'is_enabled', lambda *_a, **_k: False)
+    monkeypatch.setattr(mc.model_selector, 'is_enabled', lambda *_a, **_k: False)
+
+    common_ctx = AgentContext(
+        pair='EURUSD', timeframe='H1', mode='simulation', risk_percent=1.0,
+        market_snapshot={
+            'last_price': 1.1, 'atr': 0.001, 'trend': 'bullish',
+            'change_pct': 0.02, 'rsi': 53, 'macd_diff': 0.01,
+            'ema_fast': 1.1006, 'ema_slow': 1.0998,
+        },
+        news_context={
+            'news': [
+                {
+                    'title': 'Euro strengthens as ECB rhetoric stays hawkish',
+                    'summary': 'Markets price a tighter ECB path versus Fed.',
+                    'provider': 'newsapi',
+                    'published_at': _iso_hours_ago(1),
+                    'freshness_score': 0.9,
+                    'credibility_score': 0.85,
+                }
+            ],
+            'macro_events': [],
+            'fetch_status': 'ok',
+        },
+        memory_context=[],
+    )
+
+    ta_out = ta.run(common_ctx)
+    mc_out = mc.run(common_ctx)
+    news_out = news.run(common_ctx, db=None)
+
+    for output in (ta_out, mc_out, news_out):
+        assert 'raw_score' in output
+        assert 'final_signal' in output
+        assert 'final_confidence' in output
+        assert 'diagnostics' in output
+        assert 'signal_threshold_reason' in output
+        assert 'degraded' in output
+        assert 'llm_fallback_used' in output
 
 
 # ---------------------------------------------------------------------------

@@ -42,6 +42,34 @@ def test_mixed_context_returns_neutral_low_confidence() -> None:
     assert out['score'] == 0.0
 
 
+def test_neutral_with_nonzero_score_is_explicitly_non_actionable() -> None:
+    agent = MarketContextAnalystAgent()
+    out = agent.run(
+        _ctx(
+            {
+                'last_price': 150.0,
+                'atr': 2.0,
+                'trend': 'bullish',
+                'change_pct': 0.02,
+                'rsi': 54,
+                'macd_diff': 0.05,
+                'ema_fast': 150.4,
+                'ema_slow': 149.9,
+            }
+        )
+    )
+
+    assert out['signal'] == 'neutral'
+    assert abs(out['score']) > 0.0
+    assert out['market_bias'] == 'bullish'
+    assert out.get('final_signal') == 'neutral'
+    assert out.get('raw_score') == out['score']
+    assert isinstance(out.get('signal_threshold_reason'), str)
+    assert bool(str(out.get('signal_threshold_reason')).strip())
+    summary_lower = str(out.get('summary') or '').lower()
+    assert ('non-actionable' in summary_lower) or ('non actionnable' in summary_lower)
+
+
 def test_supportive_regime_allows_moderate_bullish_bias() -> None:
     agent = MarketContextAnalystAgent()
     out = agent.run(

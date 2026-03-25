@@ -229,6 +229,68 @@ def test_get_news_context_tries_fallback_candidates(monkeypatch) -> None:
     assert 'EURUSD=X' in calls
 
 
+@pytest.mark.parametrize(
+    ('pair', 'expected_primary_symbol', 'fallback_symbol'),
+    [
+        ('USDCHF.PRO', 'USDCHF=X', 'DX-Y.NYB'),
+        ('USDCAD.PRO', 'USDCAD=X', 'DX-Y.NYB'),
+        ('NZDUSD.PRO', 'NZDUSD=X', 'BNZL'),
+        ('EURJPY.PRO', 'EURJPY=X', '^GSPC'),
+        ('GBPJPY.PRO', 'GBPJPY=X', '^GSPC'),
+        ('AVAXUSD', 'AVAX-USD', 'BTC-USD'),
+        ('BCHUSD', 'BCH-USD', 'BTC-USD'),
+        ('DOTUSD', 'DOT-USD', 'BTC-USD'),
+        ('LTCUSD', 'LTC-USD', 'BTC-USD'),
+        ('MATICUSD', 'MATIC-USD', 'BTC-USD'),
+        ('UNIUSD', 'UNI-USD', 'BTC-USD'),
+    ],
+)
+def test_get_news_context_preserves_primary_symbol_when_fallback_provides_news(
+    monkeypatch,
+    pair: str,
+    expected_primary_symbol: str,
+    fallback_symbol: str,
+) -> None:
+    provider = MarketProvider()
+    provider.settings.yfinance_cache_enabled = False
+    provider._redis = None
+    provider.settings.news_providers = {
+        'yahoo_finance': {'enabled': True, 'priority': 100},
+        'newsapi': {'enabled': False},
+        'tradingeconomics': {'enabled': False},
+        'finnhub': {'enabled': False},
+        'alphavantage': {'enabled': False},
+        'llm_search': {'enabled': False},
+    }
+
+    class _FakeTicker:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        @property
+        def news(self):
+            if self.symbol == fallback_symbol:
+                return [
+                    {
+                        'title': 'Proxy headline',
+                        'publisher': 'unit',
+                        'link': 'https://example.com/proxy',
+                        'providerPublishTime': _epoch_hours_ago(1),
+                    }
+                ]
+            return []
+
+    monkeypatch.setattr('app.services.market.news_provider.yf.Ticker', _FakeTicker)
+
+    payload = provider.get_news_context(pair, limit=5)
+
+    assert payload['degraded'] is False
+    assert payload['symbol'] == expected_primary_symbol
+    assert payload.get('selected_news_symbol') == fallback_symbol
+    assert len(payload['news']) == 1
+    assert payload['news'][0]['source_symbol'] == fallback_symbol
+
+
 def test_get_news_context_supports_nested_yfinance_news_schema(monkeypatch) -> None:
     provider = MarketProvider()
     provider.settings.yfinance_cache_enabled = False
