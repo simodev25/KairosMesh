@@ -70,11 +70,16 @@ def test_news_symbol_candidates_tiered_btc_has_no_sector_fallback() -> None:
 @pytest.mark.parametrize(
     ('pair', 'expected_direct'),
     [
+        ('EURUSD', 'EURUSD=X'),
         ('USDCHF', 'USDCHF=X'),
         ('USDCAD', 'USDCAD=X'),
         ('NZDUSD', 'NZDUSD=X'),
         ('EURJPY', 'EURJPY=X'),
         ('GBPJPY', 'GBPJPY=X'),
+        ('EURGBP', 'EURGBP=X'),
+        ('BTCUSD', 'BTC-USD'),
+        ('ETHUSD', 'ETH-USD'),
+        ('DOGEUSD', 'DOGE-USD'),
         ('AVAXUSD', 'AVAX-USD'),
         ('BCHUSD', 'BCH-USD'),
         ('DOTUSD', 'DOT-USD'),
@@ -359,6 +364,36 @@ def test_technical_infra_error_stays_in_diagnostics_not_summary(monkeypatch) -> 
     assert '429' in str(diagnostics).lower()
 
 
+def test_technical_neutral_signal_does_not_keep_directional_llm_summary(monkeypatch) -> None:
+    agent = TechnicalAnalystAgent()
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_a, **_k: True)
+    monkeypatch.setattr(agent.model_selector, 'resolve', lambda *_a, **_k: 'test-model')
+    monkeypatch.setattr(agent.model_selector, 'resolve_decision_mode', lambda *_a, **_k: 'conservative')
+    monkeypatch.setattr(
+        agent.llm,
+        'chat',
+        lambda *_a, **_k: {
+            'text': 'bullish\nsetup_quality=low\nvalidation=breakout confirmation\ninvalidation=below local support',
+            'degraded': False,
+            'provider': 'unit-test',
+        },
+    )
+
+    out = agent.run(AgentContext(
+        pair='EURUSD', timeframe='H1', mode='simulation', risk_percent=1.0,
+        market_snapshot={
+            'trend': 'neutral', 'rsi': 50, 'macd_diff': 0.0,
+            'atr': 0.001, 'last_price': 1.1, 'change_pct': 0.0,
+            'ema_fast': 1.1, 'ema_slow': 1.1,
+        },
+        news_context={'news': []}, memory_context=[],
+    ))
+
+    assert out['signal'] == 'neutral'
+    assert out['summary'].startswith('neutral')
+    assert 'bullish' not in str(out.get('summary') or '').lower()
+
+
 # ---------------------------------------------------------------------------
 # TG7 — Market-context market_bias clarity
 # ---------------------------------------------------------------------------
@@ -471,6 +506,8 @@ def test_all_agents_expose_raw_vs_final_contract_fields(monkeypatch) -> None:
         assert 'signal_threshold_reason' in output
         assert 'degraded' in output
         assert 'llm_fallback_used' in output
+        assert 'evidence_total_count' in output
+        assert 'evidence_exposed_count' in output
 
 
 # ---------------------------------------------------------------------------

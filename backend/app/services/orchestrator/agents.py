@@ -1937,6 +1937,8 @@ class TechnicalAnalystAgent:
                 'degraded': True,
                 'llm_call_attempted': False,
                 'llm_fallback_used': False,
+                'evidence_total_count': 0,
+                'evidence_exposed_count': 0,
                 'diagnostics': {
                     'llm': {
                         'attempted': False,
@@ -2143,6 +2145,8 @@ class TechnicalAnalystAgent:
             'llm_enabled': llm_enabled,
             'llm_call_attempted': False,
             'llm_fallback_used': False,
+            'evidence_total_count': 0,
+            'evidence_exposed_count': 0,
             'llm_summary': None,
             'diagnostics': {
                 'llm': {
@@ -2349,6 +2353,14 @@ class TechnicalAnalystAgent:
                 setup_quality=setup_quality,
                 market_bias=market_bias,
             )
+        else:
+            parsed_summary_signal = _parse_signal_from_text(summary_text or '')
+            if parsed_summary_signal != merged_signal and (summary_text or '').strip():
+                summary_text = self._business_summary(
+                    signal=merged_signal,
+                    setup_quality=setup_quality,
+                    market_bias=market_bias,
+                )
 
         merged_confidence = self._compute_confidence(merged_score, setup_quality)
         signal_threshold_reason = self._signal_threshold_reason(
@@ -3272,7 +3284,18 @@ class NewsAnalystAgent:
         macro_integration_status = (
             'enabled_with_events'
             if len(valid_macro_events) > 0
-            else ('unavailable' if fetch_status == 'error' else 'enabled_no_events')
+            else (
+                'disabled'
+                if str(provider_status.get('tradingeconomics') or '').strip().lower() == 'disabled'
+                else (
+                    'unavailable'
+                    if (
+                        fetch_status == 'error'
+                        or str(provider_status.get('tradingeconomics') or '').strip().lower() in {'unavailable', 'error'}
+                    )
+                    else 'enabled_no_events'
+                )
+            )
         )
         llm_diag_error = None
         if llm_call_attempted and llm_fallback_used and llm_summary.strip():
@@ -3600,6 +3623,8 @@ class MarketContextAnalystAgent:
                     },
                 },
                 'degraded': True,
+                'evidence_total_count': 0,
+                'evidence_exposed_count': 0,
                 '_mixed_context': True,
             }
 
@@ -3756,6 +3781,8 @@ class MarketContextAnalystAgent:
                 },
             },
             'degraded': False,
+            'evidence_total_count': 0,
+            'evidence_exposed_count': 0,
             '_mixed_context': mixed_context,
         }
 

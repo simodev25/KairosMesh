@@ -232,11 +232,14 @@ def test_get_news_context_tries_fallback_candidates(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ('pair', 'expected_primary_symbol', 'fallback_symbol'),
     [
+        ('EURUSD.PRO', 'EURUSD=X', 'DX-Y.NYB'),
         ('USDCHF.PRO', 'USDCHF=X', 'DX-Y.NYB'),
         ('USDCAD.PRO', 'USDCAD=X', 'DX-Y.NYB'),
         ('NZDUSD.PRO', 'NZDUSD=X', 'BNZL'),
         ('EURJPY.PRO', 'EURJPY=X', '^GSPC'),
         ('GBPJPY.PRO', 'GBPJPY=X', '^GSPC'),
+        ('EURGBP.PRO', 'EURGBP=X', '^GSPC'),
+        ('DOGEUSD', 'DOGE-USD', 'BTC-USD'),
         ('AVAXUSD', 'AVAX-USD', 'BTC-USD'),
         ('BCHUSD', 'BCH-USD', 'BTC-USD'),
         ('DOTUSD', 'DOT-USD', 'BTC-USD'),

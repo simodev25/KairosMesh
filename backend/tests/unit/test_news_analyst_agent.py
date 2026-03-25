@@ -289,6 +289,45 @@ def test_news_analyst_never_claims_macro_contribution_when_macro_counts_are_zero
     assert out.get('macro_integration_status') in {'disabled', 'enabled_no_events', 'unavailable'}
 
 
+def test_news_analyst_marks_macro_integration_disabled_when_provider_disabled(monkeypatch) -> None:
+    agent = NewsAnalystAgent(PromptTemplateService())
+    ctx = _news_context()
+    ctx.news_context['provider_status_compact'] = {'newsapi': 'ok', 'tradingeconomics': 'disabled'}
+    _configure_llm(agent, monkeypatch, 'neutral\ncase=no_signal\nLLM disabled for deterministic test.', enabled=False)
+
+    out = agent.run(ctx, db=None)
+
+    assert out['macro_event_count'] == 0
+    assert out['retained_macro_event_count'] == 0
+    assert out.get('macro_integration_status') == 'disabled'
+
+
+def test_news_analyst_keeps_infra_429_text_out_of_primary_summary(monkeypatch) -> None:
+    agent = NewsAnalystAgent(PromptTemplateService())
+    ctx = _news_context()
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(agent.model_selector, 'resolve', lambda *_args, **_kwargs: 'dummy-model')
+    monkeypatch.setattr(agent.model_selector, 'resolve_decision_mode', lambda *_args, **_kwargs: 'conservative')
+    monkeypatch.setattr(
+        agent.llm,
+        'chat',
+        lambda *_args, **_kwargs: {
+            'text': 'OpenAI 429 Too Many Requests after retries',
+            'degraded': True,
+            'provider': 'openai',
+        },
+    )
+
+    out = agent.run(ctx, db=None)
+
+    assert out['llm_fallback_used'] is True
+    assert out['degraded'] is True
+    assert '429' not in str(out.get('summary', '')).lower()
+    diagnostics = out.get('diagnostics')
+    assert isinstance(diagnostics, dict)
+    assert '429' in str(diagnostics).lower()
+
+
 @pytest.mark.parametrize(
     ('pair', 'expected_signal'),
     [
