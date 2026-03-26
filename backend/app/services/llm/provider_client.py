@@ -134,8 +134,9 @@ class LlmClient:
             'json_error': parse_error,
         }
 
-    def list_models(self, db: Session | None = None) -> dict[str, Any]:
-        provider = self._resolve_provider(db)
+    def list_models(self, db: Session | None = None, provider: str | None = None) -> dict[str, Any]:
+        resolved_provider = self._resolve_provider(db)
+        provider = normalize_llm_provider(provider, fallback=resolved_provider) if provider is not None else resolved_provider
         client = self._provider_client(provider)
         payload = self._invoke_client_method(client.list_models, db=db)
         if not isinstance(payload, dict):

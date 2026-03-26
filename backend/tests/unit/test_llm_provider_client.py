@@ -51,3 +51,26 @@ def test_llm_client_lists_models_for_selected_provider() -> None:
         result = client.list_models(db)
         assert result['provider'] == 'openai'
         assert result['models'] == ['gpt-4o-mini']
+
+
+def test_llm_client_lists_models_for_explicit_provider_override() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        AgentModelSelector.clear_cache()
+        db.add(
+            ConnectorConfig(
+                connector_name='ollama',
+                enabled=True,
+                settings={'provider': 'openai'},
+            )
+        )
+        db.commit()
+
+        client = LlmClient()
+        client.mistral.list_models = lambda: {'provider': 'mistral', 'models': ['mistral-small-latest'], 'source': 'mock'}  # type: ignore[method-assign]
+
+        result = client.list_models(db, provider='mistral')
+        assert result['provider'] == 'mistral'
+        assert result['models'] == ['mistral-small-latest']

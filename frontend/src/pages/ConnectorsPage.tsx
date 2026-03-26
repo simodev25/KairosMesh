@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { CRYPTO_PAIRS, DEFAULT_PAIR, DEFAULT_TIMEFRAMES, FOREX_PAIRS, TRADEABLE_PAIRS } from '../constants/markets';
 import { useAuth } from '../hooks/useAuth';
@@ -389,6 +389,7 @@ export function ConnectorsPage() {
   );
   const [modelChoices, setModelChoices] = useState<string[]>([]);
   const [modelSource, setModelSource] = useState<string>('');
+  const modelChoicesRequestId = useRef(0);
   const [savingModels, setSavingModels] = useState(false);
   const [decisionModeSaving, setDecisionModeSaving] = useState(false);
 
@@ -427,7 +428,7 @@ export function ConnectorsPage() {
   const [cacheAccountInfoTtl, setCacheAccountInfoTtl] = useState(5);
   const [savingCache, setSavingCache] = useState(false);
 
-  const hydrateAgentModels = (connectorRows: ConnectorConfig[]) => {
+  const hydrateAgentModels = (connectorRows: ConnectorConfig[]): LlmProvider => {
     const ollama = connectorRows.find((item) => item.connector_name === 'ollama');
     const settings = (ollama?.settings ?? {}) as Record<string, unknown>;
     const provider = normalizeLlmProvider(settings.provider);
@@ -538,6 +539,7 @@ export function ConnectorsPage() {
     setAgentLlmEnabled(nextEnabled);
     setAgentToolCatalog(nextToolCatalog);
     setAgentTools(nextTools);
+    return provider;
   };
 
   const hydrateSecretFields = (connectorRows: ConnectorConfig[]) => {
@@ -597,15 +599,35 @@ export function ConnectorsPage() {
     setCacheAccountInfoTtl(typeof s.cache_account_info_ttl === 'number' ? s.cache_account_info_ttl : 5);
   };
 
+  const refreshModelChoices = async (provider: LlmProvider) => {
+    if (!token) return;
+    const requestId = modelChoicesRequestId.current + 1;
+    modelChoicesRequestId.current = requestId;
+
+    const payload = await api.listOllamaModels(token, provider).catch(() => ({
+      models: [],
+      source: null,
+      error: 'cannot fetch models',
+      provider,
+    }));
+    if (requestId !== modelChoicesRequestId.current) return;
+
+    setModelChoices(Array.isArray(payload.models) ? payload.models : []);
+    const modelSourceParts = [
+      typeof payload.provider === 'string' && payload.provider.trim() ? payload.provider.trim() : provider,
+      typeof payload.source === 'string' && payload.source.trim() ? payload.source.trim() : '',
+    ].filter((part) => part.length > 0);
+    setModelSource(modelSourceParts.join(' | '));
+  };
+
   const loadAll = async () => {
     if (!token) return;
     try {
-      const [c, a, p, s, m, usage, symbols] = await Promise.all([
+      const [c, a, p, s, usage, symbols] = await Promise.all([
         api.listConnectors(token),
         api.listMetaApiAccounts(token),
         api.listPrompts(token),
         api.llmSummary(token),
-        api.listOllamaModels(token).catch(() => ({ models: [], source: null, error: 'cannot fetch models', provider: null })),
         api.llmModelsUsage(token).catch(() => []),
         api.getMarketSymbols(token).catch(() => ({
           forex_pairs: FOREX_PAIRS,
@@ -634,12 +656,6 @@ export function ConnectorsPage() {
       setAccounts(accountRows);
       setPrompts(p as PromptTemplate[]);
       setSummary(s as LlmSummary);
-      setModelChoices(Array.isArray(m.models) ? m.models : []);
-      const modelSourceParts = [
-        typeof m.provider === 'string' && m.provider.trim() ? m.provider.trim() : '',
-        typeof m.source === 'string' && m.source.trim() ? m.source.trim() : '',
-      ].filter((part) => part.length > 0);
-      setModelSource(modelSourceParts.join(' | '));
       setModelsUsage(usage as LlmModelUsage[]);
       setMarketSymbols({
         forex_pairs: forexPairs,
@@ -649,7 +665,8 @@ export function ConnectorsPage() {
         source: typeof symbolsPayload.source === 'string' ? symbolsPayload.source : 'config',
       });
       setSymbolGroupsInput(toEditableGroups(symbolGroups));
-      hydrateAgentModels(connectorRows);
+      const provider = hydrateAgentModels(connectorRows);
+      void refreshModelChoices(provider);
       hydrateSecretFields(connectorRows);
       hydrateNewsProviders(connectorRows);
       hydrateCacheSettings(connectorRows);
@@ -1278,7 +1295,14 @@ export function ConnectorsPage() {
               <form className="flex flex-col gap-3" onSubmit={saveAgentModels}>
                 <label>
                   Provider LLM
-                  <select value={llmProvider} onChange={(e) => setLlmProvider(normalizeLlmProvider(e.target.value))}>
+                  <select
+                    value={llmProvider}
+                    onChange={(e) => {
+                      const provider = normalizeLlmProvider(e.target.value);
+                      setLlmProvider(provider);
+                      void refreshModelChoices(provider);
+                    }}
+                  >
                     {LLM_PROVIDERS.map((provider) => (
                       <option key={provider} value={provider}>
                         {provider}

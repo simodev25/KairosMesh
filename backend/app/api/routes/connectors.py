@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -297,10 +297,11 @@ def update_market_symbols(
 
 @router.get('/ollama/models')
 def list_ollama_models(
+    provider: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
 ) -> dict:
-    return LlmClient().list_models(db)
+    return LlmClient().list_models(db, provider=provider)
 
 
 @router.put('/{connector_name}', response_model=ConnectorConfigOut)

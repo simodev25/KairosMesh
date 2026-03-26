@@ -128,9 +128,9 @@ export const api = {
     const query = pair ? `?pair=${encodeURIComponent(pair)}` : '';
     return request(`/connectors/news/news-providers/${encodeURIComponent(provider)}/test${query}`, { method: 'POST' }, token);
   },
-  listOllamaModels: (token: string) =>
+  listOllamaModels: (token: string, provider?: string) =>
     request<{ models: string[]; source?: string | null; error?: string; provider?: string | null }>(
-      '/connectors/ollama/models',
+      `/connectors/ollama/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`,
       {},
       token,
     ),
