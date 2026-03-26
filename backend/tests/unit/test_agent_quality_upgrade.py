@@ -558,6 +558,58 @@ def test_technical_conflict_divergence_reduces_setup_quality(monkeypatch) -> Non
     assert _setup_quality_rank(conflict_out['setup_quality']) < _setup_quality_rank(base_out['setup_quality'])
 
 
+def test_technical_observed_conflict_case_clamps_setup_to_low(monkeypatch) -> None:
+    import app.services.agent_runtime.mcp_trading_server as mcp
+
+    monkeypatch.setattr(mcp, 'divergence_detector', lambda **_kwargs: {'divergences': []})
+    monkeypatch.setattr(
+        mcp,
+        'pattern_detector',
+        lambda **_kwargs: {
+            'patterns': [
+                {'type': 'bearish_engulfing', 'signal': 'bearish', 'strength': 0.85, 'bar_index': 238},
+                {'type': 'doji', 'signal': 'neutral', 'strength': 0.5, 'bar_index': 239},
+                {'type': 'pin_bar', 'signal': 'bullish', 'strength': 0.8, 'bar_index': 240},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        mcp,
+        'multi_timeframe_context',
+        lambda **_kwargs: {'dominant_direction': 'bearish', 'alignment_score': 1.0, 'all_aligned': True},
+    )
+    monkeypatch.setattr(
+        mcp,
+        'support_resistance_detector',
+        lambda **_kwargs: {'levels': [{'price': 1.15814, 'distance_pct': 0.43, 'type': 'resistance'}]},
+    )
+
+    agent = TechnicalAnalystAgent()
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_a, **_k: False)
+    out = agent.run(
+        AgentContext(
+            pair='EURUSD.PRO',
+            timeframe='H1',
+            mode='simulation',
+            risk_percent=1.0,
+            market_snapshot={
+                'trend': 'bearish',
+                'rsi': 49.8,
+                'macd_diff': 0.0002,
+                'atr': 0.000734,
+                'last_price': 1.15321,
+                'change_pct': -0.05,
+            },
+            news_context={'news': []},
+            memory_context=[],
+            price_history=_price_history_bars(),
+        )
+    )
+
+    assert out['setup_quality'] == 'low'
+    assert out['signal'] in {'bearish', 'neutral'}
+
+
 def test_technical_confused_context_prefers_neutral_low_quality(monkeypatch) -> None:
     import app.services.agent_runtime.mcp_trading_server as mcp
 
@@ -594,6 +646,52 @@ def test_technical_confused_context_prefers_neutral_low_quality(monkeypatch) -> 
 
     assert out['signal'] == 'neutral'
     assert out['setup_quality'] == 'low'
+
+
+def test_technical_strong_structure_without_local_momentum_stays_low(monkeypatch) -> None:
+    import app.services.agent_runtime.mcp_trading_server as mcp
+
+    monkeypatch.setattr(mcp, 'divergence_detector', lambda **_kwargs: {'divergences': []})
+    monkeypatch.setattr(
+        mcp,
+        'pattern_detector',
+        lambda **_kwargs: {'patterns': [{'type': 'doji', 'signal': 'neutral', 'strength': 0.5, 'bar_index': 240}]},
+    )
+    monkeypatch.setattr(
+        mcp,
+        'multi_timeframe_context',
+        lambda **_kwargs: {'dominant_direction': 'bearish', 'alignment_score': 1.0, 'all_aligned': True},
+    )
+    monkeypatch.setattr(
+        mcp,
+        'support_resistance_detector',
+        lambda **_kwargs: {'levels': [{'price': 1.15814, 'distance_pct': 0.43, 'type': 'resistance'}]},
+    )
+
+    agent = TechnicalAnalystAgent()
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_a, **_k: False)
+    out = agent.run(
+        AgentContext(
+            pair='EURUSD.PRO',
+            timeframe='H1',
+            mode='simulation',
+            risk_percent=1.0,
+            market_snapshot={
+                'trend': 'bearish',
+                'rsi': 48.2,
+                'macd_diff': 0.0001,
+                'atr': 0.000734,
+                'last_price': 1.15321,
+                'change_pct': -0.02,
+            },
+            news_context={'news': []},
+            memory_context=[],
+            price_history=_price_history_bars(),
+        )
+    )
+
+    assert out['setup_quality'] == 'low'
+    assert out['signal'] in {'bearish', 'neutral'}
 
 
 def test_technical_prompt_handles_partial_tools_without_hallucination(monkeypatch) -> None:

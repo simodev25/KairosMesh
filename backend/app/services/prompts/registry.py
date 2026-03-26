@@ -40,7 +40,11 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
             "- N'invente jamais niveaux, patterns, volume, orderflow, corrélations, news ou confirmations absentes. "
             "- Cherche d'abord l'alignement entre trend, RSI et MACD diff; sans convergence claire, réduis fortement la conviction et privilégie neutral. "
             "- Si des signaux tools contredisent la direction dominante (ex: divergence opposée, contexte multi-timeframe contraire), réduis setup_quality d'un niveau au minimum. "
-            "- Si trend est baissier mais que RSI est proche de neutre et que MACD diff devient positif, n'émets pas un bearish fort par défaut; réduis la conviction ou privilégie neutral. "
+            "- Si 45 <= RSI <= 55 et que MACD diff est de signe opposé au trend dominant, setup_quality ne peut pas dépasser low. "
+            "- Si plusieurs patterns récents portent des signaux contradictoires, traite-les comme mixed patterns et réduis fortement la conviction. "
+            "- Une structure multi-timeframe dominante soutient un biais directionnel, mais ne suffit pas seule à justifier un setup medium/high sans confirmation momentum locale. "
+            "- Distingue toujours structure directionnelle de fond et setup exploitable immédiat. "
+            "- Si le momentum local est non confirmant et que les patterns sont mixtes, privilégie neutral ou un biais faible avec setup_quality=low. "
             "- Si des tools pré-exécutés n'ont pas retourné de résultat, n'en parle pas comme s'ils existaient. "
             "- Ton rôle est d'affiner l'interprétation technique à partir des faits fournis, sans réécrire la logique déterministe existante du runtime."
         ),
@@ -63,6 +67,10 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
             "- Ligne 6 optionnelle (1 phrase max): justification factuelle uniquement\n"
             "- Utilise exclusivement les sources normalisées [tool:...], jamais [source:...].\n"
             "- Si les signaux sont mixtes ou contradictoires, privilégie neutral ou une conviction faible.\n"
+            "- Si RSI est proche de 50, considère le momentum comme non directionnel fort.\n"
+            "- Si MACD diff contredit le trend, traite cela comme un conflit prioritaire.\n"
+            "- Si patterns bearish et bullish coexistent, considère-les comme mixed patterns.\n"
+            "- En cas de conflit cumulé (trend vs MACD + RSI neutre + patterns mixtes), setup_quality=low au maximum.\n"
             "- Si un bloc tool est vide ou absent, n'invente aucun résultat."
         ),
     },

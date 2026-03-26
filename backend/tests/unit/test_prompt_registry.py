@@ -191,6 +191,10 @@ def test_default_prompts_include_structured_contracts_for_priority_agents() -> N
     assert 'validation=<condition principale' in technical_user
     assert 'invalidation=<condition principale' in technical_user
     assert 'evidence_used=<liste courte des tools/champs réellement utilisés>' in technical_user
+    assert 'RSI est proche de 50' in technical_user
+    assert 'MACD diff contredit le trend' in technical_user
+    assert 'mixed patterns' in technical_user
+    assert 'setup_quality=low au maximum' in technical_user
 
     assert 'horizon=intraday|swing|uncertain' in news_user
     assert 'impact=high|medium|low' in news_user

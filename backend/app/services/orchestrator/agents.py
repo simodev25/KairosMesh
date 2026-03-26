@@ -2101,9 +2101,13 @@ class TechnicalAnalystAgent:
         interpretation_rules_block = '\n'.join(
             [
                 '- Prioriser d abord la structure / tendance, puis le momentum, puis les signaux contraires.',
+                '- Si RSI est entre 45 et 55, considérer le momentum comme neutre (non fortement directionnel).',
+                '- Si MACD diff est de signe opposé au trend dominant, traiter cela comme un conflit de momentum.',
+                '- Si des patterns récents portent des signaux opposés, les traiter comme mixed patterns, pas comme confirmation forte.',
                 '- En cas de conflit entre divergence et tendance dominante, réduire la conviction.',
-                '- Si multi_timeframe_context confirme fortement la direction dominante, éviter un renversement rapide.',
-                '- En absence de convergence claire entre trend, RSI et MACD diff, privilégier neutral ou conviction faible.',
+                '- Une structure multi-timeframe dominante soutient un biais, mais ne suffit pas seule à qualifier un setup medium/high.',
+                '- En cas de conflit cumulé (trend vs MACD diff + RSI neutre + patterns mixtes), setup_quality ne peut pas dépasser low.',
+                '- En absence de convergence claire entre trend, RSI et MACD diff, privilégier neutral.',
                 '- N inventer aucun niveau, pattern, volume, orderflow, news, corrélation ou signal absent.',
                 '- Utiliser uniquement les faits et tools listés ci-dessus.',
             ]
@@ -2291,6 +2295,26 @@ class TechnicalAnalystAgent:
         _mtf_result = dict(multi_timeframe_tool.get('data') or {})
         _divergences = _div_result.get('divergences') if isinstance(_div_result.get('divergences'), list) else []
         _patterns = _pat_result.get('patterns') if isinstance(_pat_result.get('patterns'), list) else []
+        _pattern_bullish_count = sum(
+            1
+            for pat in _patterns
+            if isinstance(pat, dict) and str(pat.get('signal') or '').strip().lower() == 'bullish'
+        )
+        _pattern_bearish_count = sum(
+            1
+            for pat in _patterns
+            if isinstance(pat, dict) and str(pat.get('signal') or '').strip().lower() == 'bearish'
+        )
+        _pattern_neutral_count = sum(
+            1
+            for pat in _patterns
+            if isinstance(pat, dict) and str(pat.get('signal') or '').strip().lower() == 'neutral'
+        )
+        _patterns_mixed = _pattern_bullish_count > 0 and _pattern_bearish_count > 0
+        _patterns_contradictory = _patterns_mixed or (
+            (_pattern_bullish_count > 0 or _pattern_bearish_count > 0)
+            and _pattern_neutral_count > 0
+        )
 
         for div in _divergences:
             if not isinstance(div, dict):
@@ -2299,20 +2323,28 @@ class TechnicalAnalystAgent:
                 score += 0.06
             elif div.get('type') == 'bearish':
                 score -= 0.06
+        pattern_delta = 0.0
         for pat in _patterns:
             if not isinstance(pat, dict):
                 continue
             strength = _safe_float(pat.get('strength'), 0.0)
             if pat.get('signal') == 'bullish':
-                score += strength * 0.04
+                pattern_delta += strength * 0.04
             elif pat.get('signal') == 'bearish':
-                score -= strength * 0.04
+                pattern_delta -= strength * 0.04
+        if _patterns_contradictory:
+            # Conflicting candlestick readings are treated as noisy context, not strong confirmation.
+            pattern_delta *= 0.35
+        score += pattern_delta
         score = round(max(-1.0, min(1.0, score)), 4)
 
         _trend_directional = trend in {'bullish', 'bearish'}
         _macd_aligned = (trend == 'bullish' and macd_diff > 0) or (trend == 'bearish' and macd_diff < 0)
-        _rsi_aligned = (trend == 'bullish' and rsi >= 50) or (trend == 'bearish' and rsi <= 50)
+        _macd_conflict = (trend == 'bullish' and macd_diff < 0) or (trend == 'bearish' and macd_diff > 0)
+        _rsi_neutral = 45.0 <= rsi <= 55.0
+        _rsi_aligned = (trend == 'bullish' and rsi >= 55) or (trend == 'bearish' and rsi <= 45)
         _indicator_convergence = int(_trend_directional) + int(_rsi_aligned) + int(_macd_aligned)
+        _momentum_conflict = _trend_directional and _rsi_neutral and _macd_conflict
         _has_bullish_divergence = any(
             isinstance(div, dict) and str(div.get('type') or '').strip().lower() == 'bullish'
             for div in _divergences
@@ -2356,6 +2388,12 @@ class TechnicalAnalystAgent:
 
         if _divergence_conflict:
             setup_quality = self._downgrade_setup_quality(setup_quality)
+        if _patterns_contradictory:
+            setup_quality = self._downgrade_setup_quality(setup_quality)
+        if _momentum_conflict:
+            setup_quality = 'low'
+        if _momentum_conflict and _patterns_contradictory:
+            setup_quality = 'low'
         if _indicator_convergence <= 1:
             setup_quality = 'low'
 
@@ -2364,6 +2402,8 @@ class TechnicalAnalystAgent:
             signal = 'neutral'
         else:
             signal = 'bullish' if score > 0.15 else 'bearish' if score < -0.15 else 'neutral'
+        if _momentum_conflict and _patterns_contradictory and abs(score) < 0.45:
+            signal = 'neutral'
         if (
             _mtf_strong_confirmation
             and signal in {'bullish', 'bearish'}
@@ -2558,7 +2598,11 @@ class TechnicalAnalystAgent:
             'Tu es un analyste technique multi-actifs discipliné. '
             'Tu sépares faits, inférences et incertitudes. '
             'Tu raisonnes en conditions de validation/invalidation. '
-            'N invente jamais niveaux, patterns, volume, corrélations ou news absents.'
+            'N invente jamais niveaux, patterns, volume, corrélations ou news absents. '
+            'Si 45 <= RSI <= 55 et que MACD diff contredit le trend, setup_quality ne peut pas dépasser low. '
+            'Si les patterns récents sont contradictoires, traite-les comme mixed patterns et réduis fortement la conviction. '
+            'Une dominance multi-timeframe seule ne suffit pas à produire medium/high sans confirmation momentum locale. '
+            'Sans convergence claire trend/RSI/MACD, privilégie neutral.'
         )
         fallback_user = (
             'Instrument: {pair}\nAsset class: {asset_class}\nTimeframe: {timeframe}\n\n'
@@ -2688,11 +2732,19 @@ class TechnicalAnalystAgent:
 
         if _divergence_conflict:
             setup_quality = self._downgrade_setup_quality(setup_quality)
+        if _patterns_contradictory:
+            setup_quality = self._downgrade_setup_quality(setup_quality)
+        if _momentum_conflict:
+            setup_quality = 'low'
+        if _momentum_conflict and _patterns_contradictory:
+            setup_quality = 'low'
         if _indicator_convergence <= 1:
             setup_quality = 'low'
 
         # Override trade signal when LLM confirms low quality
         if setup_quality == 'low' and abs(merged_score) < 0.30:
+            merged_signal = 'neutral'
+        if _momentum_conflict and _patterns_contradictory and abs(merged_score) < 0.45:
             merged_signal = 'neutral'
         if (
             _mtf_strong_confirmation
