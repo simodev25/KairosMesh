@@ -302,6 +302,39 @@ class AgenticTradingRuntime:
             return safe[:5]
         return safe
 
+    @staticmethod
+    def _llm_tool_usage_proven(output: dict[str, Any]) -> bool:
+        tooling = output.get('tooling')
+        if not isinstance(tooling, dict):
+            return False
+        calls = tooling.get('llm_tool_calls')
+        if not isinstance(calls, list):
+            return False
+
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            status = str(call.get('status') or '').strip().lower()
+            if status != 'ok':
+                continue
+            tool_name = str(call.get('name') or '').strip()
+            if not tool_name:
+                continue
+            source = str(call.get('source') or '').strip().lower()
+            call_id = str(call.get('id') or '').strip().lower()
+            if source in {'runtime_default', 'runtime_preload'}:
+                continue
+            if call_id.startswith('runtime_default_') or call_id.startswith('runtime_tool_'):
+                continue
+            return True
+        return False
+
+    def _attach_llm_tool_usage_proof(self, output: dict[str, Any]) -> None:
+        tooling = output.get('tooling')
+        if not isinstance(tooling, dict):
+            return
+        tooling['llm_tool_usage_proven'] = self._llm_tool_usage_proven(output)
+
     def _record_agent_step(
         self,
         db: Session,
@@ -313,6 +346,8 @@ class AgenticTradingRuntime:
     ) -> dict[str, Any]:
         started = time.perf_counter()
         output = fn()
+        if isinstance(output, dict):
+            self._attach_llm_tool_usage_proof(output)
         orchestrator_step_duration_seconds.labels(agent=agent_name).observe(time.perf_counter() - started)
         self.orchestrator._record_step(db, run, agent_name, input_payload, output)
         return output

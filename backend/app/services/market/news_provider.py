@@ -459,10 +459,17 @@ class MarketProvider:
         if resolution.success and resolution.provider_symbol:
             add_candidate(resolution.provider_symbol)
         add_candidate(instrument.provider_symbols.get('yfinance', ''))
-        add_candidate(instrument.canonical_symbol)
+
+        # Only add canonical_symbol if it matches the resolved provider symbol.
+        # Raw canonical forms (e.g. USDCAD, AVAXUSD) are not valid YFinance
+        # tickers and must not compete with the proper format (USDCAD=X, AVAX-USD).
+        canonical = instrument.canonical_symbol
+        resolved_provider = str(resolution.provider_symbol or '').strip()
+        if canonical and canonical == resolved_provider:
+            add_candidate(canonical)
 
         normalized_raw = cls._normalize_pair(cleaned)
-        if instrument.asset_class.value != 'forex':
+        if instrument.asset_class.value not in ('forex', 'crypto'):
             add_candidate(normalized_raw)
 
         index_alias = cls.index_alias_map.get(normalized_raw)
@@ -649,6 +656,16 @@ class MarketProvider:
     def _news_symbol_candidates(cls, pair: str) -> list[str]:
         direct, fallback = cls._news_symbol_candidates_tiered(pair)
         return direct + fallback
+
+    @classmethod
+    def _exact_yfinance_primary_symbol(cls, pair: str) -> str | None:
+        instrument = normalize_instrument(pair)
+        resolution = resolve_symbol_for_provider(pair, 'yfinance', instrument)
+        resolved = str(resolution.provider_symbol or '').strip()
+        if resolution.success and resolved:
+            return resolved
+        mapped = str(instrument.provider_symbols.get('yfinance') or '').strip()
+        return mapped or None
 
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -1259,7 +1276,10 @@ class MarketProvider:
         min_dt = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
 
         direct, fallback = self._news_symbol_candidates_tiered(pair)
-        primary_symbol = direct[0] if direct else None
+        exact_primary = self._exact_yfinance_primary_symbol(pair)
+        if exact_primary:
+            direct = [exact_primary] + [symbol for symbol in direct if str(symbol or '').strip() != exact_primary]
+        primary_symbol = exact_primary or (direct[0] if direct else None)
 
         # Phase 1: try direct/primary symbols first
         selected, last_symbol = self._fetch_yahoo_news_for_symbols(
@@ -1277,7 +1297,14 @@ class MarketProvider:
             if selected:
                 selected_from_fallback = True
 
-        selected_symbol = str(selected[0].get('source_symbol') or last_symbol or '') if selected else last_symbol
+        raw_selected_symbol = str(selected[0].get('source_symbol') or last_symbol or '') if selected else last_symbol
+        # When news came from a fallback/proxy, force selected_symbol to the
+        # canonical primary so that downstream never sees a proxy as the
+        # principal provider_symbol.
+        if selected_from_fallback and primary_symbol:
+            selected_symbol = primary_symbol
+        else:
+            selected_symbol = raw_selected_symbol
         preferred_symbol = str(primary_symbol or selected_symbol or '').strip() or None
 
         return selected, {
@@ -1285,6 +1312,7 @@ class MarketProvider:
             'primary_symbol': primary_symbol,
             'selected_symbol': selected_symbol,
             'selected_from_fallback': selected_from_fallback,
+            'fallback_source_symbol': raw_selected_symbol if selected_from_fallback else None,
             'symbols_scanned': symbols_scanned,
             'timeout_seconds': timeout_seconds,
             'lookback_hours': lookback_hours,
@@ -2260,8 +2288,14 @@ class MarketProvider:
                 aggregated_events = aggregated_events[:max_items_total]
 
                 if primary_symbol is None:
+                    primary_symbol = self._exact_yfinance_primary_symbol(pair)
+                if primary_symbol is None:
                     primary_symbol = self._news_symbol_candidates(pair)[0] if self._news_symbol_candidates(pair) else None
-                if selected_news_symbol is None:
+                # Always prefer the canonical primary symbol as the
+                # selected news symbol — proxies/fallbacks must not leak here.
+                if primary_symbol:
+                    selected_news_symbol = primary_symbol
+                elif selected_news_symbol is None:
                     selected_news_symbol = primary_symbol
                 if not symbols_scanned:
                     symbols_scanned = self._news_symbol_candidates(pair)[:1]

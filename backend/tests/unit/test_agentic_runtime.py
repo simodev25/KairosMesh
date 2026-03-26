@@ -82,6 +82,56 @@ def test_runtime_tool_registry_enforces_scoped_allowlist() -> None:
         asyncio.run(registry.call('blocked-tool', allowed_tools=['allowed-tool']))
 
 
+def test_agentic_runtime_marks_llm_tool_usage_proven_flag() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db)
+        runtime = AgenticTradingRuntime()
+
+        proven_output = runtime._record_agent_step(
+            db,
+            run,
+            agent_name='technical-analyst',
+            input_payload={'pair': run.pair, 'timeframe': run.timeframe},
+            fn=lambda: {
+                'signal': 'neutral',
+                'tooling': {
+                    'llm_tool_calls': [
+                        {
+                            'id': 'call_provider_123',
+                            'name': 'multi_timeframe_context',
+                            'status': 'ok',
+                        }
+                    ]
+                },
+            },
+        )
+        assert proven_output['tooling']['llm_tool_usage_proven'] is True
+
+        fallback_output = runtime._record_agent_step(
+            db,
+            run,
+            agent_name='news-analyst',
+            input_payload={'pair': run.pair, 'timeframe': run.timeframe},
+            fn=lambda: {
+                'signal': 'neutral',
+                'tooling': {
+                    'llm_tool_calls': [
+                        {
+                            'id': 'runtime_default_news_search',
+                            'name': 'news_search',
+                            'status': 'ok',
+                            'source': 'runtime_default',
+                        }
+                    ]
+                },
+            },
+        )
+        assert fallback_output['tooling']['llm_tool_usage_proven'] is False
+
+
 def test_runtime_session_store_appends_monotonic_events() -> None:
     engine = create_engine('sqlite:///:memory:')
     Base.metadata.create_all(bind=engine)
@@ -1076,3 +1126,70 @@ def test_agentic_runtime_aborts_live_on_degraded_execution_manager(monkeypatch) 
                     metaapi_account_ref=None,
                 )
             )
+
+
+def test_agentic_runtime_allows_soft_llm_fallback_degradation_for_market_context_in_live_mode(monkeypatch) -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+
+    with Session(engine) as db:
+        run = _seed_run(db)
+        run.mode = 'live'
+        db.commit()
+        db.refresh(run)
+
+        runtime = AgenticTradingRuntime()
+        state = RuntimeSessionState(
+            objective={'kind': 'trade-analysis'},
+            max_turns=12,
+            plan=list(runtime.PLAN),
+        )
+        state.artifacts['analysis_outputs'] = {
+            'technical-analyst': {'signal': 'bullish', 'score': 0.4, 'degraded': False},
+            'news-analyst': {'signal': 'neutral', 'score': 0.0, 'degraded': False},
+            'market-context-analyst': {
+                'signal': 'bullish',
+                'score': 0.2,
+                'degraded': True,
+                'llm_call_attempted': True,
+                'llm_fallback_used': True,
+                'confidence_method': 'deterministic_quality_weighted',
+            },
+        }
+        state.artifacts['bullish'] = {'confidence': 0.7}
+        state.artifacts['bearish'] = {'confidence': 0.2}
+        state.artifacts['trader_decision'] = {
+            'decision': 'BUY',
+            'execution_allowed': True,
+            'entry': 1.102,
+            'stop_loss': 1.099,
+            'take_profit': 1.108,
+        }
+        state.artifacts['risk'] = {'accepted': True, 'suggested_volume': 0.2}
+
+        monkeypatch.setattr(
+            runtime.orchestrator.execution_manager_agent,
+            'run',
+            lambda *_args, **_kwargs: {
+                'decision': 'HOLD',
+                'should_execute': False,
+                'side': None,
+                'volume': 0.0,
+                'reason': 'No execution due to guardrail',
+                'degraded': False,
+            },
+        )
+
+        output = asyncio.run(
+            runtime._tool_run_execution_manager(
+                db=db,
+                run=run,
+                state=state,
+                risk_percent=1.0,
+                metaapi_account_ref=None,
+            )
+        )
+
+        assert output['decision'] == 'HOLD'
+        assert output['should_execute'] is False
+        assert output['execution']['status'] == 'skipped'

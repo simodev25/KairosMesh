@@ -298,6 +298,29 @@ class TradingOrchestrator:
         return degraded_agents
 
     @staticmethod
+    def _is_soft_llm_fallback_degradation(output: dict[str, Any] | None) -> bool:
+        if not isinstance(output, dict):
+            return False
+        if not bool(output.get('degraded')):
+            return False
+        if not bool(output.get('llm_fallback_used')):
+            return False
+
+        confidence_method = str(output.get('confidence_method') or '').strip().lower()
+        if confidence_method == 'degraded':
+            return False
+
+        signal = str(output.get('signal') or '').strip().lower()
+        if signal not in {'bullish', 'bearish', 'neutral'}:
+            return False
+
+        try:
+            float(output.get('score', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return False
+        return True
+
+    @staticmethod
     def _is_live_trade_candidate(
         trader_decision: dict[str, Any],
         risk_output: dict[str, Any],
@@ -338,7 +361,12 @@ class TradingOrchestrator:
         if not self._is_live_trade_candidate(trader_decision, risk_output):
             return []
 
-        return [agent for agent in degraded_agents if agent not in non_blocking_when_no_trade]
+        blocking_agents = [agent for agent in degraded_agents if agent not in non_blocking_when_no_trade]
+        return [
+            agent
+            for agent in blocking_agents
+            if not self._is_soft_llm_fallback_degradation(named_outputs.get(agent))
+        ]
 
     @staticmethod
     def _decision_gate_list(trader_decision: dict[str, Any]) -> list[str]:

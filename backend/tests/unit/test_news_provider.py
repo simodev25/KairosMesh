@@ -91,6 +91,73 @@ def test_news_symbol_candidates_for_crypto_avoid_fx_dollar_fallbacks() -> None:
     assert '^DXY' not in candidates
 
 
+# ---------------------------------------------------------------------------
+# Regression: provider_symbol must always be the canonical YFinance symbol
+# ---------------------------------------------------------------------------
+
+_CANONICAL_PROVIDER_SYMBOL_CASES = [
+    ('USDCHF.PRO', 'USDCHF=X'),
+    ('USDCAD.PRO', 'USDCAD=X'),
+    ('NZDUSD.PRO', 'NZDUSD=X'),
+    ('EURJPY.PRO', 'EURJPY=X'),
+    ('GBPJPY.PRO', 'GBPJPY=X'),
+    ('EURGBP.PRO', 'EURGBP=X'),
+    ('AVAXUSD', 'AVAX-USD'),
+    ('BCHUSD', 'BCH-USD'),
+    ('DOTUSD', 'DOT-USD'),
+    ('LTCUSD', 'LTC-USD'),
+    ('MATICUSD', 'MATIC-USD'),
+    ('UNIUSD', 'UNI-USD'),
+]
+
+_FORBIDDEN_PRIMARY_SYMBOLS = {'DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', '^DXY', 'UUP', 'FXE', 'FXB', 'FXY', 'FXF', 'FXC', 'FXA', 'ETH-USD'}
+
+
+@pytest.mark.parametrize(('pair', 'expected'), _CANONICAL_PROVIDER_SYMBOL_CASES)
+def test_exact_yfinance_primary_symbol_returns_canonical(pair: str, expected: str) -> None:
+    assert MarketProvider._exact_yfinance_primary_symbol(pair) == expected
+
+
+@pytest.mark.parametrize(('pair', 'expected'), _CANONICAL_PROVIDER_SYMBOL_CASES)
+def test_ticker_candidates_first_is_canonical(pair: str, expected: str) -> None:
+    candidates = MarketProvider._ticker_candidates(pair)
+    assert candidates[0] == expected
+    # No raw aliases (e.g. USDCAD, AVAXUSD) in candidates for FX/crypto
+    for c in candidates:
+        assert c not in _FORBIDDEN_PRIMARY_SYMBOLS, f'{c} must not be a direct ticker candidate for {pair}'
+
+
+@pytest.mark.parametrize(('pair', 'expected'), _CANONICAL_PROVIDER_SYMBOL_CASES)
+def test_news_candidates_tiered_direct_is_canonical(pair: str, expected: str) -> None:
+    direct, fallback = MarketProvider._news_symbol_candidates_tiered(pair)
+    assert direct[0] == expected
+    # Proxies must never appear in direct
+    for s in direct:
+        assert s not in _FORBIDDEN_PRIMARY_SYMBOLS, f'{s} must not be a direct candidate for {pair}'
+
+
+@pytest.mark.parametrize(
+    ('pair', 'expected'),
+    [
+        ('USDCHF.PRO', 'USDCHF=X'),
+        ('NZDUSD.PRO', 'NZDUSD=X'),
+        ('EURGBP.PRO', 'EURGBP=X'),
+        ('AVAXUSD', 'AVAX-USD'),
+        ('LTCUSD', 'LTC-USD'),
+    ],
+)
+def test_ticker_candidates_exclude_raw_non_canonical_alias(pair: str, expected: str) -> None:
+    """Raw canonical forms (USDCAD, AVAXUSD) must not appear as ticker candidates."""
+    candidates = MarketProvider._ticker_candidates(pair)
+    from app.services.market.instrument import InstrumentClassifier
+    instrument = InstrumentClassifier.classify(pair)
+    raw_canonical = instrument.canonical_symbol
+    if raw_canonical != expected:
+        assert raw_canonical not in candidates, (
+            f'Raw canonical {raw_canonical} should not be a ticker candidate when {expected} exists'
+        )
+
+
 def test_normalize_article_item_maps_same_usd_story_by_base_quote_role() -> None:
     eurusd = MarketProvider._normalize_article_item(
         provider='newsapi',
@@ -230,22 +297,20 @@ def test_get_news_context_tries_fallback_candidates(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ('pair', 'expected_primary_symbol', 'fallback_symbol'),
+    ('pair', 'expected_primary_symbol', 'fallback_symbol', 'forbidden_primary'),
     [
-        ('EURUSD.PRO', 'EURUSD=X', 'DX-Y.NYB'),
-        ('USDCHF.PRO', 'USDCHF=X', 'DX-Y.NYB'),
-        ('USDCAD.PRO', 'USDCAD=X', 'DX-Y.NYB'),
-        ('NZDUSD.PRO', 'NZDUSD=X', 'BNZL'),
-        ('EURJPY.PRO', 'EURJPY=X', '^GSPC'),
-        ('GBPJPY.PRO', 'GBPJPY=X', '^GSPC'),
-        ('EURGBP.PRO', 'EURGBP=X', '^GSPC'),
-        ('DOGEUSD', 'DOGE-USD', 'BTC-USD'),
-        ('AVAXUSD', 'AVAX-USD', 'BTC-USD'),
-        ('BCHUSD', 'BCH-USD', 'BTC-USD'),
-        ('DOTUSD', 'DOT-USD', 'BTC-USD'),
-        ('LTCUSD', 'LTC-USD', 'BTC-USD'),
-        ('MATICUSD', 'MATIC-USD', 'BTC-USD'),
-        ('UNIUSD', 'UNI-USD', 'BTC-USD'),
+        ('USDCHF.PRO', 'USDCHF=X', 'DX-Y.NYB', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'USDCHF')),
+        ('USDCAD.PRO', 'USDCAD=X', 'DX-Y.NYB', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'USDCAD')),
+        ('NZDUSD.PRO', 'NZDUSD=X', 'BNZL', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'NZDUSD')),
+        ('EURJPY.PRO', 'EURJPY=X', '^GSPC', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'EURJPY')),
+        ('GBPJPY.PRO', 'GBPJPY=X', '^GSPC', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'GBPJPY')),
+        ('EURGBP.PRO', 'EURGBP=X', '^GSPC', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'EURGBP')),
+        ('AVAXUSD', 'AVAX-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'AVAX', 'AVAXUSD')),
+        ('BCHUSD', 'BCH-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'BCH', 'BCHUSD')),
+        ('DOTUSD', 'DOT-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'DOT', 'DOTUSD')),
+        ('LTCUSD', 'LTC-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'LTC', 'LTCUSD')),
+        ('MATICUSD', 'MATIC-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'MATIC', 'MATICUSD')),
+        ('UNIUSD', 'UNI-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'UNI', 'UNIUSD')),
     ],
 )
 def test_get_news_context_preserves_primary_symbol_when_fallback_provides_news(
@@ -253,6 +318,7 @@ def test_get_news_context_preserves_primary_symbol_when_fallback_provides_news(
     pair: str,
     expected_primary_symbol: str,
     fallback_symbol: str,
+    forbidden_primary: tuple[str, ...],
 ) -> None:
     provider = MarketProvider()
     provider.settings.yfinance_cache_enabled = False
@@ -289,9 +355,12 @@ def test_get_news_context_preserves_primary_symbol_when_fallback_provides_news(
 
     assert payload['degraded'] is False
     assert payload['symbol'] == expected_primary_symbol
-    assert payload.get('selected_news_symbol') == fallback_symbol
+    # selected_news_symbol must also reflect the canonical primary, never the proxy
+    assert payload.get('selected_news_symbol') == expected_primary_symbol
+    assert payload.get('selected_news_symbol') not in set(forbidden_primary)
     assert len(payload['news']) == 1
     assert payload['news'][0]['source_symbol'] == fallback_symbol
+    assert payload['symbol'] not in set(forbidden_primary)
 
 
 def test_get_news_context_supports_nested_yfinance_news_schema(monkeypatch) -> None:

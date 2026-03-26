@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services.market.news_provider import MarketProvider
 from app.services.orchestrator.agents import AgentContext, NewsAnalystAgent, _validate_news_output
 from app.services.prompts.registry import PromptTemplateService
 
@@ -326,6 +327,210 @@ def test_news_analyst_keeps_infra_429_text_out_of_primary_summary(monkeypatch) -
     diagnostics = out.get('diagnostics')
     assert isinstance(diagnostics, dict)
     assert '429' in str(diagnostics).lower()
+
+
+def test_news_analyst_degraded_llm_fallback_uses_deterministic_confidence_method(monkeypatch) -> None:
+    agent = NewsAnalystAgent(PromptTemplateService())
+    ctx = AgentContext(
+        pair='BTCUSD',
+        timeframe='H1',
+        mode='simulation',
+        risk_percent=1.0,
+        market_snapshot={'trend': 'neutral', 'last_price': 70000.0, 'atr': 500.0},
+        news_context={
+            'news': [
+                {
+                    'title': 'Bitcoin ETF inflows rebound strongly',
+                    'summary': 'BTC demand from US spot ETFs accelerates.',
+                    'provider': 'yahoo_finance',
+                    'sentiment_hint': 'bullish',
+                    'pair_relevance': 0.82,
+                    'base_currency_relevance': 0.82,
+                    'quote_currency_relevance': 0.05,
+                    'freshness_score': 0.90,
+                    'credibility_score': 0.85,
+                    'published_at': '2026-03-26T10:00:00+00:00',
+                    'source_symbol': 'BTC-USD',
+                },
+                {
+                    'title': 'Bitcoin miners increase selling pressure',
+                    'summary': 'Large miner outflows to exchanges weigh on BTC price action.',
+                    'provider': 'yahoo_finance',
+                    'sentiment_hint': 'bearish',
+                    'pair_relevance': 0.81,
+                    'base_currency_relevance': 0.81,
+                    'quote_currency_relevance': 0.05,
+                    'freshness_score': 0.88,
+                    'credibility_score': 0.84,
+                    'published_at': '2026-03-26T10:05:00+00:00',
+                    'source_symbol': 'BTC-USD',
+                },
+            ],
+            'macro_events': [],
+            'fetch_status': 'ok',
+            'provider_status_compact': {'yahoo_finance': 'ok'},
+            'symbol': 'BTC-USD',
+            'selected_news_symbol': 'BTC-USD',
+        },
+        memory_context=[],
+    )
+
+    monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(agent.model_selector, 'resolve', lambda *_args, **_kwargs: 'dummy-model')
+    monkeypatch.setattr(agent.model_selector, 'resolve_decision_mode', lambda *_args, **_kwargs: 'conservative')
+    monkeypatch.setattr(
+        agent.llm,
+        'chat',
+        lambda *_args, **_kwargs: {
+            'text': "Ollama call failed after retries: Client error '400 Bad Request' for url 'https://ollama.com/api/chat'",
+            'degraded': True,
+            'provider': 'fallback',
+        },
+    )
+
+    out = agent.run(ctx, db=None)
+
+    assert out['signal'] == 'neutral'
+    assert out['llm_call_attempted'] is True
+    assert out['llm_semantic_mode'] is True
+    assert out['llm_fallback_used'] is True
+    assert out['degraded'] is True
+    assert out['confidence_method'] == 'deterministic_fallback'
+    assert out['confidence'] <= 0.35
+
+
+@pytest.mark.parametrize(
+    ('pair', 'provider_symbol', 'selected_symbol', 'forbidden_primary'),
+    [
+        ('USDCHF.PRO', 'USDCHF=X', 'DX-Y.NYB', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'USDCHF')),
+        ('USDCAD.PRO', 'USDCAD=X', 'DX-Y.NYB', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'USDCAD')),
+        ('NZDUSD.PRO', 'NZDUSD=X', 'BNZL', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'NZDUSD')),
+        ('EURJPY.PRO', 'EURJPY=X', '^GSPC', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'EURJPY')),
+        ('GBPJPY.PRO', 'GBPJPY=X', '^GSPC', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'GBPJPY')),
+        ('EURGBP.PRO', 'EURGBP=X', '^GSPC', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'EURGBP')),
+        ('AVAXUSD', 'AVAX-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'AVAX', 'AVAXUSD')),
+        ('BCHUSD', 'BCH-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'BCH', 'BCHUSD')),
+        ('DOTUSD', 'DOT-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'DOT', 'DOTUSD')),
+        ('LTCUSD', 'LTC-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'LTC', 'LTCUSD')),
+        ('MATICUSD', 'MATIC-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'MATIC', 'MATICUSD')),
+        ('UNIUSD', 'UNI-USD', 'BTC-USD', ('DX-Y.NYB', '^GSPC', 'BTC-USD', 'BNZL', 'UNI', 'UNIUSD')),
+    ],
+)
+def test_news_analyst_keeps_exact_provider_symbol_in_output_contract(
+    monkeypatch,
+    pair: str,
+    provider_symbol: str,
+    selected_symbol: str,
+    forbidden_primary: tuple[str, ...],
+) -> None:
+    agent = NewsAnalystAgent(PromptTemplateService())
+    _configure_llm(agent, monkeypatch, 'neutral\ncase=no_signal\nLLM disabled for deterministic test.', enabled=False)
+
+    ctx = AgentContext(
+        pair=pair,
+        timeframe='H1',
+        mode='simulation',
+        risk_percent=1.0,
+        market_snapshot={'trend': 'neutral', 'last_price': 1.0, 'atr': 0.001},
+        news_context={
+            'news': [
+                {
+                    'title': 'Proxy headline used as secondary context',
+                    'summary': 'Secondary correlated symbol headline.',
+                    'provider': 'yahoo_finance',
+                    'source_symbol': selected_symbol,
+                    'published_at': '2026-03-22T08:00:00+00:00',
+                    'freshness_score': 0.8,
+                    'credibility_score': 0.8,
+                }
+            ],
+            'macro_events': [],
+            'fetch_status': 'ok',
+            'symbol': provider_symbol,
+            'selected_news_symbol': selected_symbol,
+            'provider_status_compact': {'yahoo_finance': 'ok'},
+        },
+        memory_context=[],
+    )
+
+    out = agent.run(ctx, db=None)
+
+    assert out['provider_symbol'] == provider_symbol
+    assert out['provider_symbol'] != selected_symbol
+    assert out['provider_symbol'] not in set(forbidden_primary)
+
+
+@pytest.mark.parametrize(
+    ('pair', 'expected_primary_symbol', 'fallback_symbol'),
+    [
+        ('USDCHF.PRO', 'USDCHF=X', 'DX-Y.NYB'),
+        ('USDCAD.PRO', 'USDCAD=X', 'DX-Y.NYB'),
+        ('NZDUSD.PRO', 'NZDUSD=X', 'BNZL'),
+        ('EURJPY.PRO', 'EURJPY=X', '^GSPC'),
+        ('GBPJPY.PRO', 'GBPJPY=X', '^GSPC'),
+        ('EURGBP.PRO', 'EURGBP=X', '^GSPC'),
+        ('AVAXUSD', 'AVAX-USD', 'BTC-USD'),
+        ('BCHUSD', 'BCH-USD', 'BTC-USD'),
+        ('DOTUSD', 'DOT-USD', 'BTC-USD'),
+        ('LTCUSD', 'LTC-USD', 'BTC-USD'),
+        ('MATICUSD', 'MATIC-USD', 'BTC-USD'),
+        ('UNIUSD', 'UNI-USD', 'BTC-USD'),
+    ],
+)
+def test_news_analyst_serializes_exact_provider_symbol_from_provider_context(
+    monkeypatch,
+    pair: str,
+    expected_primary_symbol: str,
+    fallback_symbol: str,
+) -> None:
+    provider = MarketProvider()
+    provider.settings.yfinance_cache_enabled = False
+    provider._redis = None
+    provider.settings.news_providers = {
+        'yahoo_finance': {'enabled': True, 'priority': 100},
+        'newsapi': {'enabled': False},
+        'tradingeconomics': {'enabled': False},
+        'finnhub': {'enabled': False},
+        'alphavantage': {'enabled': False},
+        'llm_search': {'enabled': False},
+    }
+
+    class _FakeTicker:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        @property
+        def news(self):
+            if self.symbol == fallback_symbol:
+                return [
+                    {
+                        'title': 'Proxy headline',
+                        'publisher': 'unit',
+                        'link': 'https://example.com/proxy',
+                        'providerPublishTime': _epoch_hours_ago(1),
+                    }
+                ]
+            return []
+
+    monkeypatch.setattr('app.services.market.news_provider.yf.Ticker', _FakeTicker)
+
+    agent = NewsAnalystAgent(PromptTemplateService())
+    _configure_llm(agent, monkeypatch, 'neutral\ncase=no_signal\nLLM disabled for deterministic test.', enabled=False)
+    out = agent.run(
+        AgentContext(
+            pair=pair,
+            timeframe='H1',
+            mode='simulation',
+            risk_percent=1.0,
+            market_snapshot={'trend': 'neutral', 'last_price': 1.0, 'atr': 0.001},
+            news_context=provider.get_news_context(pair, limit=5),
+            memory_context=[],
+        ),
+        db=None,
+    )
+
+    assert out['provider_symbol'] == expected_primary_symbol
+    assert out['provider_symbol'] != fallback_symbol
 
 
 @pytest.mark.parametrize(

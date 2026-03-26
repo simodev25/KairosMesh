@@ -3280,7 +3280,16 @@ class NewsAnalystAgent:
                 )
 
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
-        _news_conf_method = 'llm_semantic' if llm_semantic_mode else ('evidence_weighted' if llm_call_attempted else 'deterministic_evidence')
+        if llm_call_attempted and llm_fallback_used:
+            _news_conf_method = 'deterministic_fallback'
+        elif llm_call_attempted and decision_mode == 'llm_semantic_override':
+            _news_conf_method = 'llm_semantic'
+        elif llm_call_attempted:
+            _news_conf_method = 'evidence_weighted'
+        else:
+            _news_conf_method = 'deterministic_evidence'
+        if llm_call_attempted and llm_fallback_used and signal == 'neutral':
+            confidence = round(min(confidence, 0.35), 3)
         macro_integration_status = (
             'enabled_with_events'
             if len(valid_macro_events) > 0
@@ -4039,7 +4048,9 @@ class MarketContextAnalystAgent:
                 output['llm_note'] = _compact_prompt_text(llm_text, max_chars=220)
             else:
                 output['llm_fallback_used'] = True
-                output['degraded'] = True
+                # In live mode we keep deterministic context outputs tradable-safe and
+                # expose LLM degradation through diagnostics/fallback flags only.
+                output['degraded'] = str(ctx.mode or '').strip().lower() != 'live'
             output['diagnostics']['llm'] = {
                 'attempted': True,
                 'fallback_used': bool(output.get('llm_fallback_used')),
