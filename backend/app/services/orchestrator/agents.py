@@ -441,6 +441,11 @@ def _summarize_research_evidence(output: dict[str, Any]) -> str:
     return 'Signal present but textual justification limited.'
 
 
+def _is_independent_research_source(name: str) -> bool:
+    normalized = str(name or '').strip().lower()
+    return 'news' in normalized
+
+
 def _build_directional_research_view(
     debate_inputs: dict[str, dict[str, Any]],
     *,
@@ -490,10 +495,13 @@ def _build_directional_research_view(
         invalidation_conditions.append(
             "Invalidation if inter-source confirmation remains insufficient."
         )
-    independent_sources = {'news-analyst', 'market-context-analyst'}
-    if not any(name in independent_sources for name, _score, _evidence in supporting_items):
+    has_independent_confirmation = any(
+        _is_independent_research_source(name)
+        for name, _score, _evidence in supporting_items
+    )
+    if not has_independent_confirmation:
         invalidation_conditions.append(
-            "Invalidation if no independent source (news/context) confirms the thesis."
+            "Invalidation if no independent source (news) confirms the thesis."
         )
 
     return {
@@ -506,7 +514,62 @@ def _build_directional_research_view(
         'invalidation_conditions': invalidation_conditions[:3],
         'supporting_signal_count': len(supporting_items),
         'opposing_signal_count': len(opposing_items),
+        'supporting_strength': round(sum(abs(score) for _name, score, _evidence in supporting_items), 3),
+        'opposing_strength': round(sum(abs(score) for _name, score, _evidence in opposing_items), 3),
+        'mixed_strength': round(sum(abs(score) for _name, score, _evidence in mixed_items), 3),
+        'has_independent_confirmation': has_independent_confirmation,
     }
+
+
+def _compute_directional_research_confidence(research_view: dict[str, Any]) -> float:
+    supporting_strength = _clamp(_safe_float(research_view.get('supporting_strength'), 0.0), 0.0, 1.0)
+    opposing_strength = _clamp(_safe_float(research_view.get('opposing_strength'), 0.0), 0.0, 1.0)
+    mixed_strength = _clamp(_safe_float(research_view.get('mixed_strength'), 0.0), 0.0, 1.0)
+    supporting_signal_count = max(int(research_view.get('supporting_signal_count', 0) or 0), 0)
+    opposing_signal_count = max(int(research_view.get('opposing_signal_count', 0) or 0), 0)
+    has_independent_confirmation = bool(research_view.get('has_independent_confirmation', False))
+
+    if supporting_signal_count == 0:
+        return 0.0
+
+    confidence = supporting_strength
+    confidence -= min(opposing_strength * 0.65, 0.45)
+    confidence -= min(mixed_strength * 0.15, 0.08)
+
+    if supporting_signal_count == 1:
+        confidence *= 0.82
+    if not has_independent_confirmation:
+        confidence *= 0.85
+    if opposing_signal_count >= supporting_signal_count and opposing_signal_count > 0:
+        confidence *= 0.85
+
+    return round(_clamp(confidence, 0.0, 1.0), 3)
+
+
+def _extract_research_thesis(text: str) -> str:
+    for raw_line in str(text or '').splitlines():
+        stripped = re.sub(r'^\s*(?:[-*]|\d+[.)])?\s*', '', raw_line).strip()
+        if len(stripped) < 18:
+            continue
+        return _compact_prompt_text(stripped, max_chars=180)
+    return ''
+
+
+def _augment_research_arguments_with_llm(
+    arguments: list[str],
+    *,
+    llm_text: str,
+    llm_degraded: bool,
+) -> tuple[list[str], str | None]:
+    thesis = None if llm_degraded else _extract_research_thesis(llm_text)
+    if not thesis:
+        return list(arguments), None
+
+    if any(thesis.lower() in str(argument).lower() for argument in arguments):
+        return list(arguments), thesis
+
+    augmented = [thesis, *list(arguments)]
+    return augmented[:3], thesis
 
 
 def _merge_llm_signal(base_score: float, llm_signal: str, *, threshold: float, llm_bias: float) -> tuple[float, str]:
@@ -5260,7 +5323,7 @@ class BullishResearcherAgent:
         )
         tool_invocations['scenario_validation'] = scenario_validation_tool
         arguments = list(research_view.get('supporting_arguments', []))
-        confidence = round(min(sum(max(v.get('score', 0), 0) for v in debate_inputs.values()), 1.0), 3)
+        confidence = _compute_directional_research_confidence(research_view)
         fallback_system = (
             'You are a multi-asset bullish market researcher. '
             'Build the best bullish thesis from evidence without inventing external data absent from the payload. '
@@ -5293,22 +5356,23 @@ class BullishResearcherAgent:
         llm_tool_calls: list[dict[str, Any]] = []
         system_prompt = fallback_system
         user_prompt = fallback_user_rendered
-        if db is not None and should_call_llm:
-            prompt_info = self.prompt_service.render(
-                db=db,
-                agent_name=self.name,
-                fallback_system=fallback_system,
-                fallback_user=fallback_user,
-                variables={
-                    **instrument_vars,
-                    'pair': ctx.pair,
-                    'timeframe': ctx.timeframe,
-                    'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
-                    'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
-                },
-            )
-            system_prompt = prompt_info['system_prompt']
-            user_prompt = prompt_info['user_prompt']
+        if should_call_llm:
+            if db is not None:
+                prompt_info = self.prompt_service.render(
+                    db=db,
+                    agent_name=self.name,
+                    fallback_system=fallback_system,
+                    fallback_user=fallback_user,
+                    variables={
+                        **instrument_vars,
+                        'pair': ctx.pair,
+                        'timeframe': ctx.timeframe,
+                        'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
+                        'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
+                    },
+                )
+                system_prompt = prompt_info['system_prompt']
+                user_prompt = prompt_info['user_prompt']
             system_prompt = _append_tools_prompt_guidance(system_prompt, enabled_tools=enabled_tools)
             system_prompt, user_prompt = _apply_mode_prompt_guidance(
                 system_prompt,
@@ -5348,12 +5412,18 @@ class BullishResearcherAgent:
             llm_degraded = False
 
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
+        arguments, thesis = _augment_research_arguments_with_llm(
+            arguments,
+            llm_text=llm_text,
+            llm_degraded=llm_degraded,
+        )
         output = {
             'arguments': arguments or ['No strong bullish argument.'],
+            'thesis': thesis,
             'confidence': confidence,
             'llm_debate': llm_text,
             'degraded': llm_degraded,
-            'llm_called': bool(db is not None and should_call_llm),
+            'llm_called': bool(should_call_llm),
             'counter_arguments': list(research_view.get('opposing_arguments', [])),
             'mixed_inputs': list(research_view.get('mixed_inputs', [])),
             'invalidation_conditions': list(research_view.get('invalidation_conditions', [])),
@@ -5426,7 +5496,7 @@ class BearishResearcherAgent:
         )
         tool_invocations['scenario_validation'] = scenario_validation_tool
         arguments = list(research_view.get('supporting_arguments', []))
-        confidence = round(min(abs(sum(min(v.get('score', 0), 0) for v in debate_inputs.values())), 1.0), 3)
+        confidence = _compute_directional_research_confidence(research_view)
         fallback_system = (
             'You are a multi-asset bearish market researcher. '
             'Build the best bearish thesis from evidence without inventing external data absent from the payload. '
@@ -5459,22 +5529,23 @@ class BearishResearcherAgent:
         llm_tool_calls: list[dict[str, Any]] = []
         system_prompt = fallback_system
         user_prompt = fallback_user_rendered
-        if db is not None and should_call_llm:
-            prompt_info = self.prompt_service.render(
-                db=db,
-                agent_name=self.name,
-                fallback_system=fallback_system,
-                fallback_user=fallback_user,
-                variables={
-                    **instrument_vars,
-                    'pair': ctx.pair,
-                    'timeframe': ctx.timeframe,
-                    'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
-                    'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
-                },
-            )
-            system_prompt = prompt_info['system_prompt']
-            user_prompt = prompt_info['user_prompt']
+        if should_call_llm:
+            if db is not None:
+                prompt_info = self.prompt_service.render(
+                    db=db,
+                    agent_name=self.name,
+                    fallback_system=fallback_system,
+                    fallback_user=fallback_user,
+                    variables={
+                        **instrument_vars,
+                        'pair': ctx.pair,
+                        'timeframe': ctx.timeframe,
+                        'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
+                        'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
+                    },
+                )
+                system_prompt = prompt_info['system_prompt']
+                user_prompt = prompt_info['user_prompt']
             system_prompt = _append_tools_prompt_guidance(system_prompt, enabled_tools=enabled_tools)
             system_prompt, user_prompt = _apply_mode_prompt_guidance(
                 system_prompt,
@@ -5514,12 +5585,18 @@ class BearishResearcherAgent:
             llm_degraded = False
 
         resolved_skills = list(prompt_info.get('skills', runtime_skills)) if isinstance(prompt_info, dict) else list(runtime_skills)
+        arguments, thesis = _augment_research_arguments_with_llm(
+            arguments,
+            llm_text=llm_text,
+            llm_degraded=llm_degraded,
+        )
         output = {
             'arguments': arguments or ['No strong bearish argument.'],
+            'thesis': thesis,
             'confidence': confidence,
             'llm_debate': llm_text,
             'degraded': llm_degraded,
-            'llm_called': bool(db is not None and should_call_llm),
+            'llm_called': bool(should_call_llm),
             'counter_arguments': list(research_view.get('opposing_arguments', [])),
             'mixed_inputs': list(research_view.get('mixed_inputs', [])),
             'invalidation_conditions': list(research_view.get('invalidation_conditions', [])),
