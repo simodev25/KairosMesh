@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 def _is_retryable_ollama_error(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.ReadTimeout):
+        return False
     if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
@@ -38,9 +40,10 @@ def _is_retryable_ollama_error(exc: BaseException) -> bool:
 
 
 class OllamaCloudClient:
-    _shared_client: httpx.Client | None = None
-    _shared_client_timeout_seconds: float | None = None
-    _shared_client_lock = threading.Lock()
+    _shared_clients: dict[float, httpx.Client] = {}
+    _shared_clients_lock = threading.Lock()
+    _MAX_SHARED_CLIENTS = 5
+    _MAX_READ_TIMEOUT_RETRY_SECONDS = 120.0
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -48,26 +51,42 @@ class OllamaCloudClient:
     @classmethod
     def _get_http_client(cls, timeout_seconds: float) -> httpx.Client:
         safe_timeout = max(float(timeout_seconds), 1.0)
-        with cls._shared_client_lock:
-            if (
-                cls._shared_client is not None
-                and not cls._shared_client.is_closed
-                and cls._shared_client_timeout_seconds == safe_timeout
-            ):
-                return cls._shared_client
-
-            if cls._shared_client is not None and not cls._shared_client.is_closed:
-                try:
-                    cls._shared_client.close()
-                except Exception:
-                    pass
-
-            cls._shared_client = httpx.Client(
-                timeout=safe_timeout,
+        timeout = httpx.Timeout(
+            connect=min(safe_timeout, 10.0),
+            read=safe_timeout,
+            write=min(safe_timeout, 30.0),
+            pool=min(safe_timeout, 5.0),
+        )
+        with cls._shared_clients_lock:
+            client = cls._shared_clients.get(safe_timeout)
+            if client is not None and not client.is_closed:
+                return client
+            if len(cls._shared_clients) >= cls._MAX_SHARED_CLIENTS:
+                for old_key in list(cls._shared_clients.keys()):
+                    old_client = cls._shared_clients.pop(old_key, None)
+                    if old_client is not None:
+                        try:
+                            old_client.close()
+                        except Exception:
+                            pass
+                    break
+            cls._shared_clients[safe_timeout] = httpx.Client(
+                timeout=timeout,
                 limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
             )
-            cls._shared_client_timeout_seconds = safe_timeout
-            return cls._shared_client
+            return cls._shared_clients[safe_timeout]
+
+    def _resolved_timeout_seconds(self, timeout_seconds: float | None) -> float:
+        if timeout_seconds is None:
+            return max(float(self.settings.ollama_timeout_seconds), 1.0)
+        return max(float(timeout_seconds), 1.0)
+
+    @classmethod
+    def _extended_read_timeout_seconds(cls, timeout_seconds: float) -> float | None:
+        current_timeout = max(float(timeout_seconds), 1.0)
+        if current_timeout >= cls._MAX_READ_TIMEOUT_RETRY_SECONDS:
+            return None
+        return min(max(current_timeout * 2.0, current_timeout + 15.0), cls._MAX_READ_TIMEOUT_RETRY_SECONDS)
 
     def _normalized_api_key(self, db: Session | None = None) -> str:
         del db  # Runtime connector settings are resolved without DB session injection.
@@ -151,7 +170,7 @@ class OllamaCloudClient:
         headers: dict[str, str],
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        effective_timeout = self.settings.ollama_timeout_seconds if timeout_seconds is None else float(timeout_seconds)
+        effective_timeout = self._resolved_timeout_seconds(timeout_seconds)
         client = self._get_http_client(effective_timeout)
         response = client.post(url, json=payload, headers=headers)
         response.raise_for_status()
@@ -354,7 +373,20 @@ class OllamaCloudClient:
         }
 
         try:
-            data = self._call_remote(url, payload, headers, timeout_seconds=request_timeout_seconds)
+            effective_timeout_seconds = self._resolved_timeout_seconds(request_timeout_seconds)
+            try:
+                data = self._call_remote(url, payload, headers, timeout_seconds=effective_timeout_seconds)
+            except httpx.ReadTimeout:
+                retry_timeout_seconds = self._extended_read_timeout_seconds(effective_timeout_seconds)
+                if retry_timeout_seconds is None:
+                    raise
+                logger.warning(
+                    'ollama_chat_read_timeout_retry model=%s timeout_seconds=%.1f retry_timeout_seconds=%.1f',
+                    selected_model,
+                    effective_timeout_seconds,
+                    retry_timeout_seconds,
+                )
+                data = self._call_remote(url, payload, headers, timeout_seconds=retry_timeout_seconds)
             text, prompt_tokens, completion_tokens = self._extract_usage(data)
             tool_calls = self._extract_tool_calls(data)
             cost_usd = self._estimate_cost_usd(prompt_tokens, completion_tokens)

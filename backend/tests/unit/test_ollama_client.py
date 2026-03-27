@@ -21,6 +21,17 @@ def test_normalized_base_url_rewrites_legacy_api_host() -> None:
     assert client._normalized_base_url() == 'https://ollama.com'
 
 
+def test_http_client_reuses_existing_client_for_same_timeout() -> None:
+    first = OllamaCloudClient._get_http_client(30.0)
+    second = OllamaCloudClient._get_http_client(45.0)
+    third = OllamaCloudClient._get_http_client(30.0)
+
+    assert first is not second
+    assert third is first
+    assert first.is_closed is False
+    assert second.is_closed is False
+
+
 def test_chat_falls_back_to_default_model_on_404(monkeypatch) -> None:
     client = OllamaCloudClient()
     client.settings.ollama_base_url = 'https://ollama.com'
@@ -80,6 +91,36 @@ def test_chat_normalizes_base_url_once_per_request(monkeypatch) -> None:
 
     assert result['degraded'] is False
     assert call_count == 1
+
+
+def test_chat_retries_read_timeout_once_with_extended_timeout(monkeypatch) -> None:
+    client = OllamaCloudClient()
+    client.settings.ollama_base_url = 'https://ollama.com'
+    client.settings.ollama_api_key = 'test-key'
+    client.settings.ollama_model = 'minimax-m2.7'
+
+    monkeypatch.setattr(client, 'is_configured', lambda **_kwargs: True)
+    monkeypatch.setattr(client, '_persist_log', lambda *args, **kwargs: None)
+
+    seen_timeouts: list[float | None] = []
+
+    def fake_call_remote(url: str, payload: dict, headers: dict, **kwargs):
+        seen_timeouts.append(kwargs.get('timeout_seconds'))
+        if len(seen_timeouts) == 1:
+            raise httpx.ReadTimeout('The read operation timed out')
+        return {
+            'message': {'content': 'OK'},
+            'prompt_eval_count': 9,
+            'eval_count': 4,
+        }
+
+    monkeypatch.setattr(client, '_call_remote', fake_call_remote)
+
+    result = client.chat('system', 'user', request_timeout_seconds=45.0)
+
+    assert result['degraded'] is False
+    assert result['text'] == 'OK'
+    assert seen_timeouts == [45.0, 90.0]
 
 
 def test_build_chat_payload_applies_generation_options() -> None:
