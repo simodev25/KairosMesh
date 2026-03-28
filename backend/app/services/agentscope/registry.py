@@ -16,8 +16,26 @@ from app.services.agentscope.agents import ALL_AGENT_FACTORIES
 from app.services.agentscope.debate import DebateConfig, run_debate
 from app.services.agentscope.formatter_factory import build_formatter
 from app.services.agentscope.model_factory import build_model
-from app.services.agentscope.schemas import DebateResult
+from app.services.agentscope.schemas import (
+    DebateResult,
+    ExecutionPlanResult,
+    MarketContextResult,
+    NewsAnalysisResult,
+    RiskAssessmentResult,
+    TechnicalAnalysisResult,
+    TraderDecisionDraft,
+)
 from app.services.agentscope.toolkit import build_toolkit
+
+# Map agent name -> structured output schema for LLM agents
+AGENT_STRUCTURED_MODELS: dict[str, type] = {
+    "technical-analyst": TechnicalAnalysisResult,
+    "news-analyst": NewsAnalysisResult,
+    "market-context-analyst": MarketContextResult,
+    "trader-agent": TraderDecisionDraft,
+    "risk-manager": RiskAssessmentResult,
+    "execution-manager": ExecutionPlanResult,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -458,8 +476,11 @@ class AgentScopeRegistry:
             analysis_outputs: dict[str, dict] = {}
 
             async def _call_agent(name: str, msg: Msg) -> Msg:
-                """Call agent via LLM or deterministic depending on config."""
+                """Call agent via LLM (with structured output) or deterministic."""
                 if name in agents:
+                    schema = AGENT_STRUCTURED_MODELS.get(name)
+                    if schema:
+                        return await agents[name](msg, structured_model=schema)
                     return await agents[name](msg)
                 return await self._run_deterministic(name, toolkits.get(name), msg)
 
