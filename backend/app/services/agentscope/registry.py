@@ -304,11 +304,33 @@ class AgentScopeRegistry:
         except Exception as exc:
             logger.warning("Failed to write debug trace: %s", exc)
 
+    async def _run_deterministic(self, agent_name: str, toolkit, context_msg: Msg) -> Msg:
+        """Run agent tools deterministically without LLM — returns raw tool results."""
+        from app.services.agentscope.toolkit import AGENT_TOOL_MAP
+        from app.services.mcp.client import get_mcp_client
+
+        client = get_mcp_client()
+        tool_ids = AGENT_TOOL_MAP.get(agent_name, [])
+        results = {}
+        for tool_id in tool_ids:
+            try:
+                # Call with empty kwargs — preset_kwargs will fill OHLC
+                result = await client.call_tool(tool_id, {})
+                results[tool_id] = result
+            except Exception as exc:
+                results[tool_id] = {"error": str(exc)}
+
+        text = json.dumps(results, default=str)
+        return Msg(agent_name, f"[deterministic] {text}", "assistant")
+
     async def execute(self, db, run, pair: str, timeframe: str, risk_percent: float,
                       metaapi_account_ref: str | None = None):
         start_time = time.time()
 
         try:
+            from app.services.llm.model_selector import AgentModelSelector
+            model_selector = AgentModelSelector()
+
             provider, model_name, base_url, api_key = self._resolve_provider_config(db)
             logger.info("LLM config: provider=%s, model=%s, base_url=%s", provider, model_name, base_url)
             model = build_model(provider, model_name, base_url, api_key)
@@ -328,14 +350,24 @@ class AgentScopeRegistry:
                 snapshot.get("degraded", True),
             )
 
+            # Check LLM enabled per agent
+            llm_enabled: dict[str, bool] = {}
+            for name in ALL_AGENT_FACTORIES:
+                enabled = model_selector.is_enabled(db, name)
+                llm_enabled[name] = enabled
+                if not enabled:
+                    logger.info("LLM disabled for agent %s — will run deterministic", name)
+
             # Build toolkits with OHLC preset
             toolkits = {}
             for name in ALL_AGENT_FACTORIES:
                 toolkits[name] = await build_toolkit(name, ohlc=ohlc)
 
-            # Build agents
-            agents = {}
+            # Build agents (only for LLM-enabled agents)
+            agents: dict[str, Any] = {}
             for name, factory in ALL_AGENT_FACTORIES.items():
+                if not llm_enabled.get(name, False):
+                    continue  # Skip — will use deterministic path
                 is_debate = name in ("bullish-researcher", "bearish-researcher", "trader-agent")
                 agents[name] = factory(
                     model=model,
@@ -346,21 +378,29 @@ class AgentScopeRegistry:
 
             analysis_outputs: dict[str, dict] = {}
 
+            async def _call_agent(name: str, msg: Msg) -> Msg:
+                """Call agent via LLM or deterministic depending on config."""
+                if name in agents:
+                    return await agents[name](msg)
+                return await self._run_deterministic(name, toolkits.get(name), msg)
+
             # ── Phase 1: Parallel analysts ──
             logger.info("Phase 1: Running 3 analysts in parallel for %s/%s", pair, timeframe)
             t0 = time.time()
-            phase1_results = await fanout_pipeline(
-                agents=[agents["technical-analyst"], agents["news-analyst"], agents["market-context-analyst"]],
-                msg=context_msg, enable_gather=True,
-            )
+            analyst_names = ["technical-analyst", "news-analyst", "market-context-analyst"]
+
+            # Use fanout for LLM agents, gather for mixed
+            phase1_tasks = [_call_agent(n, context_msg) for n in analyst_names]
+            phase1_results = await asyncio.gather(*phase1_tasks)
             phase1_ms = (time.time() - t0) * 1000
 
-            analyst_names = ["technical-analyst", "news-analyst", "market-context-analyst"]
             for i, name in enumerate(analyst_names):
                 msg_dict = _msg_to_dict(phase1_results[i] if i < len(phase1_results) else None)
+                msg_dict["llm_enabled"] = llm_enabled.get(name, False)
                 analysis_outputs[name] = msg_dict
-                self._record_step(db, run, name, {"pair": pair, "timeframe": timeframe},
-                                  msg_dict, elapsed_ms=phase1_ms / len(analyst_names))
+                self._record_step(db, run, name,
+                    {"pair": pair, "timeframe": timeframe, "llm_enabled": llm_enabled.get(name, False)},
+                    msg_dict, elapsed_ms=phase1_ms / len(analyst_names))
 
             analysis_summary = "\n\n".join(
                 f"[{msg.name}]\n{msg.get_text_content()}" for msg in phase1_results
@@ -372,16 +412,37 @@ class AgentScopeRegistry:
             # ── Phase 2+3: Researchers + Debate ──
             logger.info("Phase 2+3: Running debate for %s/%s", pair, timeframe)
             t0 = time.time()
-            bullish_msg, bearish_msg, debate_result = await run_debate(
-                bullish=agents["bullish-researcher"], bearish=agents["bearish-researcher"],
-                moderator=agents["trader-agent"], context_msg=research_msg, config=DebateConfig(),
+
+            # Check if debate agents have LLM — if any is disabled, skip debate
+            debate_agents_enabled = all(
+                llm_enabled.get(n, False)
+                for n in ("bullish-researcher", "bearish-researcher", "trader-agent")
             )
+
+            if debate_agents_enabled:
+                bullish_msg, bearish_msg, debate_result = await run_debate(
+                    bullish=agents["bullish-researcher"],
+                    bearish=agents["bearish-researcher"],
+                    moderator=agents["trader-agent"],
+                    context_msg=research_msg, config=DebateConfig(),
+                )
+            else:
+                # Deterministic: run researchers without debate
+                bullish_msg = await _call_agent("bullish-researcher", research_msg)
+                bearish_msg = await _call_agent("bearish-researcher", research_msg)
+                debate_result = DebateResult(
+                    finished=True, winning_side="neutral", confidence=0.5,
+                    reason="Debate skipped — LLM disabled for debate agents",
+                )
             debate_ms = (time.time() - t0) * 1000
 
             for name, msg in [("bullish-researcher", bullish_msg), ("bearish-researcher", bearish_msg)]:
                 d = _msg_to_dict(msg)
+                d["llm_enabled"] = llm_enabled.get(name, False)
                 analysis_outputs[name] = d
-                self._record_step(db, run, name, {"phase": "debate"}, d, elapsed_ms=debate_ms / 2)
+                self._record_step(db, run, name,
+                    {"phase": "debate", "llm_enabled": llm_enabled.get(name, False)},
+                    d, elapsed_ms=debate_ms / 2)
 
             # ── Phase 4: Sequential decision ──
             logger.info("Phase 4: Trader -> Risk -> Execution for %s/%s", pair, timeframe)
@@ -396,11 +457,14 @@ class AgentScopeRegistry:
             current_msg = Msg("system", decision_context, "system")
             for name in ["trader-agent", "risk-manager", "execution-manager"]:
                 t0 = time.time()
-                current_msg = await agents[name](current_msg)
+                current_msg = await _call_agent(name, current_msg)
                 step_ms = (time.time() - t0) * 1000
                 d = _msg_to_dict(current_msg)
+                d["llm_enabled"] = llm_enabled.get(name, False)
                 analysis_outputs[name] = d
-                self._record_step(db, run, name, {"phase": "decision"}, d, elapsed_ms=step_ms)
+                self._record_step(db, run, name,
+                    {"phase": "decision", "llm_enabled": llm_enabled.get(name, False)},
+                    d, elapsed_ms=step_ms)
 
             # ── Build decision in frontend-compatible format ──
             elapsed = time.time() - start_time
