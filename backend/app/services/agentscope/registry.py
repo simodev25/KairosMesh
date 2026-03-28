@@ -40,6 +40,68 @@ AGENT_STRUCTURED_MODELS: dict[str, type] = {
 logger = logging.getLogger(__name__)
 
 
+async def _extract_tool_invocations(agent) -> dict[str, dict[str, Any]]:
+    """Extract tool call results from an agent's memory after execution."""
+    invocations: dict[str, dict[str, Any]] = {}
+    if not hasattr(agent, "memory") or agent.memory is None:
+        return invocations
+
+    try:
+        msgs = await agent.memory.get_memory()
+    except Exception:
+        return invocations
+
+    # Collect tool_use and tool_result pairs by id
+    tool_uses: dict[str, dict] = {}
+    tool_results: dict[str, dict] = {}
+
+    for msg in msgs:
+        try:
+            blocks = msg.get_content_blocks()
+        except Exception:
+            continue
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            block_id = block.get("id", "")
+            if block_type == "tool_use":
+                tool_uses[block_id] = block
+            elif block_type == "tool_result":
+                tool_results[block_id] = block
+
+    # Merge into invocations keyed by tool name
+    for call_id, use_block in tool_uses.items():
+        tool_name = use_block.get("name", "unknown")
+        result_block = tool_results.get(call_id, {})
+
+        # Parse output text as JSON if possible
+        output_data: Any = {}
+        raw_output = result_block.get("output", "")
+        if isinstance(raw_output, list):
+            # AgentScope format: [{"type": "text", "text": "..."}]
+            texts = [item.get("text", "") for item in raw_output if isinstance(item, dict)]
+            raw_text = " ".join(texts)
+            try:
+                output_data = json.loads(raw_text)
+            except (json.JSONDecodeError, ValueError):
+                output_data = {"raw": raw_text[:500]}
+        elif isinstance(raw_output, str):
+            try:
+                output_data = json.loads(raw_output)
+            except (json.JSONDecodeError, ValueError):
+                output_data = {"raw": raw_output[:500]}
+
+        invocations[tool_name] = {
+            "tool_id": tool_name,
+            "status": "error" if isinstance(output_data, dict) and "error" in output_data else "ok",
+            "input": use_block.get("input", {}),
+            "data": output_data,
+        }
+
+    return invocations
+
+
 def _try_extract_json(text: str) -> dict[str, Any]:
     """Try to extract a JSON object from text (agent output or deterministic result)."""
     if not text:
@@ -69,7 +131,7 @@ def _try_extract_json(text: str) -> dict[str, Any]:
     return {}
 
 
-def _msg_to_dict(msg: Msg | None) -> dict[str, Any]:
+def _msg_to_dict(msg: Msg | None, tool_invocations: dict | None = None) -> dict[str, Any]:
     if msg is None:
         return {}
     text = ""
@@ -83,7 +145,24 @@ def _msg_to_dict(msg: Msg | None) -> dict[str, Any]:
     # If metadata is empty, try to extract structured data from text
     if not metadata:
         metadata = _try_extract_json(text)
-    return {"text": text, "metadata": metadata, "name": getattr(msg, "name", "")}
+
+    result: dict[str, Any] = {"text": text, "metadata": metadata, "name": getattr(msg, "name", "")}
+
+    # Attach tool invocation data if available
+    if tool_invocations:
+        result["tooling"] = {
+            "invocations": tool_invocations,
+            "evidence_used": list(tool_invocations.keys()),
+            "evidence_total_count": len(tool_invocations),
+        }
+        # Merge tool output data into metadata for richer output_payload
+        for tool_name, inv in tool_invocations.items():
+            data = inv.get("data", {})
+            if isinstance(data, dict) and data and "error" not in data:
+                # Store individual tool results
+                result.setdefault("tool_results", {})[tool_name] = data
+
+    return result
 
 
 class AgentScopeRegistry:
@@ -336,12 +415,35 @@ class AgentScopeRegistry:
             ]:
                 workflow.append(agent_name)
                 out = analysis_outputs.get(agent_name, {})
+                # Build rich output_payload matching v1 format
+                step_output = {**out.get("metadata", {})}
+                # Merge tool results into output_payload
+                if out.get("tool_results"):
+                    for tool_name, tool_data in out["tool_results"].items():
+                        if isinstance(tool_data, dict):
+                            # Flatten key tool data into output_payload
+                            if tool_name == "indicator_bundle":
+                                step_output.setdefault("indicators", tool_data)
+                            elif tool_name == "pattern_detector":
+                                step_output.setdefault("patterns", tool_data.get("patterns", []))
+                            elif tool_name == "divergence_detector":
+                                step_output.setdefault("divergences", tool_data.get("divergences", []))
+                            elif tool_name == "support_resistance_detector":
+                                step_output.setdefault("structure", tool_data)
+                            elif tool_name == "multi_timeframe_context":
+                                step_output.setdefault("multi_timeframe", tool_data)
+                # Add tooling section
+                if out.get("tooling"):
+                    step_output["tooling"] = out["tooling"]
+                step_output["llm_enabled"] = out.get("llm_enabled", False)
+                step_output.setdefault("degraded", False)
+
                 agent_steps.append({
                     "agent_name": agent_name,
                     "status": "completed",
                     "llm_enabled": out.get("llm_enabled", False),
-                    "input_payload": {},
-                    "output_payload": out.get("metadata", {}),
+                    "input_payload": {"pair": pair, "timeframe": timeframe},
+                    "output_payload": step_output,
                     "output_text": out.get("text", "")[:2000],
                 })
 
@@ -475,13 +577,20 @@ class AgentScopeRegistry:
 
             analysis_outputs: dict[str, dict] = {}
 
+            # Store tool invocations per agent (filled after each call)
+            agent_tool_invocations: dict[str, dict] = {}
+
             async def _call_agent(name: str, msg: Msg) -> Msg:
                 """Call agent via LLM (with structured output) or deterministic."""
                 if name in agents:
                     schema = AGENT_STRUCTURED_MODELS.get(name)
                     if schema:
-                        return await agents[name](msg, structured_model=schema)
-                    return await agents[name](msg)
+                        result = await agents[name](msg, structured_model=schema)
+                    else:
+                        result = await agents[name](msg)
+                    # Extract tool invocations from agent memory
+                    agent_tool_invocations[name] = await _extract_tool_invocations(agents[name])
+                    return result
                 return await self._run_deterministic(name, toolkits.get(name), msg)
 
             # ── Phase 1: Parallel analysts ──
@@ -495,7 +604,11 @@ class AgentScopeRegistry:
             phase1_ms = (time.time() - t0) * 1000
 
             for i, name in enumerate(analyst_names):
-                msg_dict = _msg_to_dict(phase1_results[i] if i < len(phase1_results) else None)
+                invocations = agent_tool_invocations.get(name, {})
+                msg_dict = _msg_to_dict(
+                    phase1_results[i] if i < len(phase1_results) else None,
+                    tool_invocations=invocations,
+                )
                 msg_dict["llm_enabled"] = llm_enabled.get(name, False)
                 analysis_outputs[name] = msg_dict
                 self._record_step(db, run, name,
@@ -537,7 +650,7 @@ class AgentScopeRegistry:
             debate_ms = (time.time() - t0) * 1000
 
             for name, msg in [("bullish-researcher", bullish_msg), ("bearish-researcher", bearish_msg)]:
-                d = _msg_to_dict(msg)
+                d = _msg_to_dict(msg, tool_invocations=agent_tool_invocations.get(name, {}))
                 d["llm_enabled"] = llm_enabled.get(name, False)
                 analysis_outputs[name] = d
                 self._record_step(db, run, name,
@@ -559,7 +672,7 @@ class AgentScopeRegistry:
                 t0 = time.time()
                 current_msg = await _call_agent(name, current_msg)
                 step_ms = (time.time() - t0) * 1000
-                d = _msg_to_dict(current_msg)
+                d = _msg_to_dict(current_msg, tool_invocations=agent_tool_invocations.get(name, {}))
                 d["llm_enabled"] = llm_enabled.get(name, False)
                 analysis_outputs[name] = d
                 self._record_step(db, run, name,
