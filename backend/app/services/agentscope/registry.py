@@ -235,6 +235,75 @@ class AgentScopeRegistry:
         except Exception as exc:
             logger.warning("Failed to record step for %s: %s", agent_name, exc)
 
+    def _write_debug_trace(
+        self, run, pair: str, timeframe: str, risk_percent: float,
+        market_data: dict, analysis_outputs: dict, elapsed: float,
+    ) -> None:
+        """Write debug trace JSON file if enabled in settings."""
+        from app.core.config import get_settings
+        import os
+
+        settings = get_settings()
+        if not settings.debug_trade_json_enabled:
+            return
+
+        try:
+            trace_dir = settings.debug_trade_json_dir or "./debug-traces"
+            os.makedirs(trace_dir, exist_ok=True)
+
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            filename = f"run-{run.id}-{ts}.json"
+            filepath = os.path.join(trace_dir, filename)
+
+            payload = {
+                "schema_version": 2,
+                "runtime_engine": "agentscope_v1",
+                "run": {
+                    "id": run.id,
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "risk_percent": risk_percent,
+                    "status": run.status,
+                    "created_at": str(getattr(run, "created_at", "")),
+                },
+                "elapsed_seconds": round(elapsed, 1),
+                "market": {
+                    "source": market_data.get("snapshot", {}).get("market_data_source", "unknown"),
+                    "bars": len(market_data.get("ohlc", {}).get("closes", [])),
+                    "snapshot": market_data.get("snapshot", {}),
+                },
+                "decision": run.decision,
+                "analysis_outputs": {
+                    k: {
+                        "text": v.get("text", ""),
+                        "metadata": v.get("metadata", {}),
+                    }
+                    for k, v in analysis_outputs.items()
+                },
+            }
+
+            # Include price history if configured
+            if settings.debug_trade_json_include_price_history:
+                limit = settings.debug_trade_json_price_history_limit
+                ohlc = market_data.get("ohlc", {})
+                payload["price_history"] = {
+                    k: v[-limit:] for k, v in ohlc.items() if isinstance(v, list)
+                }
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+
+            logger.info("Debug trace written: %s", filepath)
+
+            # Record in run.trace
+            run.trace["debug_trace_meta"] = {
+                "enabled": True,
+                "file": filepath,
+                "schema_version": 2,
+            }
+        except Exception as exc:
+            logger.warning("Failed to write debug trace: %s", exc)
+
     async def execute(self, db, run, pair: str, timeframe: str, risk_percent: float,
                       metaapi_account_ref: str | None = None):
         start_time = time.time()
@@ -386,6 +455,11 @@ class AgentScopeRegistry:
                     k: {"text": v.get("text", "")[:300]} for k, v in analysis_outputs.items()
                 },
             }
+
+            # ── Debug trace JSON file ──
+            self._write_debug_trace(run, pair, timeframe, risk_percent,
+                                    market_data, analysis_outputs, elapsed)
+
             db.commit()
 
         except Exception as exc:
