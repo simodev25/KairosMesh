@@ -223,33 +223,6 @@ def test_agent_model_selector_resolves_decision_mode_with_fallback() -> None:
         selector.settings.decision_mode = previous
 
 
-def test_agent_model_selector_resolves_memory_context_enabled_with_fallback() -> None:
-    engine = create_engine('sqlite:///:memory:')
-    Base.metadata.create_all(bind=engine)
-
-    selector = AgentModelSelector()
-    assert selector.resolve_memory_context_enabled(None) is False
-
-    with Session(engine) as db:
-        db.add(
-            ConnectorConfig(
-                connector_name='ollama',
-                enabled=True,
-                settings={'memory_context_enabled': 'true'},
-            )
-        )
-        db.commit()
-
-        assert selector.resolve_memory_context_enabled(db) is True
-
-        row = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'ollama').first()
-        assert row is not None
-        row.settings = {'memory_context_enabled': 'off'}
-        db.commit()
-        AgentModelSelector.clear_cache()
-        assert selector.resolve_memory_context_enabled(db) is False
-
-
 def test_agent_model_selector_resolves_agent_tools_with_default_enabled() -> None:
     selector = AgentModelSelector()
     enabled_tools = selector.resolve_enabled_tools(None, 'news-analyst')

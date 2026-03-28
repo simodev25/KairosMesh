@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     environment:
       POSTGRES_USER: forex
       POSTGRES_PASSWORD: forex
@@ -30,13 +30,6 @@ services:
     ports:
       - '5672:5672'
       - '15672:15672'
-
-  qdrant:
-    image: qdrant/qdrant:v1.13.2
-    ports:
-      - '6333:6333'
-    volumes:
-      - qdrant_data:/qdrant/storage
 
   backend:
     build:
@@ -154,4 +147,3 @@ services:
 
 volumes:
   postgres_data:
-  qdrant_data:

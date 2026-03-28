@@ -18,7 +18,6 @@ def _ctx(market_snapshot: dict) -> AgentContext:
         risk_percent=1.0,
         market_snapshot=market_snapshot,
         news_context={'news': []},
-        memory_context=[],
     )
 
 
@@ -248,7 +247,6 @@ def test_market_context_live_mode_keeps_soft_llm_fallback_non_degraded(monkeypat
                 'ema_slow': 1.099,
             },
             news_context={'news': []},
-            memory_context=[],
         )
     )
 
@@ -342,7 +340,6 @@ def test_permissive_mode_can_still_trade_after_context_patch() -> None:
                 'change_pct': -0.02,
             },
             news_context={'news': []},
-            memory_context=[],
         )
         outputs = {
             'technical-analyst': {'signal': 'bearish', 'score': -0.34},

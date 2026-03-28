@@ -57,10 +57,6 @@ def _compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int 
     return tr.ewm(span=period, adjust=False).mean()
 
 
-# Maximum size (in bytes) for feedback_detail JSON payloads
-_MAX_FEEDBACK_JSON_SIZE = 10_000
-
-
 # ---------------------------------------------------------------------------
 # 1. MARKET DATA TOOLS
 # ---------------------------------------------------------------------------
@@ -989,110 +985,6 @@ def pattern_detector(
 
 
 # ---------------------------------------------------------------------------
-# 19. MEMORY QUERY TOOL — NEW tool for agent‑driven memory access
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-def memory_query(
-    action: str = "search",
-    pair: str = "",
-    timeframe: str = "",
-    query: str = "",
-    limit: int = 5,
-    agent_name: str = "",
-    outcome_filter: str = "",
-    feedback_type: str = "",
-    feedback_summary: str = "",
-    feedback_detail: str = "",
-    outcome_weight: float = 0.0,
-) -> dict[str, Any]:
-    """Agent‑accessible memory operations: search, store_feedback, get_stats.
-
-    Actions:
-      - search: Query past memories by similarity, optionally scoped to an agent.
-      - store_feedback: Store agent-specific learning feedback.
-      - get_stats: Aggregated memory statistics for an agent or whole system.
-    """
-    import json as _json
-    try:
-        from app.db.session import SessionLocal
-        from app.services.memory.vector_memory import VectorMemoryService
-    except Exception as exc:
-        return {"status": "error", "error": f"import_failed: {exc}"}
-
-    svc = VectorMemoryService()
-    pair_val = str(pair or "").strip()
-    tf_val = str(timeframe or "").strip()
-    agent_val = str(agent_name or "").strip() or None
-    action_val = str(action or "search").strip().lower()
-
-    db = SessionLocal()
-    try:
-        if action_val == "search":
-            outcome_f = str(outcome_filter or "").strip().lower() or None
-            if outcome_f not in ("win", "loss", None):
-                outcome_f = None
-            results = svc.search(
-                db=db,
-                pair=pair_val,
-                timeframe=tf_val,
-                query=str(query or "").strip(),
-                limit=max(1, min(int(limit), 20)),
-                agent_id=agent_val,
-                outcome_filter=outcome_f,
-            )
-            return {
-                "status": "ok",
-                "action": "search",
-                "count": len(results),
-                "results": results,
-            }
-        elif action_val == "store_feedback":
-            detail_dict: dict[str, Any] = {}
-            if feedback_detail:
-                if len(feedback_detail) > _MAX_FEEDBACK_JSON_SIZE:
-                    return {"status": "error", "error": f"feedback_detail exceeds max size ({_MAX_FEEDBACK_JSON_SIZE} bytes)"}
-                try:
-                    detail_dict = _json.loads(feedback_detail)
-                    if not isinstance(detail_dict, dict):
-                        detail_dict = {"raw": feedback_detail}
-                except Exception:
-                    detail_dict = {"raw": feedback_detail[:_MAX_FEEDBACK_JSON_SIZE]}
-            ow = float(outcome_weight) if outcome_weight else None
-            entry = svc.store_agent_feedback(
-                db=db,
-                pair=pair_val,
-                timeframe=tf_val,
-                agent_id=agent_val or "unknown",
-                feedback_type=str(feedback_type or "general").strip(),
-                summary=str(feedback_summary or query or "").strip(),
-                detail=detail_dict,
-                outcome_weight=ow,
-            )
-            return {
-                "status": "ok",
-                "action": "store_feedback",
-                "entry_id": entry.id,
-                "agent_id": agent_val or "unknown",
-            }
-        elif action_val == "get_stats":
-            stats = svc.get_agent_stats(
-                db=db,
-                pair=pair_val,
-                timeframe=tf_val,
-                agent_id=agent_val,
-            )
-            return {"status": "ok", "action": "get_stats", **stats}
-        else:
-            return {"status": "error", "error": f"unknown action: {action_val}"}
-    except Exception as exc:
-        logger.warning("memory_query failed: %s", exc, exc_info=True)
-        return {"status": "error", "error": f"memory_query_failed: {type(exc).__name__}"}
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
 # Catalog — used by the MCP client adapter to register all tools
 # ---------------------------------------------------------------------------
 
@@ -1203,12 +1095,6 @@ MCP_TOOL_CATALOG: dict[str, dict[str, Any]] = {
         "label": "Position Size Calculator",
         "description": "Asset-class-adapted position size calculation with margin verification.",
         "section": "risk",
-        "enabled_by_default": True,
-    },
-    "memory_query": {
-        "label": "Memory Query",
-        "description": "Agentic memory access: search, feedback, statistics per agent.",
-        "section": "memory",
         "enabled_by_default": True,
     },
 }

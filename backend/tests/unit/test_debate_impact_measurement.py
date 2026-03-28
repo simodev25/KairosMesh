@@ -36,8 +36,6 @@ def _context(
             'change_pct': 0.0,
         },
         news_context={'news': []},
-        memory_context=[],
-        memory_signal={},
     )
 
 

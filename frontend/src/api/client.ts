@@ -250,14 +250,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }, token),
-  searchMemory: (
-    token: string,
-    payload: { pair: string; timeframe: string; query: string; limit: number },
-  ) =>
-    request('/memory/search', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, token),
 };
 
 export function wsRunUrl(runId: number, token?: string): string {

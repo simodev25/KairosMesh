@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-forex}
@@ -13,10 +13,6 @@ services:
     ports: []
 
   rabbitmq:
-    restart: unless-stopped
-    ports: []
-
-  qdrant:
     restart: unless-stopped
     ports: []
 

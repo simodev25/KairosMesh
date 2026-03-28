@@ -173,7 +173,7 @@ def test_runtime_session_store_appends_monotonic_events() -> None:
         assert [row.seq for row in event_rows] == [1, 2, 3]
 
 
-def test_agentic_runtime_selects_memory_refresh_after_follow_up_hold() -> None:
+def test_agentic_runtime_selects_second_pass_rerun_after_follow_up_hold() -> None:
     runtime = AgenticTradingRuntime()
     state = RuntimeSessionState(
         objective={'kind': 'trade-analysis'},
@@ -184,10 +184,6 @@ def test_agentic_runtime_selects_memory_refresh_after_follow_up_hold() -> None:
         {
             'market': {'trend': 'bullish'},
             'news': {'news': []},
-            'memory_context': [],
-            'memory_context_enabled': True,
-            'memory_limit': 5,
-            'memory_refresh_count': 0,
         }
     )
     state.artifacts['analysis_outputs'] = {
@@ -204,7 +200,7 @@ def test_agentic_runtime_selects_memory_refresh_after_follow_up_hold() -> None:
     }
     state.artifacts['risk'] = {'accepted': True, 'suggested_volume': 0.0}
 
-    assert runtime._next_tool(state) == 'refresh_memory_context'
+    assert runtime._next_tool(state) == 'rerun_second_pass'
 
 
 def test_agentic_runtime_records_subagent_sessions() -> None:
@@ -302,10 +298,6 @@ def test_agentic_runtime_uses_planner_choice(monkeypatch) -> None:
             {
                 'market': {'trend': 'bullish'},
                 'news': {'news': []},
-                'memory_context': [],
-                'memory_context_enabled': True,
-                'memory_limit': 5,
-                'memory_refresh_count': 0,
             }
         )
         runtime.session_store.initialize(
@@ -364,10 +356,6 @@ def test_agentic_runtime_planner_falls_back_on_invalid_tool(monkeypatch) -> None
         {
             'market': {'trend': 'bullish'},
             'news': {'news': []},
-            'memory_context': [],
-            'memory_context_enabled': True,
-            'memory_limit': 5,
-            'memory_refresh_count': 0,
         }
     )
     candidate_tools = [
@@ -424,7 +412,6 @@ def test_agentic_runtime_planner_accepts_legacy_contract_as_degraded(monkeypatch
         {
             'market': {'trend': 'bullish'},
             'news': {'news': []},
-            'memory_context': [],
         }
     )
     candidate_tools = [
@@ -809,11 +796,6 @@ def test_agentic_runtime_writes_debug_trade_trace_json(monkeypatch, tmp_path: Pa
                 'pair': run.pair,
                 'news': [{'title': 'ECB keeps rates unchanged'}],
             }
-            state.context['memory_context'] = [{'summary': 'Memo context'}]
-            state.context['memory_context_enabled'] = True
-            state.context['memory_signal'] = {'used': True, 'signal': 'supportive'}
-            state.context['memory_runtime'] = {'sources': {'vector': 1, 'memori': 0}}
-            state.context['memory_retrieval_context'] = {'trend': 'bullish'}
             state.artifacts['analysis_outputs'] = {
                 'technical-analyst': {'signal': 'bullish', 'score': 0.4},
                 'news-analyst': {'signal': 'neutral', 'score': 0.0},
@@ -851,8 +833,6 @@ def test_agentic_runtime_writes_debug_trade_trace_json(monkeypatch, tmp_path: Pa
         monkeypatch.setattr(runtime, '_candidate_tools', lambda _state: [] if selection_state['done'] else ['resolve_market_context'])
         monkeypatch.setattr(runtime, '_call_tool', fake_call_tool)
         monkeypatch.setattr(runtime.orchestrator, 'resolve_recent_candles', fake_recent_candles)
-        monkeypatch.setattr(runtime.orchestrator.memory_service, 'add_run_memory', lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(runtime.orchestrator.memori_memory_service, 'store_run_memory', lambda *_args, **_kwargs: {'stored': False})
 
         completed_run = asyncio.run(runtime.execute(db, run, risk_percent=1.0))
 
@@ -922,9 +902,6 @@ def test_agentic_runtime_news_tool_toggle_is_applied_in_runtime_v2() -> None:
                     'news': [{'title': 'EUR stays mixed into session open'}],
                     'macro_events': [],
                 },
-                'memory_context': [],
-                'memory_signal': {},
-                'memory_context_enabled': False,
             }
         )
 

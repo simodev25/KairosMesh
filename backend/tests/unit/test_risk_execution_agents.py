@@ -9,7 +9,6 @@ def _context() -> AgentContext:
         risk_percent=1.0,
         market_snapshot={'last_price': 1.1, 'atr': 0.001, 'trend': 'bullish'},
         news_context={'news': []},
-        memory_context=[],
     )
 
 

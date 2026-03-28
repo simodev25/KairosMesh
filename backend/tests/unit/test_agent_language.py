@@ -61,7 +61,6 @@ def test_news_agent_detects_french_bearish_sentiment(monkeypatch) -> None:
                 {'title': 'US yields rise after inflation surprise'},
             ]
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -82,7 +81,6 @@ def test_news_agent_ignores_empty_titles() -> None:
         risk_percent=1.0,
         market_snapshot={'trend': 'neutral'},
         news_context={'news': [{'title': ''}, {'title': '   '} ]},
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -120,7 +118,6 @@ def test_news_agent_uses_deterministic_fallback_when_llm_is_degraded(monkeypatch
             ],
             'symbol': 'EURUSD=X',
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -155,7 +152,6 @@ def test_news_agent_pair_aware_fallback_for_fx_headlines(monkeypatch) -> None:
         risk_percent=1.0,
         market_snapshot={'trend': 'neutral'},
         news_context={'news': headlines, 'symbol': 'EURUSD=X'},
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -192,7 +188,6 @@ def test_news_agent_uses_compact_prompt_and_generation_limits(monkeypatch) -> No
                 {'title': 'Euro rises after ECB hawkish remarks', 'summary': 'Euro bid persists.'},
             ],
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -252,7 +247,6 @@ def test_news_agent_retries_when_llm_returns_empty_length_response(monkeypatch) 
                 {'title': 'Euro rises after ECB hawkish remarks', 'summary': 'Euro bid persists.'},
             ],
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -297,7 +291,6 @@ def test_news_agent_empty_llm_summary_contains_diagnostics_after_retry(monkeypat
                 {'title': 'Euro rises after ECB hawkish remarks', 'summary': 'Euro bid persists.'},
             ],
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -335,7 +328,6 @@ def test_news_agent_exposes_summary_description_and_source_in_evidence(monkeypat
                 }
             ]
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -375,7 +367,6 @@ def test_news_agent_keeps_score_direction_consistent_with_llm_forced_signal(monk
                 {'title': 'Euro weakens after ECB dovish pivot, Dollar gains on strong jobs'},
             ],
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -416,7 +407,6 @@ def test_technical_agent_respects_explicit_neutral_llm_output(monkeypatch) -> No
             'atr': 0.0008,
         },
         news_context={'news': []},
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -452,7 +442,6 @@ def test_technical_agent_marks_empty_llm_output_as_degraded(monkeypatch) -> None
             'atr': 0.0008,
         },
         news_context={'news': []},
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)

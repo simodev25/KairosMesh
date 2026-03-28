@@ -49,22 +49,6 @@ class Settings(BaseSettings):
     celery_scheduler_time_limit_seconds: int = Field(default=30, alias='CELERY_SCHEDULER_TIME_LIMIT_SECONDS')
     celery_backtest_soft_time_limit_seconds: int = Field(default=1200, alias='CELERY_BACKTEST_SOFT_TIME_LIMIT_SECONDS')
     celery_backtest_time_limit_seconds: int = Field(default=1500, alias='CELERY_BACKTEST_TIME_LIMIT_SECONDS')
-    qdrant_url: str = Field(default='http://qdrant:6333', alias='QDRANT_URL')
-    qdrant_api_key: str = Field(default='', alias='QDRANT_API_KEY')
-    qdrant_collection: str = Field(default='forex_long_term_memory', alias='QDRANT_COLLECTION')
-    memory_vector_size: int = Field(default=64, alias='MEMORY_VECTOR_SIZE')
-    enable_pgvector: bool = Field(default=False, alias='ENABLE_PGVECTOR')
-    memori_enabled: bool = Field(default=False, alias='MEMORI_ENABLED')
-    memori_process_id: str = Field(default='forex-orchestrator', alias='MEMORI_PROCESS_ID')
-    memori_entity_prefix: str = Field(default='fx', alias='MEMORI_ENTITY_PREFIX')
-    memori_recall_limit: int = Field(default=3, ge=1, le=20, alias='MEMORI_RECALL_LIMIT')
-    memori_recall_min_similarity: float = Field(
-        default=0.12,
-        ge=0.0,
-        le=1.0,
-        alias='MEMORI_RECALL_MIN_SIMILARITY',
-    )
-    memori_store_run_memories: bool = Field(default=True, alias='MEMORI_STORE_RUN_MEMORIES')
 
     ollama_base_url: str = Field(default='https://ollama.com', alias='OLLAMA_BASE_URL')
     ollama_api_key: str = Field(default='', alias='OLLAMA_API_KEY')
@@ -209,20 +193,7 @@ class Settings(BaseSettings):
         le=1.0,
         alias='ORCHESTRATOR_AUTONOMY_ACCEPT_MIN_EVIDENCE',
     )
-    orchestrator_autonomy_memory_limit_step: int = Field(
-        default=2,
-        ge=1,
-        le=10,
-        alias='ORCHESTRATOR_AUTONOMY_MEMORY_LIMIT_STEP',
-    )
-    orchestrator_autonomy_memory_limit_max: int = Field(
-        default=12,
-        ge=5,
-        le=50,
-        alias='ORCHESTRATOR_AUTONOMY_MEMORY_LIMIT_MAX',
-    )
     orchestrator_autonomy_model_boost_enabled: bool = Field(default=True, alias='ORCHESTRATOR_AUTONOMY_MODEL_BOOST_ENABLED')
-    orchestrator_memory_search_limit: int = Field(default=5, ge=1, le=50, alias='ORCHESTRATOR_MEMORY_SEARCH_LIMIT')
     orchestrator_second_pass_enabled: bool = Field(default=True, alias='ORCHESTRATOR_SECOND_PASS_ENABLED')
     orchestrator_second_pass_max_attempts: int = Field(default=1, ge=0, le=3, alias='ORCHESTRATOR_SECOND_PASS_MAX_ATTEMPTS')
     orchestrator_second_pass_min_combined_score: float = Field(

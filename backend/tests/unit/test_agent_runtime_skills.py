@@ -17,7 +17,6 @@ def _context() -> AgentContext:
         risk_percent=1.0,
         market_snapshot={'last_price': 1.1, 'atr': 0.001, 'trend': 'bullish', 'change_pct': 0.15, 'rsi': 50, 'macd_diff': 0.1},
         news_context={'news': [{'title': 'Dollar falls as recession fears rise'}]},
-        memory_context=[],
     )
 
 
@@ -49,9 +48,6 @@ def _news_llm_context() -> AgentContext:
                 },
             ],
         },
-        memory_context=[
-            {'summary': 'Prior retained catalyst: ECB communication mattered for EURUSD when repricing rate expectations.'},
-        ],
     )
 
 
@@ -326,7 +322,7 @@ def test_news_agent_timeout_case_matches_live_payload(monkeypatch) -> None:
                             "Prioritize catalysts with credible transmission: central banks, inflation, employment, growth, energy, commodities, geopolitical risk, global risk flows.",
                             "Strongly reduce the weight of headlines without a clear primary source, generic summaries, non-specific articles and content too far from actual pair pricing.",
                             "Actual freshness matters more than narrative noise; an old news item serves as context, not as dominant evidence.",
-                            "Never use memory as superior evidence over a fresh, relevant and traceable news item; memory serves as secondary context only.",
+                            "Never let stale context dominate over fresh, relevant and traceable news evidence.",
                         ]
                     },
                 },
@@ -361,7 +357,6 @@ def test_news_agent_timeout_case_matches_live_payload(monkeypatch) -> None:
                     {'title': '7 Key Central Banks Meetings to Watch Next Week'},
                 ],
             },
-            memory_context=[],
         )
 
         result = agent.run(ctx, db=db)

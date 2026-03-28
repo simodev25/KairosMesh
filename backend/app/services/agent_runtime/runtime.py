@@ -11,7 +11,6 @@ from app.db.models.run import AnalysisRun
 from app.observability.metrics import (
     agentic_runtime_execution_outcomes_total,
     agentic_runtime_final_decisions_total,
-    agentic_runtime_memory_refresh_total,
     agentic_runtime_runs_total,
     agentic_runtime_session_messages_total,
     agentic_runtime_subagent_sessions_total,
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 class AgenticTradingRuntime:
     PLAN = (
         'resolve_market_context',
-        'load_memory_context',
         'run_technical_analyst',
         'run_news_analyst',
         'run_market_context_analyst',
@@ -66,17 +64,10 @@ class AgenticTradingRuntime:
             profiles=('agentic_v2',),
         )
         self.registry.register(
-            'load_memory_context',
-            self._tool_load_memory_context,
-            description='Retrieve vector and semantic memory context for the run.',
-            section='memory',
-            profiles=('agentic_v2',),
-        )
-        self.registry.register(
-            'refresh_memory_context',
-            self._tool_refresh_memory_context,
-            description='Expand memory recall and reset downstream analysis artifacts.',
-            section='memory',
+            'rerun_second_pass',
+            self._tool_rerun_second_pass,
+            description='Reset downstream analysis artifacts for a second-pass rerun.',
+            section='runtime',
             profiles=('agentic_v2',),
         )
         self.registry.register(
@@ -215,7 +206,6 @@ class AgenticTradingRuntime:
             'thesis_support_extractor': 'decision',
             'scenario_validation': 'decision',
             'position_size_calculator': 'risk',
-            'memory_query': 'memory',
         }
         for tool_id in adapter.tool_ids:
             if self.registry.has(f'mcp_{tool_id}'):
@@ -264,8 +254,6 @@ class AgenticTradingRuntime:
             risk_percent=risk_percent,
             market_snapshot=state.context.get('market') if isinstance(state.context.get('market'), dict) else {},
             news_context=state.context.get('news') if isinstance(state.context.get('news'), dict) else {},
-            memory_context=state.context.get('memory_context') if isinstance(state.context.get('memory_context'), list) else [],
-            memory_signal=state.context.get('memory_signal') if isinstance(state.context.get('memory_signal'), dict) else {},
             llm_model_overrides={},
             price_history=state.context.get('_price_history') if isinstance(state.context.get('_price_history'), list) else [],
             multi_tf_snapshots=state.context.get('_multi_tf_snapshots') if isinstance(state.context.get('_multi_tf_snapshots'), dict) else {},
@@ -417,9 +405,6 @@ class AgenticTradingRuntime:
                 metaapi_account_ref=metaapi_account_ref,
                 market=state.context.get('market', {}) if isinstance(state.context.get('market'), dict) else {},
                 news=state.context.get('news', {}) if isinstance(state.context.get('news'), dict) else {},
-                memory_context=state.context.get('memory_context', []) if isinstance(state.context.get('memory_context'), list) else [],
-                memory_signal=state.context.get('memory_signal', {}) if isinstance(state.context.get('memory_signal'), dict) else {},
-                memory_runtime=state.context.get('memory_runtime', {}) if isinstance(state.context.get('memory_runtime'), dict) else {},
                 price_history=price_history,
                 analysis_outputs=analysis_outputs,
                 bullish=bullish,
@@ -535,36 +520,28 @@ class AgenticTradingRuntime:
 
     def _build_runtime_governor(self, state: RuntimeSessionState) -> dict[str, Any]:
         trader_decision = state.artifacts.get('trader_decision')
-        memory_enabled = bool(state.context.get('memory_context_enabled', False))
-        current_limit = int(state.context.get('memory_limit', 0) or 0)
-        max_limit = max(int(self.settings.orchestrator_autonomy_memory_limit_max), 1)
-        attempt_count = int(
-            state.context.get('second_pass_attempt_count', state.context.get('memory_refresh_count', 0)) or 0
-        )
-        max_attempts = 1
+        attempt_count = int(state.context.get('second_pass_attempt_count', 0) or 0)
+        max_attempts = max(int(self.settings.orchestrator_second_pass_max_attempts), 0)
+        second_pass_enabled = bool(self.settings.orchestrator_second_pass_enabled and max_attempts > 0)
         reason = 'no_second_pass_condition'
         should_second_pass = False
         if not isinstance(trader_decision, dict):
             reason = 'trader_decision_missing'
-        elif not memory_enabled:
-            reason = 'memory_context_disabled'
+        elif not second_pass_enabled:
+            reason = 'second_pass_disabled'
         elif str(trader_decision.get('decision') or '').strip().upper() != 'HOLD':
             reason = 'decision_not_hold'
         elif not bool(trader_decision.get('needs_follow_up', False)):
             reason = 'no_follow_up_requested'
         elif attempt_count >= max_attempts:
             reason = 'second_pass_attempt_limit_reached'
-        elif current_limit >= max_limit:
-            reason = 'memory_limit_max_reached'
         else:
             should_second_pass = True
-            reason = str(trader_decision.get('follow_up_reason') or 'memory_refresh')
+            reason = str(trader_decision.get('follow_up_reason') or 'second_pass')
         return {
-            'enabled': memory_enabled,
+            'enabled': second_pass_enabled,
             'attempt_count': attempt_count,
             'max_attempts': max_attempts,
-            'memory_limit': current_limit,
-            'max_memory_limit': max_limit,
             'should_second_pass': should_second_pass,
             'reason': reason,
         }
@@ -845,8 +822,6 @@ class AgenticTradingRuntime:
     def _candidate_tools(self, state: RuntimeSessionState) -> list[str]:
         if not isinstance(state.context.get('market'), dict) or not isinstance(state.context.get('news'), dict):
             return ['resolve_market_context']
-        if 'memory_context' not in state.context:
-            return ['load_memory_context']
 
         analysis_outputs = self._analysis_outputs(state)
         analysis_candidates: list[str] = []
@@ -869,7 +844,7 @@ class AgenticTradingRuntime:
         governor = self._build_runtime_governor(state)
         state.artifacts['runtime_governor'] = governor
         if bool(governor.get('should_second_pass')):
-            return ['refresh_memory_context']
+            return ['rerun_second_pass']
         if not isinstance(state.artifacts.get('execution_manager'), dict):
             return ['run_execution_manager']
         return []
@@ -1052,7 +1027,6 @@ class AgenticTradingRuntime:
                 plan=list(self.PLAN),
             )
             state.context['metaapi_account_ref'] = metaapi_account_ref
-            state.context['memory_refresh_count'] = 0
             state.context['second_pass_attempt_count'] = 0
 
             self.session_store.initialize(
@@ -1078,9 +1052,7 @@ class AgenticTradingRuntime:
             )
         else:
             state.context['metaapi_account_ref'] = metaapi_account_ref
-            state.context['second_pass_attempt_count'] = int(
-                state.context.get('second_pass_attempt_count', state.context.get('memory_refresh_count', 0)) or 0
-            )
+            state.context['second_pass_attempt_count'] = int(state.context.get('second_pass_attempt_count', 0) or 0)
             self.session_store.append_event(
                 db,
                 run,
@@ -1175,11 +1147,6 @@ class AgenticTradingRuntime:
                 'analysis_outputs': analysis_outputs,
                 'bullish': bullish,
                 'bearish': bearish,
-                'memory_context': state.context.get('memory_context', []),
-                'memory_context_enabled': state.context.get('memory_context_enabled', False),
-                'memory_signal': state.context.get('memory_signal', {}),
-                'memory_runtime': state.context.get('memory_runtime', {}),
-                'memory_retrieval_context': state.context.get('memory_retrieval_context', {}),
                 'evidence_bundle': state.artifacts.get('evidence_bundle', {}),
                 'runtime_governor': state.artifacts.get('runtime_governor', {}),
                 'requested_metaapi_account_ref': metaapi_account_ref,
@@ -1196,30 +1163,6 @@ class AgenticTradingRuntime:
                 trace_payload=trace_payload,
             )
             run.trace = trace_payload
-            db.commit()
-            db.refresh(run)
-
-            vector_memory_meta: dict[str, Any] = {
-                'stored': False,
-                'entry_id': None,
-                'error': None,
-            }
-            try:
-                vector_entry = self.orchestrator.memory_service.add_run_memory(db, run)
-                vector_memory_meta['stored'] = True
-                if vector_entry is not None:
-                    vector_memory_meta['entry_id'] = getattr(vector_entry, 'id', None)
-            except Exception as exc:
-                logger.exception('agentic runtime vector memory persistence failed run_id=%s', run.id)
-                vector_memory_meta['error'] = str(exc)
-
-            memori_store_meta = self.orchestrator.memori_memory_service.store_run_memory(run)
-            memory_persistence_meta = {
-                'vector': vector_memory_meta,
-                'memori': memori_store_meta,
-            }
-            updated_trace = run.trace if isinstance(run.trace, dict) else {}
-            run.trace = {**updated_trace, 'memory_persistence': memory_persistence_meta}
             db.commit()
             db.refresh(run)
 
@@ -1264,11 +1207,6 @@ class AgenticTradingRuntime:
                 'analysis_outputs': self._analysis_outputs(state),
                 'bullish': state.artifacts.get('bullish') if isinstance(state.artifacts.get('bullish'), dict) else {},
                 'bearish': state.artifacts.get('bearish') if isinstance(state.artifacts.get('bearish'), dict) else {},
-                'memory_context': state.context.get('memory_context', []),
-                'memory_context_enabled': state.context.get('memory_context_enabled', False),
-                'memory_signal': state.context.get('memory_signal', {}),
-                'memory_runtime': state.context.get('memory_runtime', {}),
-                'memory_retrieval_context': state.context.get('memory_retrieval_context', {}),
                 'evidence_bundle': state.artifacts.get('evidence_bundle', {}),
                 'runtime_governor': state.artifacts.get('runtime_governor', {}),
                 'requested_metaapi_account_ref': metaapi_account_ref,
@@ -1336,7 +1274,7 @@ class AgenticTradingRuntime:
         state.context['_multi_tf_snapshots'] = multi_tf_snapshots
         return {'market': market, 'news': news}
 
-    async def _tool_load_memory_context(
+    async def _tool_rerun_second_pass(
         self,
         *,
         db: Session,
@@ -1345,103 +1283,29 @@ class AgenticTradingRuntime:
         risk_percent: float,
         metaapi_account_ref: int | None,
     ) -> dict[str, Any]:
-        del metaapi_account_ref, risk_percent
-        market = state.context.get('market')
-        if not isinstance(market, dict):
-            raise RuntimeError('Market snapshot must be loaded before memory context.')
-
-        memory_context_enabled = self.orchestrator.model_selector.resolve_memory_context_enabled(db)
-        decision_mode = self.orchestrator.model_selector.resolve_decision_mode(db)
-        memory_retrieval_context = self.orchestrator.memory_service.build_retrieval_context(
-            market,
-            decision_mode=decision_mode,
-        )
-        memory_limit = max(int(self.settings.orchestrator_memory_search_limit), 1)
-        memory_context, memory_signal, memory_runtime = self.orchestrator._load_memory_state(
-            db=db,
-            pair=run.pair,
-            timeframe=run.timeframe,
-            market=market,
-            decision_mode=decision_mode,
-            memory_retrieval_context=memory_retrieval_context,
-            memory_context_enabled=memory_context_enabled,
-            limit=memory_limit,
-        )
-        state.context['memory_context_enabled'] = memory_context_enabled
-        state.context['memory_context'] = memory_context
-        state.context['memory_signal'] = memory_signal
-        state.context['memory_runtime'] = memory_runtime
-        state.context['memory_retrieval_context'] = memory_retrieval_context
-        state.context['memory_limit'] = memory_limit
-        return {
-            'memory_context_count': len(memory_context),
-            'memory_signal': memory_signal,
-            'memory_runtime': memory_runtime,
-        }
-
-    async def _tool_refresh_memory_context(
-        self,
-        *,
-        db: Session,
-        run: AnalysisRun,
-        state: RuntimeSessionState,
-        risk_percent: float,
-        metaapi_account_ref: int | None,
-    ) -> dict[str, Any]:
-        del metaapi_account_ref, risk_percent
-        market = state.context.get('market')
-        if not isinstance(market, dict):
-            raise RuntimeError('Market snapshot must be loaded before memory refresh.')
-
-        decision_mode = self.orchestrator.model_selector.resolve_decision_mode(db)
-        memory_retrieval_context = state.context.get('memory_retrieval_context')
-        if not isinstance(memory_retrieval_context, dict):
-            memory_retrieval_context = self.orchestrator.memory_service.build_retrieval_context(
-                market,
-                decision_mode=decision_mode,
-            )
-
-        current_limit = max(int(state.context.get('memory_limit', self.settings.orchestrator_memory_search_limit) or 1), 1)
-        next_limit = min(
-            current_limit + int(self.settings.orchestrator_autonomy_memory_limit_step),
-            max(int(self.settings.orchestrator_autonomy_memory_limit_max), current_limit),
-        )
-        memory_context, memory_signal, memory_runtime = self.orchestrator._load_memory_state(
-            db=db,
-            pair=run.pair,
-            timeframe=run.timeframe,
-            market=market,
-            decision_mode=decision_mode,
-            memory_retrieval_context=memory_retrieval_context,
-            memory_context_enabled=bool(state.context.get('memory_context_enabled', False)),
-            limit=next_limit,
-        )
-        state.context['memory_context'] = memory_context
-        state.context['memory_signal'] = memory_signal
-        state.context['memory_runtime'] = memory_runtime
-        state.context['memory_limit'] = next_limit
-        state.context['memory_refresh_count'] = int(state.context.get('memory_refresh_count', 0) or 0) + 1
-        state.context['second_pass_attempt_count'] = int(
-            state.context.get('second_pass_attempt_count', 0) or 0
-        ) + 1
-        state.artifacts.pop('analysis_outputs', None)
-        state.artifacts.pop('bullish', None)
-        state.artifacts.pop('bearish', None)
-        state.artifacts.pop('trader_decision', None)
-        state.artifacts.pop('risk', None)
-        state.artifacts.pop('execution_manager', None)
-        state.artifacts.pop('execution_result', None)
+        del db, risk_percent, metaapi_account_ref
+        state.context['second_pass_attempt_count'] = int(state.context.get('second_pass_attempt_count', 0) or 0) + 1
+        cleared = [
+            'analysis_outputs',
+            'bullish',
+            'bearish',
+            'trader_decision',
+            'risk',
+            'execution_manager',
+            'execution_result',
+        ]
+        for key in cleared:
+            state.artifacts.pop(key, None)
         state.artifacts['runtime_governor'] = {
             **self._build_runtime_governor(state),
-            'last_action': 'refresh_memory_context',
+            'last_action': 'rerun_second_pass',
         }
-        state.notes.append(f'Memory refreshed with limit={next_limit}.')
-        agentic_runtime_memory_refresh_total.labels(mode=str(run.mode or 'unknown')).inc()
+        state.notes.append(
+            f"Second pass rerun requested (attempt={state.context['second_pass_attempt_count']})."
+        )
         return {
-            'memory_context_count': len(memory_context),
-            'memory_limit': next_limit,
-            'memory_refresh_count': state.context['memory_refresh_count'],
             'second_pass_attempt_count': state.context['second_pass_attempt_count'],
+            'cleared_artifacts': cleared,
         }
 
     async def _tool_spawn_subagent(
@@ -1679,7 +1543,6 @@ class AgenticTradingRuntime:
         ctx = self._build_context(state, run=run, risk_percent=risk_percent)
         input_payload = {
             'news_count': len(ctx.news_context.get('news', [])),
-            'memory_context': ctx.memory_context,
             'news_symbol': ctx.news_context.get('symbol'),
             'news_reason': ctx.news_context.get('reason'),
             'news_symbols_scanned': ctx.news_context.get('symbols_scanned', []),
@@ -1766,7 +1629,7 @@ class AgenticTradingRuntime:
         del metaapi_account_ref
         ctx = self._build_context(state, run=run, risk_percent=risk_percent)
         analysis_snapshot = self.orchestrator._compact_analysis_outputs_for_debate(self._analysis_outputs(state))
-        input_payload = {'analysis_outputs': analysis_snapshot, 'memory_context': ctx.memory_context}
+        input_payload = {'analysis_outputs': analysis_snapshot}
         output = await self._tool_spawn_subagent(
             db=db,
             run=run,
@@ -1808,7 +1671,7 @@ class AgenticTradingRuntime:
         del metaapi_account_ref
         ctx = self._build_context(state, run=run, risk_percent=risk_percent)
         analysis_snapshot = self.orchestrator._compact_analysis_outputs_for_debate(self._analysis_outputs(state))
-        input_payload = {'analysis_outputs': analysis_snapshot, 'memory_context': ctx.memory_context}
+        input_payload = {'analysis_outputs': analysis_snapshot}
         output = await self._tool_spawn_subagent(
             db=db,
             run=run,
@@ -1858,7 +1721,6 @@ class AgenticTradingRuntime:
             'analysis_outputs': analysis_outputs,
             'bullish': bullish,
             'bearish': bearish,
-            'memory_signal': ctx.memory_signal,
             'evidence_bundle': evidence_bundle,
         }
         output = await self._tool_spawn_subagent(

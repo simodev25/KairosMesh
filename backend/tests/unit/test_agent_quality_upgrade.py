@@ -240,7 +240,7 @@ def test_market_context_degraded_when_llm_fallback(monkeypatch) -> None:
             'change_pct': 0.1, 'rsi': 55, 'macd_diff': 0.03,
             'ema_fast': 1.101, 'ema_slow': 1.099,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     )
     out = agent.run(ctx)
     assert out['llm_fallback_used'] is True
@@ -267,7 +267,7 @@ def test_news_output_exposes_evidence_truncation_counts(monkeypatch) -> None:
     ctx = AgentContext(
         pair='EURUSD', timeframe='H1', mode='simulation', risk_percent=1.0,
         market_snapshot={'trend': 'neutral'},
-        news_context={'news': headlines}, memory_context=[],
+        news_context={'news': headlines},
     )
     out = agent.run(ctx, db=None)
     assert 'evidence_total_count' in out
@@ -289,7 +289,7 @@ def test_technical_confidence_is_quality_weighted_not_just_abs_score() -> None:
             'atr': 0.001, 'last_price': 1.1, 'change_pct': 0.1,
             'ema_fast': 1.101, 'ema_slow': 1.099,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     )
     out = agent.run(ctx)
     # confidence_method must exist and describe the formula
@@ -320,7 +320,7 @@ def test_technical_degraded_output_has_full_contract() -> None:
     ctx = AgentContext(
         pair='EURUSD', timeframe='H1', mode='simulation', risk_percent=1.0,
         market_snapshot={'degraded': True},
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     )
     out = agent.run(ctx)
     assert out['degraded'] is True
@@ -353,7 +353,7 @@ def test_technical_infra_error_stays_in_diagnostics_not_summary(monkeypatch) -> 
             'atr': 0.001, 'last_price': 1.1, 'change_pct': 0.1,
             'ema_fast': 1.101, 'ema_slow': 1.099,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     ))
 
     assert out['llm_fallback_used'] is True
@@ -386,7 +386,7 @@ def test_technical_neutral_signal_does_not_keep_directional_llm_summary(monkeypa
             'atr': 0.001, 'last_price': 1.1, 'change_pct': 0.0,
             'ema_fast': 1.1, 'ema_slow': 1.1,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     ))
 
     assert out['signal'] == 'neutral'
@@ -467,7 +467,6 @@ def test_technical_aligned_bearish_keeps_directional_setup(monkeypatch) -> None:
                 'ema_slow': 1.1550,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -519,7 +518,6 @@ def test_technical_conflict_divergence_reduces_setup_quality(monkeypatch) -> Non
                 'change_pct': -0.2,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -550,7 +548,6 @@ def test_technical_conflict_divergence_reduces_setup_quality(monkeypatch) -> Non
                 'change_pct': -0.2,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -601,7 +598,6 @@ def test_technical_observed_conflict_case_clamps_setup_to_low(monkeypatch) -> No
                 'change_pct': -0.05,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -639,7 +635,6 @@ def test_technical_confused_context_prefers_neutral_low_quality(monkeypatch) -> 
                 'change_pct': 0.0,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(start=70000.0),
         )
     )
@@ -685,7 +680,6 @@ def test_technical_strong_structure_without_local_momentum_stays_low(monkeypatch
                 'change_pct': -0.02,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -712,7 +706,6 @@ def test_technical_enriched_contract_fields_present() -> None:
             'ema_slow': 1.099,
         },
         news_context={'news': []},
-        memory_context=[],
     )
     out = agent.run(ctx)
 
@@ -791,7 +784,6 @@ def test_technical_conditional_state_when_structure_bearish_but_momentum_mixed(m
                 'ema_slow': 1.1550,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -831,7 +823,6 @@ def test_technical_non_actionable_state_when_no_directional_edge(monkeypatch) ->
                 'change_pct': 0.0,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(start=70000.0),
         )
     )
@@ -888,7 +879,6 @@ def test_technical_high_conviction_state_when_all_components_converge(monkeypatc
                 'ema_slow': 1.1560,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -942,7 +932,6 @@ def test_technical_recency_weighting_amplifies_recent_patterns(monkeypatch) -> N
                 'ema_slow': 1.1510,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -996,7 +985,6 @@ def test_technical_prompt_handles_partial_tools_without_hallucination(monkeypatc
                 'last_price': 2175.4,
             },
             news_context={'news': []},
-            memory_context=[],
         )
     )
 
@@ -1050,7 +1038,6 @@ def test_technical_prompt_sections_order_and_contract_format(monkeypatch) -> Non
                 'last_price': 1.15321,
             },
             news_context={'news': []},
-            memory_context=[],
             price_history=_price_history_bars(),
         )
     )
@@ -1081,7 +1068,7 @@ def test_market_context_market_bias_present() -> None:
             'change_pct': 0.05, 'rsi': 52, 'macd_diff': 0.01,
             'ema_fast': 1.1005, 'ema_slow': 1.0995,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     ))
     assert 'market_bias' in out
     assert out['market_bias'] in {'bullish', 'bearish', 'neutral'}
@@ -1098,7 +1085,7 @@ def test_market_context_neutral_signal_with_directional_bias() -> None:
             'change_pct': -0.12, 'rsi': 48, 'macd_diff': -0.03,
             'ema_fast': 1.099, 'ema_slow': 1.101,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     ))
     assert out['signal'] == 'neutral'
     # market_bias can show the lean even when signal is neutral
@@ -1120,7 +1107,7 @@ def test_all_agents_expose_confidence_method() -> None:
             'trend': 'neutral', 'rsi': 50, 'macd_diff': 0.0,
             'atr': 0.001, 'last_price': 1.1, 'change_pct': 0.0,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     ))
     mc_out = mc.run(AgentContext(
         pair='EURUSD', timeframe='H1', mode='simulation', risk_percent=1.0,
@@ -1129,7 +1116,7 @@ def test_all_agents_expose_confidence_method() -> None:
             'change_pct': 0.0, 'rsi': 50, 'macd_diff': 0.0,
             'ema_fast': 1.1, 'ema_slow': 1.1,
         },
-        news_context={'news': []}, memory_context=[],
+        news_context={'news': []},
     ))
 
     assert 'confidence_method' in ta_out
@@ -1165,7 +1152,6 @@ def test_all_agents_expose_raw_vs_final_contract_fields(monkeypatch) -> None:
             'macro_events': [],
             'fetch_status': 'ok',
         },
-        memory_context=[],
     )
 
     ta_out = ta.run(common_ctx)

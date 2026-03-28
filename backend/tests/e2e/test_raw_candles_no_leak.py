@@ -46,7 +46,9 @@ from app.services.orchestrator.engine import ForexOrchestrator
 def _generate_candles(count: int = 100, base_price: float = 1.1000) -> list[dict[str, Any]]:
     """Generate realistic OHLC candle data."""
     candles: list[dict[str, Any]] = []
-    start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    # Keep candles fresh relative to test execution time so freshness
+    # guardrails in the orchestrator do not trigger false degradations.
+    start = datetime.now(timezone.utc) - timedelta(hours=max(count, 1) + 1)
     price = base_price
     for idx in range(count):
         # Simple random walk
@@ -163,8 +165,6 @@ class TestTechnicalAnalystRawCandlesNoLeak:
             risk_percent=1.0,
             market_snapshot=snapshot,
             news_context={'degraded': False, 'pair': 'EURUSD', 'news': []},
-            memory_context=[],
-            memory_signal={},
             price_history=candles,
         )
 
@@ -214,8 +214,6 @@ class TestTechnicalAnalystRawCandlesNoLeak:
             risk_percent=1.0,
             market_snapshot=snapshot,
             news_context={'degraded': False, 'pair': 'EURUSD', 'news': []},
-            memory_context=[],
-            memory_signal={},
             price_history=[],  # No candle data provided as price_history
         )
 
@@ -247,8 +245,6 @@ class TestTechnicalAnalystRawCandlesNoLeak:
             risk_percent=1.0,
             market_snapshot=snapshot,
             news_context={'degraded': False, 'pair': 'EURUSD', 'news': []},
-            memory_context=[],
-            memory_signal={},
             price_history=candles,
         )
 
@@ -334,8 +330,6 @@ class TestOrchestratorRawCandlesNoLeak:
                 'news': [{'title': 'ECB holds rates steady'}],
             })
             monkeypatch.setattr(orchestrator.market_provider, 'get_recent_candles', lambda *_a, **_kw: candles[:50])
-            monkeypatch.setattr(orchestrator.memory_service, 'search', lambda **_kw: [])
-            monkeypatch.setattr(orchestrator.memory_service, 'add_run_memory', lambda *_a, **_kw: None)
 
             # --- Mock analyze_context to exercise TechnicalAnalystAgent.run() for real ---
             # We do NOT mock analyze_context — we mock only the LLM calls and

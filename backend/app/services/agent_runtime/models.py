@@ -115,9 +115,6 @@ class RuntimeSessionState:
         if not isinstance(execution_manager, dict):
             execution_manager = {}
 
-        memory_context = self.context.get('memory_context')
-        memory_count = len(memory_context) if isinstance(memory_context, list) else 0
-
         return {
             'objective': self.objective,
             'turn': self.turn,
@@ -141,10 +138,6 @@ class RuntimeSessionState:
             'context': {
                 'has_market': isinstance(self.context.get('market'), dict),
                 'has_news': isinstance(self.context.get('news'), dict),
-                'memory_context_count': memory_count,
-                'memory_context_enabled': bool(self.context.get('memory_context_enabled', False)),
-                'memory_limit': self.context.get('memory_limit'),
-                'memory_refresh_count': self.context.get('memory_refresh_count', 0),
                 'second_pass_attempt_count': self.context.get('second_pass_attempt_count', 0),
                 'metaapi_account_ref': self.context.get('metaapi_account_ref'),
             },

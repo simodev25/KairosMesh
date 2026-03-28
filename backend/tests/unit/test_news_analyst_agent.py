@@ -63,7 +63,6 @@ def _news_context() -> AgentContext:
             'fetch_status': 'ok',
             'provider_status_compact': {'newsapi': 'ok'},
         },
-        memory_context=[],
     )
 
 
@@ -106,7 +105,6 @@ def _crypto_noise_context(pair: str) -> AgentContext:
             'provider_status_compact': {'yahoo_finance': 'ok'},
             'symbol': 'DX-Y.NYB',
         },
-        memory_context=[],
     )
 
 
@@ -132,7 +130,6 @@ def _fx_pair_context(pair: str, title: str, summary: str) -> AgentContext:
             'fetch_status': 'ok',
             'provider_status_compact': {'newsapi': 'ok'},
         },
-        memory_context=[],
     )
 
 
@@ -158,8 +155,6 @@ def _context_from_debug_trace(filename: str) -> AgentContext:
         risk_percent=float(run.get('risk_percent', 1.0) or 1.0),
         market_snapshot=context.get('market_snapshot', {}),
         news_context=context.get('news_context', {}),
-        memory_context=context.get('memory_context', []),
-        memory_signal=context.get('memory_signal', {}) if isinstance(context.get('memory_signal'), dict) else {},
     )
 
 
@@ -435,7 +430,6 @@ def test_news_analyst_degraded_llm_fallback_uses_deterministic_confidence_method
             'symbol': 'BTC-USD',
             'selected_news_symbol': 'BTC-USD',
         },
-        memory_context=[],
     )
 
     monkeypatch.setattr(agent.model_selector, 'is_enabled', lambda *_args, **_kwargs: True)
@@ -513,7 +507,6 @@ def test_news_analyst_keeps_exact_provider_symbol_in_output_contract(
             'selected_news_symbol': selected_symbol,
             'provider_status_compact': {'yahoo_finance': 'ok'},
         },
-        memory_context=[],
     )
 
     out = agent.run(ctx, db=None)
@@ -587,7 +580,6 @@ def test_news_analyst_serializes_exact_provider_symbol_from_provider_context(
             risk_percent=1.0,
             market_snapshot={'trend': 'neutral', 'last_price': 1.0, 'atr': 0.001},
             news_context=provider.get_news_context(pair, limit=5),
-            memory_context=[],
         ),
         db=None,
     )

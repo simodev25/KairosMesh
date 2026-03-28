@@ -118,8 +118,6 @@ class AgentContext:
     risk_percent: float
     market_snapshot: dict[str, Any]
     news_context: dict[str, Any]
-    memory_context: list[dict[str, Any]]
-    memory_signal: dict[str, Any] = field(default_factory=dict)
     llm_model_overrides: dict[str, str] = field(default_factory=dict)
     price_history: list[dict[str, Any]] = field(default_factory=list)
     multi_tf_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -1623,15 +1621,6 @@ def _compact_news_headlines_for_prompt(news_items: list[dict[str, Any]], *, limi
         else:
             rendered.append(f"- {title}")
     return '\n'.join(rendered)
-
-
-def _compact_memory_for_prompt(memory_items: list[dict[str, Any]], *, limit: int = 3) -> str:
-    rows: list[str] = []
-    for item in memory_items[: max(int(limit), 1)]:
-        summary = _compact_prompt_text(item.get('summary', ''), max_chars=140)
-        if summary:
-            rows.append(f'- {summary}')
-    return '\n'.join(rows) or '- none'
 
 
 def _optimize_news_prompts_for_latency(system_prompt: str, user_prompt: str) -> tuple[str, str]:
@@ -4159,7 +4148,6 @@ class NewsAnalystAgent:
                 'Instrument: {pair}\nDisplay symbol: {display_symbol}\nAsset class: {asset_class}\nInstrument type: {instrument_type}\n'
                 'Primary asset: {primary_asset}\nSecondary asset: {secondary_asset}\nFX base: {base_asset}\nFX quote: {quote_asset}\n'
                 'Evidence diagnostics: coverage={coverage}, strongest_pair_relevance={strongest_relevance}, evidence_strength={evidence_strength}\n'
-                'Relevant memories:\n{memory_context}\n'
                 'Retained news and catalysts:\n{evidence}\n'
                 'Contract rules:\n'
                 '- Interpret only retained news and identifiable catalysts already provided.\n'
@@ -4198,7 +4186,6 @@ class NewsAnalystAgent:
                         'strongest_relevance': round(strongest_relevance, 3),
                         'evidence_strength': evidence_strength,
                         'evidence': evidence_text,
-                        'memory_context': _compact_memory_for_prompt(ctx.memory_context, limit=3),
                         'headlines': evidence_text,
                     },
                 )
@@ -4220,7 +4207,6 @@ class NewsAnalystAgent:
                         'evidence_strength': evidence_strength,
                         'headlines': evidence_text,
                         'evidence': evidence_text,
-                        'memory_context': _compact_memory_for_prompt(ctx.memory_context, limit=3),
                     },
                 ))
             system = _append_tools_prompt_guidance(system, enabled_tools=enabled_tools)
@@ -5332,7 +5318,6 @@ class BullishResearcherAgent:
         )
         fallback_user = (
             'Instrument: {pair}\nAsset class: {asset_class}\nTimeframe: {timeframe}\nSignals: {signals_json}\n'
-            "Long-term memory:\n{memory_context}\n"
             "- Bullish thesis (1 sentence).\n"
             "- Priority bullish evidence (max 3, format source -> fact -> implication).\n"
             "- Limites/contre-arguments (max 2).\n"
@@ -5343,7 +5328,6 @@ class BullishResearcherAgent:
             {
                 'timeframe': ctx.timeframe,
                 'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
-                'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
             },
         ))
 
@@ -5368,7 +5352,6 @@ class BullishResearcherAgent:
                         'pair': ctx.pair,
                         'timeframe': ctx.timeframe,
                         'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
-                        'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                     },
                 )
                 system_prompt = prompt_info['system_prompt']
@@ -5505,7 +5488,6 @@ class BearishResearcherAgent:
         )
         fallback_user = (
             'Instrument: {pair}\nAsset class: {asset_class}\nTimeframe: {timeframe}\nSignals: {signals_json}\n'
-            "Long-term memory:\n{memory_context}\n"
             "- Bearish thesis (1 sentence).\n"
             "- Priority bearish evidence (max 3, format source -> fact -> implication).\n"
             "- Limites/contre-arguments (max 2).\n"
@@ -5516,7 +5498,6 @@ class BearishResearcherAgent:
             {
                 'timeframe': ctx.timeframe,
                 'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
-                'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
             },
         ))
 
@@ -5541,7 +5522,6 @@ class BearishResearcherAgent:
                         'pair': ctx.pair,
                         'timeframe': ctx.timeframe,
                         'signals_json': json.dumps(debate_inputs, ensure_ascii=True),
-                        'memory_context': '\n'.join(f"- {m.get('summary', '')}" for m in ctx.memory_context) or '- none',
                     },
                 )
                 system_prompt = prompt_info['system_prompt']
@@ -5918,39 +5898,7 @@ class TraderAgent:
             _penalty_scale = 0.5 + 0.4 * mc_execution_penalty  # 0.5 at 0%, 0.9 at 100%
             combined_score *= (1.0 - mc_execution_penalty * _penalty_scale)
         combined_score = round(_clamp(combined_score, -1.0, 1.0), 3)
-        combined_score_before_memory = combined_score
-        pre_memory_candidate_decision = 'BUY' if combined_score_before_memory > 0.0 else 'SELL' if combined_score_before_memory < 0.0 else 'HOLD'
-
-        raw_memory_signal = ctx.memory_signal if isinstance(ctx.memory_signal, dict) else {}
-        memory_signal_input = dict(raw_memory_signal)
-        memory_signal_used = bool(memory_signal_input.get('used', False))
-        memory_signal_directional_score = _safe_float(memory_signal_input.get('score_adjustment'), 0.0)
-        memory_signal_directional_confidence = _safe_float(memory_signal_input.get('confidence_adjustment'), 0.0)
-        memory_risk_blocks = memory_signal_input.get('risk_blocks', {})
-        if not isinstance(memory_risk_blocks, dict):
-            memory_risk_blocks = {}
-        memory_score_adjustment_applied = 0.0
-        memory_confidence_adjustment_applied = 0.0
-        memory_ignored_reason: str | None = None
-
-        if memory_signal_used and pre_memory_candidate_decision in {'BUY', 'SELL'}:
-            if abs(combined_score_before_memory) < 0.05:
-                memory_ignored_reason = 'insufficient_pre_memory_edge'
-            else:
-                directional_multiplier = 1.0 if pre_memory_candidate_decision == 'BUY' else -1.0
-                memory_score_adjustment_applied = _clamp(memory_signal_directional_score * directional_multiplier, -0.08, 0.08)
-                memory_confidence_adjustment_applied = _clamp(memory_signal_directional_confidence * directional_multiplier, -0.05, 0.05)
-                adjusted_combined_score = combined_score_before_memory + memory_score_adjustment_applied
-                # Memory can modulate setup quality, but cannot invert direction on its own.
-                if combined_score_before_memory > 0.0 and adjusted_combined_score <= 0.0:
-                    adjusted_combined_score = max(combined_score_before_memory * 0.25, 0.001)
-                elif combined_score_before_memory < 0.0 and adjusted_combined_score >= 0.0:
-                    adjusted_combined_score = min(combined_score_before_memory * 0.25, -0.001)
-                combined_score = round(_clamp(adjusted_combined_score, -1.0, 1.0), 3)
-        elif memory_signal_used:
-            memory_ignored_reason = 'pre_memory_decision_hold'
-        else:
-            memory_ignored_reason = str(memory_signal_input.get('ignored_reason') or 'memory_not_used')
+        combined_score_baseline = combined_score
 
         candidate_decision = 'BUY' if combined_score > 0.0 else 'SELL' if combined_score < 0.0 else 'HOLD'
         candidate_signal = 'bullish' if candidate_decision == 'BUY' else 'bearish' if candidate_decision == 'SELL' else 'neutral'
@@ -6031,11 +5979,7 @@ class TraderAgent:
 
         decision_confidence_base = min(edge_strength * 0.7 + evidence_quality * 0.5, 1.0)
         confidence = min(max(decision_confidence_base * confidence_multiplier, 0.0), 1.0)
-        confidence_before_memory = round(float(confidence), 3)
-        if memory_signal_used and memory_ignored_reason is None:
-            confidence = _clamp(confidence + memory_confidence_adjustment_applied, 0.0, 1.0)
-        else:
-            memory_confidence_adjustment_applied = 0.0
+        confidence_baseline = round(float(confidence), 3)
         single_directional_source = bool(
             candidate_signal in {'bullish', 'bearish'}
             and aligned_source_count == 1
@@ -6078,13 +6022,6 @@ class TraderAgent:
         )
         evidence_source_ok = aligned_source_count >= min_aligned_sources or technical_single_source_override
         major_contradiction_block = policy.block_major_contradiction and contradiction_level == 'major'
-        memory_risk_block = False
-        memory_block_reason: str | None = None
-        if memory_signal_used and memory_ignored_reason is None:
-            candidate_side_key = 'buy' if candidate_decision == 'BUY' else 'sell' if candidate_decision == 'SELL' else None
-            if candidate_side_key in {'buy', 'sell'} and bool(memory_risk_blocks.get(candidate_side_key)):
-                memory_risk_block = True
-                memory_block_reason = f'historically_adverse_{candidate_side_key}_cases'
 
         permissive_technical_override = bool(
             policy.mode == 'permissive'
@@ -6106,7 +6043,6 @@ class TraderAgent:
             and confidence_gate_ok
             and source_gate_ok
             and not major_contradiction_block
-            and not memory_risk_block
         )
         direction_threshold_ok = (
             candidate_decision == 'BUY' and combined_score >= decision_buy_threshold
@@ -6119,7 +6055,7 @@ class TraderAgent:
             and not technical_neutral_block
             and direction_threshold_ok
         )
-        decision_ready = minimum_evidence_ok and quality_gate_ok and not memory_risk_block
+        decision_ready = minimum_evidence_ok and quality_gate_ok
         technical_alignment_support = bool(
             policy.allow_low_edge_technical_override
             and decision_ready
@@ -6131,7 +6067,7 @@ class TraderAgent:
         low_edge = not decision_ready
 
         decision = candidate_decision if decision_ready else 'HOLD'
-        execution_allowed = decision in {'BUY', 'SELL'} and minimum_evidence_ok and not major_contradiction_block and not memory_risk_block and not mc_hard_block
+        execution_allowed = decision in {'BUY', 'SELL'} and minimum_evidence_ok and not major_contradiction_block and not mc_hard_block
 
         # Build human-readable reason for the decision
         if decision in {'BUY', 'SELL'}:
@@ -6149,8 +6085,6 @@ class TraderAgent:
             reason = f'HOLD: insufficient aligned sources ({aligned_source_count}).'
         elif major_contradiction_block:
             reason = 'HOLD: major trend-momentum contradiction blocks execution.'
-        elif memory_risk_block:
-            reason = f'HOLD: memory risk block ({memory_block_reason}).'
         elif technical_conditional_setup:
             reason = 'HOLD: technical setup is conditional; wait for timing confirmation.'
         elif technical_neutral_block:
@@ -6185,12 +6119,6 @@ class TraderAgent:
             gate_reasons.append('insufficient_aligned_sources')
         if major_contradiction_block:
             gate_reasons.append('major_contradiction_execution_block')
-        if memory_signal_used and memory_ignored_reason is None and (memory_score_adjustment_applied != 0.0 or memory_confidence_adjustment_applied != 0.0):
-            gate_reasons.append('memory_signal_applied')
-        if memory_signal_used and memory_ignored_reason:
-            gate_reasons.append(f'memory_signal_ignored_{memory_ignored_reason}')
-        if memory_risk_block:
-            gate_reasons.append('memory_risk_block')
         if contradiction_level in {'weak', 'moderate', 'major'}:
             gate_reasons.append(f'trend_momentum_contradiction_{contradiction_level}')
         if technical_contradiction_level in {'weak', 'moderate', 'major'}:
@@ -6221,38 +6149,6 @@ class TraderAgent:
             stop_loss = None
             take_profit = None
 
-        memory_signal_output = {
-            'used': memory_signal_used,
-            'ignored_reason': memory_ignored_reason,
-            'retrieved_count': int(memory_signal_input.get('retrieved_count', len(ctx.memory_context)) or 0),
-            'eligible_count': int(memory_signal_input.get('eligible_count', 0) or 0),
-            'avg_similarity': round(_safe_float(memory_signal_input.get('avg_similarity'), 0.0), 4),
-            'avg_recency_days': memory_signal_input.get('avg_recency_days'),
-            'direction': str(memory_signal_input.get('direction', 'neutral') or 'neutral'),
-            'directional_edge': round(_safe_float(memory_signal_input.get('directional_edge'), 0.0), 4),
-            'confidence': round(_safe_float(memory_signal_input.get('confidence'), 0.0), 4),
-            'buy_win_rate': memory_signal_input.get('buy_win_rate'),
-            'sell_win_rate': memory_signal_input.get('sell_win_rate'),
-            'buy_avg_rr': memory_signal_input.get('buy_avg_rr'),
-            'sell_avg_rr': memory_signal_input.get('sell_avg_rr'),
-            'score_adjustment': round(memory_signal_directional_score, 4),
-            'confidence_adjustment': round(memory_signal_directional_confidence, 4),
-            'score_adjustment_applied': round(memory_score_adjustment_applied, 4),
-            'confidence_adjustment_applied': round(memory_confidence_adjustment_applied, 4),
-            'risk_block': memory_risk_block,
-            'block_reason': memory_block_reason,
-            'risk_blocks': {
-                'buy': bool(memory_risk_blocks.get('buy', False)),
-                'sell': bool(memory_risk_blocks.get('sell', False)),
-            },
-            'top_case_refs': list(memory_signal_input.get('top_case_refs', [])) if isinstance(memory_signal_input.get('top_case_refs'), list) else [],
-            'applied_for_decision': candidate_decision if memory_signal_used and memory_ignored_reason is None else None,
-            'pre_memory_candidate_decision': pre_memory_candidate_decision,
-            'combined_score_before_memory': round(combined_score_before_memory, 3),
-            'combined_score_after_memory': round(combined_score, 3),
-            'confidence_before_memory': confidence_before_memory,
-            'confidence_after_memory': confidence,
-        }
         follow_up_reason: str | None = None
         if decision == 'HOLD':
             if strong_conflict:
@@ -6282,8 +6178,6 @@ class TraderAgent:
                 'insufficient_aligned_sources',
                 'major_contradiction_execution_block',
             ]
-            if memory_signal_used:
-                invalidation_conditions.append('memory_risk_block')
 
         output = {
             'decision': decision,
@@ -6301,7 +6195,7 @@ class TraderAgent:
             'news_score_effective': round(float(news_score_effective), 4),
             'debate_score': debate_score,
             'combined_score': combined_score,
-            'combined_score_before_memory': round(combined_score_before_memory, 3),
+            'combined_score_baseline': round(combined_score_baseline, 3),
             'debate_balance': debate_balance,
             'decision_mode': decision_mode,
             'execution_allowed': execution_allowed,
@@ -6327,11 +6221,6 @@ class TraderAgent:
             'quality_gate_ok': quality_gate_ok,
             'evidence_source_ok': evidence_source_ok,
             'major_contradiction_block': major_contradiction_block,
-            'memory_risk_block': memory_risk_block,
-            'memory_block_reason': memory_block_reason,
-            'memory_score_adjustment_applied': round(memory_score_adjustment_applied, 4),
-            'memory_confidence_adjustment_applied': round(memory_confidence_adjustment_applied, 4),
-            'memory_signal': memory_signal_output,
             'decision_gates': gate_reasons,
             'uncertainty_level': uncertainty_level,
             'single_directional_source': single_directional_source,
@@ -6364,11 +6253,11 @@ class TraderAgent:
                 'consensus_strength': consensus_strength,
                 'debate_score': debate_score,
                 'raw_combined_score': raw_combined_score,
-                'combined_score_before_memory': round(combined_score_before_memory, 3),
+                'combined_score_baseline': round(combined_score_baseline, 3),
                 'combined_score': combined_score,
                 'edge_strength': edge_strength,
                 'evidence_quality': evidence_quality,
-                'confidence_before_memory': confidence_before_memory,
+                'confidence_baseline': confidence_baseline,
                 'decision_confidence': confidence,
                 'uncertainty_level': uncertainty_level,
                 'decision_mode': decision_mode,
@@ -6447,10 +6336,8 @@ class TraderAgent:
                 'needs_follow_up': needs_follow_up,
                 'follow_up_reason': follow_up_reason,
                 'invalidation_conditions': invalidation_conditions,
-                'memory_signal': memory_signal_output,
                 'bullish_llm_debate': bullish.get('llm_debate', ''),
                 'bearish_llm_debate': bearish.get('llm_debate', ''),
-                'memory_refs': [m.get('summary', '') for m in ctx.memory_context[:3]],
             },
         }
         # --- Empirical metrics: debate impact, contradictions, gate blocks ---
@@ -6472,7 +6359,6 @@ class TraderAgent:
                         'major_contradiction_execution_block',
                         'strong_conflict',
                         'technical_neutral_gate',
-                        'memory_risk_block',
                         'low_edge',
                     }:
                         decision_gate_blocks_total.labels(gate=gate).inc()
@@ -6529,14 +6415,10 @@ class TraderAgent:
                             f'news_weight_multiplier={round(news_weight_multiplier, 3)}',
                             f'debate_score={debate_score}',
                             f'combined_score={combined_score}',
-                            f'combined_score_before_memory={combined_score_before_memory}',
+                            f'combined_score_baseline={combined_score_baseline}',
                             f'strong_conflict={strong_conflict}',
                             f'low_edge={low_edge}',
                             f'contradiction_level={contradiction_level}',
-                            f'memory_used={memory_signal_used}',
-                            f'memory_score_adjustment_applied={round(memory_score_adjustment_applied, 4)}',
-                            f'memory_confidence_adjustment_applied={round(memory_confidence_adjustment_applied, 4)}',
-                            f'memory_risk_block={memory_risk_block}',
                             f'execution_allowed={execution_allowed}',
                         ],
                         ensure_ascii=True,
@@ -6569,14 +6451,10 @@ class TraderAgent:
                             f'news_weight_multiplier={round(news_weight_multiplier, 3)}',
                             f'debate_score={debate_score}',
                             f'combined_score={combined_score}',
-                            f'combined_score_before_memory={combined_score_before_memory}',
+                            f'combined_score_baseline={combined_score_baseline}',
                             f'strong_conflict={strong_conflict}',
                             f'low_edge={low_edge}',
                             f'contradiction_level={contradiction_level}',
-                            f'memory_used={memory_signal_used}',
-                            f'memory_score_adjustment_applied={round(memory_score_adjustment_applied, 4)}',
-                            f'memory_confidence_adjustment_applied={round(memory_confidence_adjustment_applied, 4)}',
-                            f'memory_risk_block={memory_risk_block}',
                             f'execution_allowed={execution_allowed}',
                         ],
                         ensure_ascii=True,

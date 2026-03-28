@@ -29,7 +29,6 @@ from app.services.agent_runtime.mcp_trading_server import (
     macro_event_feed,
     market_regime_detector,
     market_snapshot,
-    memory_query,
     multi_timeframe_context,
     news_search,
     pattern_detector,
@@ -85,7 +84,6 @@ _MCP_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "thesis_support_extractor": thesis_support_extractor,
     "scenario_validation": scenario_validation,
     "position_size_calculator": position_size_calculator,
-    "memory_query": memory_query,
 }
 
 

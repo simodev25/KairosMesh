@@ -180,14 +180,6 @@ def position_size_calculator_tool(payload: dict[str, Any]) -> dict[str, Any]:
     return result.data if result.status == 'ok' else {'suggested_volume': 0.01, 'error': result.error}
 
 
-@tool('memory_query')
-def memory_query_tool(payload: dict[str, Any]) -> dict[str, Any]:
-    """Agentic memory access: search, feedback, statistics via MCP."""
-    adapter = _get_mcp_client()
-    result = adapter.call_tool('memory_query', _as_dict(payload))
-    return result.data if result.status == 'ok' else {'status': 'error', 'error': result.error}
-
-
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -211,7 +203,6 @@ LANGCHAIN_AGENT_TOOLS: dict[str, BaseTool] = {
     'thesis_support_extractor': thesis_support_extractor_tool,
     'scenario_validation': scenario_validation_tool,
     'position_size_calculator': position_size_calculator_tool,
-    'memory_query': memory_query_tool,
 }
 
 

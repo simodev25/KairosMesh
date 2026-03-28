@@ -15,7 +15,6 @@ from app.services.llm.provider_client import LlmClient
 from app.services.orchestrator.agents import AgentContext
 from app.services.orchestrator.engine import TradingOrchestrator
 from app.services.prompts.registry import PromptTemplateService
-from app.services.memory.vector_memory import VectorMemoryService
 from app.services.risk.rules import RiskEngine
 from app.services.trading.account_selector import MetaApiAccountSelector
 from app.services.trading.metaapi_client import MetaApiClient
@@ -405,13 +404,6 @@ class OrderGuardianService:
             metaapi_account_ref=account_ref,
         )
         news = self.orchestrator.market_provider.get_news_context(symbol)
-        memory_context = self.orchestrator.memory_service.search(
-            db=db,
-            pair=symbol,
-            timeframe=timeframe,
-            query=f'{symbol} {timeframe} open position management',
-            limit=5,
-        )
         context = AgentContext(
             pair=symbol,
             timeframe=timeframe,
@@ -419,7 +411,6 @@ class OrderGuardianService:
             risk_percent=risk_percent,
             market_snapshot=market,
             news_context=news,
-            memory_context=memory_context,
             llm_model_overrides=llm_model_overrides or {},
         )
         return self.orchestrator.analyze_context(context=context, db=db, record_steps=False, emit_step_logs=False)
@@ -475,7 +466,6 @@ class OrderGuardianService:
 
         actions: list[dict[str, Any]] = []
         executed_count = 0
-        _mem_svc: VectorMemoryService | None = None
 
         for position in normalized_positions:
             try:
@@ -513,18 +503,6 @@ class OrderGuardianService:
                             allow_opposite_fallback=False,
                         )
                         executed = bool(execution.get('executed'))
-                        # Backfill outcome weight on associated memories
-                        if executed:
-                            try:
-                                profit = float(execution.get('profit', 0) or 0)
-                                outcome_label = 'win' if profit > 0 else ('loss' if profit < 0 else 'neutral')
-                                run_id = position.get('raw', {}).get('clientId')
-                                if run_id:
-                                    if _mem_svc is None:
-                                        _mem_svc = VectorMemoryService()
-                                    _mem_svc.update_outcome_weights(db, int(run_id), outcome_label)
-                            except Exception:
-                                logger.debug('outcome backfill skipped for position %s', position['position_id'])
                 elif decision == position['side']:
                     should_update_sl = self._needs_level_update(current_sl, suggested_sl, float(settings['sl_tp_min_delta']))
                     should_update_tp = self._needs_level_update(current_tp, suggested_tp, float(settings['sl_tp_min_delta']))

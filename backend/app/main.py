@@ -12,7 +12,6 @@ from jose import JWTError, jwt
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from prometheus_client import CONTENT_TYPE_LATEST
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.router import api_router
@@ -36,16 +35,6 @@ from app.services.prompts.registry import PromptTemplateService
 from app.services.llm.skill_bootstrap import bootstrap_agent_skills_into_settings
 
 logger = logging.getLogger(__name__)
-
-
-def _is_pgvector_extension_race(exc: Exception) -> bool:
-    """Return True when concurrent startup attempted to create the same extension."""
-    if isinstance(exc, IntegrityError):
-        pgcode = getattr(getattr(exc, 'orig', None), 'pgcode', None)
-        if pgcode in {'23505', '42710'}:
-            return True
-    message = str(exc).lower()
-    return 'pg_extension_name_index' in message and 'vector' in message
 
 
 def _acquire_startup_lock() -> tuple[int, bool]:
@@ -75,24 +64,6 @@ async def lifespan(_: FastAPI):
     configure_logging()
     lock_fd, already_initialized = _acquire_startup_lock()
     try:
-        if settings.enable_pgvector and engine.dialect.name == 'postgresql':
-            try:
-                with engine.begin() as conn:
-                    conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
-            except Exception as exc:
-                if _is_pgvector_extension_race(exc):
-                    logger.warning(
-                        'Concurrent pgvector extension initialization detected; continuing startup. error=%s',
-                        exc,
-                    )
-                else:
-                    logger.error(
-                        'ENABLE_PGVECTOR=true but pgvector extension is not available. '
-                        'Use a pgvector-enabled Postgres image or set ENABLE_PGVECTOR=false. error=%s',
-                        exc,
-                    )
-                    raise
-
         Base.metadata.create_all(bind=engine)
 
         db = SessionLocal()
@@ -106,7 +77,7 @@ async def lifespan(_: FastAPI):
                 )
                 db.add(admin)
 
-            for name in ['ollama', 'metaapi', 'yfinance', 'qdrant', 'order-guardian']:
+            for name in ['ollama', 'metaapi', 'yfinance', 'order-guardian']:
                 exists = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == name).first()
                 if not exists:
                     enabled = name != 'order-guardian'
