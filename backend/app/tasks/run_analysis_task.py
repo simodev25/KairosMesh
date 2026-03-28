@@ -4,6 +4,8 @@ from app.core.config import get_settings
 from app.db.models.run import AnalysisRun
 from app.db.session import SessionLocal
 from app.services.agentscope.registry import AgentScopeRegistry
+from app.services.market.news_provider import MarketProvider
+from app.services.prompts.registry import PromptTemplateService
 from app.tasks.celery_app import celery_app
 
 settings = get_settings()
@@ -22,8 +24,13 @@ def execute(run_id: int, risk_percent: float, metaapi_account_ref: int | None = 
             return
         if metaapi_account_ref is None:
             metaapi_account_ref = int((run.trace or {}).get('requested_metaapi_account_ref', 0) or 0) or None
+
+        registry = AgentScopeRegistry(
+            prompt_service=PromptTemplateService(),
+            market_provider=MarketProvider(),
+        )
         asyncio.run(
-            AgentScopeRegistry().execute(
+            registry.execute(
                 db,
                 run,
                 pair=run.pair,

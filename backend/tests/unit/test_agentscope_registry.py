@@ -51,8 +51,8 @@ async def test_execute_runs_all_phases(
         execution_service=MagicMock(),
     )
 
-    with patch.object(registry, "_resolve_market_data", new_callable=AsyncMock) as mock_market:
-        mock_market.return_value = ({"price": 1.1}, [], {})
+    with patch.object(registry, "_resolve_market_data") as mock_market:
+        mock_market.return_value = {"snapshot": {"last_price": 1.1}, "news": {}, "ohlc": {}}
         with patch.object(registry, "_resolve_provider_config") as mock_config:
             mock_config.return_value = ("ollama", "llama3.1", "http://localhost:11434", "")
             result = await registry.execute(

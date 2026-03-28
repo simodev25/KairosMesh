@@ -45,24 +45,43 @@ class AgentScopeRegistry:
             return provider, s.openai_model, s.openai_base_url, s.openai_api_key
         if provider == "mistral":
             return provider, s.mistral_model, s.mistral_base_url, s.mistral_api_key
-        # Default: ollama
         return "ollama", s.ollama_model, s.ollama_base_url, s.ollama_api_key
 
-    async def _resolve_market_data(self, db, pair, timeframe, metaapi_account_ref=None):
-        """Resolve market snapshot, news context, multi-TF snapshots."""
-        market_snapshot = {}
-        news_context = []
-        multi_tf = {}
-        if self.market_provider:
-            try:
-                market_snapshot = self.market_provider.get_snapshot(pair, timeframe) or {}
-            except Exception as exc:
-                logger.warning("Market snapshot failed: %s", exc)
-            try:
-                news_context = self.market_provider.get_news_context(pair) or []
-            except Exception as exc:
-                logger.warning("News context failed: %s", exc)
-        return market_snapshot, news_context, multi_tf
+    def _resolve_market_data(self, pair: str, timeframe: str) -> dict[str, Any]:
+        """Fetch market snapshot + OHLC price series via MarketProvider."""
+        if not self.market_provider:
+            logger.warning("No market_provider configured — returning empty data")
+            return {"snapshot": {}, "news": {}, "ohlc": {}}
+
+        # Market snapshot (indicators pre-computed)
+        snapshot = {}
+        try:
+            snapshot = self.market_provider.get_market_snapshot(pair, timeframe) or {}
+        except Exception as exc:
+            logger.warning("Market snapshot failed for %s/%s: %s", pair, timeframe, exc)
+
+        # OHLC price series for tools that need raw data
+        ohlc: dict[str, list[float]] = {}
+        try:
+            frame = self.market_provider._prepare_frame(pair, timeframe)
+            if frame is not None and not frame.empty:
+                ohlc = {
+                    "opens": [round(float(v), 6) for v in frame["Open"].tolist()[-200:]],
+                    "highs": [round(float(v), 6) for v in frame["High"].tolist()[-200:]],
+                    "lows": [round(float(v), 6) for v in frame["Low"].tolist()[-200:]],
+                    "closes": [round(float(v), 6) for v in frame["Close"].tolist()[-200:]],
+                }
+        except Exception as exc:
+            logger.warning("OHLC fetch failed for %s/%s: %s", pair, timeframe, exc)
+
+        # News context
+        news = {}
+        try:
+            news = self.market_provider.get_news_context(pair) or {}
+        except Exception as exc:
+            logger.warning("News context failed for %s: %s", pair, exc)
+
+        return {"snapshot": snapshot, "news": news, "ohlc": ohlc}
 
     def _get_sys_prompt(self, agent_name: str, db) -> str:
         """Get system prompt from PromptTemplateService or fallback."""
@@ -74,6 +93,44 @@ class AgentScopeRegistry:
             except Exception:
                 pass
         return f"You are the {agent_name} agent in a multi-agent trading system."
+
+    def _build_context_msg(self, pair: str, timeframe: str, market_data: dict) -> Msg:
+        """Build a context message with all market data for the agents."""
+        snapshot = market_data.get("snapshot", {})
+        ohlc = market_data.get("ohlc", {})
+        news = market_data.get("news", {})
+
+        context = {
+            "pair": pair,
+            "timeframe": timeframe,
+            "market_snapshot": {
+                "last_price": snapshot.get("last_price", 0),
+                "change_pct": snapshot.get("change_pct", 0),
+                "rsi": snapshot.get("rsi", 50),
+                "ema_fast": snapshot.get("ema_fast", 0),
+                "ema_slow": snapshot.get("ema_slow", 0),
+                "macd_diff": snapshot.get("macd_diff", 0),
+                "atr": snapshot.get("atr", 0),
+                "trend": snapshot.get("trend", "neutral"),
+                "degraded": snapshot.get("degraded", True),
+            },
+            "ohlc_data": {
+                "bar_count": len(ohlc.get("closes", [])),
+                "note": "Use OHLC arrays below as input to indicator_bundle, pattern_detector, etc.",
+                **ohlc,
+            },
+            "news_context": news,
+        }
+
+        return Msg(
+            "system",
+            f"You are analyzing {pair} on {timeframe} timeframe.\n\n"
+            f"Market data:\n```json\n{json.dumps(context, default=str)}\n```\n\n"
+            f"IMPORTANT: When calling tools that require price data (indicator_bundle, "
+            f"pattern_detector, divergence_detector, support_resistance_detector), "
+            f"use the 'closes', 'opens', 'highs', 'lows' arrays from ohlc_data above.",
+            "system",
+        )
 
     async def execute(
         self,
@@ -88,7 +145,7 @@ class AgentScopeRegistry:
         start_time = time.time()
 
         try:
-            # Resolve config
+            # Resolve LLM config
             provider, model_name, base_url, api_key = self._resolve_provider_config(db)
             logger.info(
                 "LLM config: provider=%s, model=%s, base_url=%s",
@@ -99,16 +156,16 @@ class AgentScopeRegistry:
             debate_formatter = build_formatter(provider, multi_agent=True)
 
             # Resolve market data
-            market_snapshot, news_context, multi_tf = await self._resolve_market_data(
-                db, pair, timeframe, metaapi_account_ref,
-            )
+            market_data = self._resolve_market_data(pair, timeframe)
+            context_msg = self._build_context_msg(pair, timeframe, market_data)
 
-            context_payload = json.dumps({
-                "pair": pair, "timeframe": timeframe,
-                "market_snapshot": market_snapshot,
-                "news_context": news_context,
-            }, default=str)
-            context_msg = Msg("system", f"Analysis context:\n{context_payload}", "system")
+            ohlc = market_data.get("ohlc", {})
+            has_ohlc = bool(ohlc.get("closes"))
+            logger.info(
+                "Market data: pair=%s, tf=%s, bars=%d, degraded=%s",
+                pair, timeframe, len(ohlc.get("closes", [])),
+                market_data.get("snapshot", {}).get("degraded", True),
+            )
 
             # Build toolkits
             toolkits = {}
@@ -118,15 +175,17 @@ class AgentScopeRegistry:
             # Build agents
             agents = {}
             for agent_name, factory in ALL_AGENT_FACTORIES.items():
-                is_debate_agent = agent_name in ("bullish-researcher", "bearish-researcher", "trader-agent")
+                is_debate = agent_name in (
+                    "bullish-researcher", "bearish-researcher", "trader-agent",
+                )
                 agents[agent_name] = factory(
                     model=model,
-                    formatter=debate_formatter if is_debate_agent else chat_formatter,
+                    formatter=debate_formatter if is_debate else chat_formatter,
                     toolkit=toolkits[agent_name],
                     sys_prompt=self._get_sys_prompt(agent_name, db),
                 )
 
-            # Phase 1: Parallel analysts
+            # ── Phase 1: Parallel analysts ──
             logger.info("Phase 1: Running 3 analysts in parallel for %s/%s", pair, timeframe)
             phase1_results = await fanout_pipeline(
                 agents=[
@@ -138,17 +197,18 @@ class AgentScopeRegistry:
                 enable_gather=True,
             )
 
-            # Build research context
+            # Build research context from Phase 1 outputs
             analysis_summary = "\n\n".join(
-                f"{msg.name}: {msg.get_text_content()}" for msg in phase1_results
+                f"[{msg.name}]\n{msg.get_text_content()}" for msg in phase1_results
             )
             research_msg = Msg(
                 "system",
-                f"Analysis results:\n{analysis_summary}\n\nContext:\n{context_payload}",
+                f"Analysis results from Phase 1:\n{analysis_summary}\n\n"
+                f"Original context:\n{context_msg.get_text_content()}",
                 "system",
             )
 
-            # Phase 2+3: Researchers + Debate
+            # ── Phase 2+3: Researchers + Debate ──
             logger.info("Phase 2+3: Running debate for %s/%s", pair, timeframe)
             debate_config = DebateConfig()
             bullish_msg, bearish_msg, debate_result = await run_debate(
@@ -159,14 +219,15 @@ class AgentScopeRegistry:
                 config=debate_config,
             )
 
-            # Phase 4: Sequential decision
+            # ── Phase 4: Sequential decision ──
             logger.info("Phase 4: Trader -> Risk -> Execution for %s/%s", pair, timeframe)
             decision_context = (
+                f"Make a trading decision for {pair} on {timeframe}.\n\n"
                 f"Debate result: {debate_result.winning_side} "
                 f"(confidence={debate_result.confidence}, reason={debate_result.reason})\n\n"
-                f"Bullish: {bullish_msg.get_text_content()}\n\n"
-                f"Bearish: {bearish_msg.get_text_content()}\n\n"
-                f"Analysis: {analysis_summary}"
+                f"Bullish thesis:\n{bullish_msg.get_text_content()}\n\n"
+                f"Bearish thesis:\n{bearish_msg.get_text_content()}\n\n"
+                f"Phase 1 analysis:\n{analysis_summary}"
             )
             decision_msg = Msg("system", decision_context, "system")
 
@@ -185,6 +246,14 @@ class AgentScopeRegistry:
 
             run.status = "completed"
             run.decision = final_msg.metadata if final_msg and hasattr(final_msg, "metadata") else {}
+            run.trace = {
+                "runtime_engine": "agentscope_v1",
+                "elapsed_seconds": round(elapsed, 1),
+                "market_data_bars": len(ohlc.get("closes", [])),
+                "debate_rounds": debate_config.max_rounds,
+                "debate_finished": debate_result.finished,
+                "debate_winner": debate_result.winning_side,
+            }
             db.commit()
 
         except Exception as exc:
