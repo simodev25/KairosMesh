@@ -12,8 +12,6 @@ from app.db.models.connector_config import ConnectorConfig
 from app.schemas.order_guardian import OrderGuardianStatusUpdate
 from app.services.llm.model_selector import AgentModelSelector
 from app.services.llm.provider_client import LlmClient
-from app.services.orchestrator.agents import AgentContext
-from app.services.orchestrator.engine import TradingOrchestrator
 from app.services.prompts.registry import PromptTemplateService
 from app.services.risk.rules import RiskEngine
 from app.services.trading.account_selector import MetaApiAccountSelector
@@ -40,7 +38,6 @@ class OrderGuardianService:
     def __init__(self) -> None:
         self.metaapi = MetaApiClient()
         self.account_selector = MetaApiAccountSelector()
-        self.orchestrator = TradingOrchestrator()
         self.llm = LlmClient()
         self.model_selector = AgentModelSelector()
         self.prompt_service = PromptTemplateService()
@@ -397,23 +394,11 @@ class OrderGuardianService:
         account_ref: int | None = None,
         llm_model_overrides: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        market = await self.orchestrator.resolve_market_snapshot(
-            db,
-            pair=symbol,
-            timeframe=timeframe,
-            metaapi_account_ref=account_ref,
+        # TODO: re-implement using AgentScopeRegistry once order-guardian is migrated
+        raise NotImplementedError(
+            "OrderGuardian._analyze_position requires migration to AgentScopeRegistry. "
+            "The legacy orchestrator has been removed."
         )
-        news = self.orchestrator.market_provider.get_news_context(symbol)
-        context = AgentContext(
-            pair=symbol,
-            timeframe=timeframe,
-            mode='live',
-            risk_percent=risk_percent,
-            market_snapshot=market,
-            news_context=news,
-            llm_model_overrides=llm_model_overrides or {},
-        )
-        return self.orchestrator.analyze_context(context=context, db=db, record_steps=False, emit_step_logs=False)
 
     async def evaluate(
         self,
