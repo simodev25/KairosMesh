@@ -423,11 +423,20 @@ class AgentScopeRegistry:
             if val is not None:
                 market_lines.append(f"- {key}: {val}")
 
+        # Include news headlines in context so news-analyst has the data
+        news = market_data.get("news", {})
+        news_items = news.get("news", []) if isinstance(news, dict) else []
+        news_section = ""
+        if news_items:
+            headlines = [f"- [{n.get('source', '?')}] {n.get('title', '')}" for n in news_items[:10]]
+            news_section = f"\n\nNews ({len(news_items)} items):\n" + "\n".join(headlines)
+
         content = (
             f"You are analyzing {pair} on the {timeframe} timeframe.\n\n"
             f"Market snapshot ({snapshot.get('market_data_source', 'unknown')}):\n"
             + "\n".join(market_lines) + "\n"
-            f"- bars available: {len(ohlc.get('closes', []))}\n\n"
+            f"- bars available: {len(ohlc.get('closes', []))}"
+            f"{news_section}\n\n"
             f"IMPORTANT: Price data (closes, opens, highs, lows) is pre-loaded into your tools. "
             f"Call indicator_bundle(), pattern_detector(), divergence_detector(), "
             f"support_resistance_detector() directly — they already have the price arrays."
@@ -535,17 +544,26 @@ class AgentScopeRegistry:
                 })
 
             # Build analysis_bundle in v1 format
+            def _bundle_out(key: str) -> dict:
+                out = analysis_outputs.get(key, {})
+                meta = out.get("metadata", {})
+                if not meta:
+                    # Fallback: include text summary if no structured metadata
+                    text = out.get("text", "")
+                    if text:
+                        meta = {"summary": text[:1000]}
+                return meta
+
             analysis_bundle = {
                 "analysis_outputs": {
-                    k: v.get("metadata", {})
-                    for k, v in analysis_outputs.items()
-                    if k in ("technical-analyst", "news-analyst", "market-context-analyst")
+                    k: _bundle_out(k)
+                    for k in ("technical-analyst", "news-analyst", "market-context-analyst")
                 },
-                "bullish": analysis_outputs.get("bullish-researcher", {}).get("metadata", {}),
-                "bearish": analysis_outputs.get("bearish-researcher", {}).get("metadata", {}),
-                "trader_decision": analysis_outputs.get("trader-agent", {}).get("metadata", {}),
-                "risk": analysis_outputs.get("risk-manager", {}).get("metadata", {}),
-                "execution_manager": analysis_outputs.get("execution-manager", {}).get("metadata", {}),
+                "bullish": _bundle_out("bullish-researcher"),
+                "bearish": _bundle_out("bearish-researcher"),
+                "trader_decision": _bundle_out("trader-agent"),
+                "risk": _bundle_out("risk-manager"),
+                "execution_manager": _bundle_out("execution-manager"),
             }
 
             payload = {
@@ -617,6 +635,7 @@ class AgentScopeRegistry:
         pair: str = "", timeframe: str = "", risk_percent: float = 1.0,
         analysis_outputs: dict | None = None,
         trader_out: dict | None = None, risk_out: dict | None = None,
+        news: dict | None = None,
     ) -> Msg:
         """Run agent tools deterministically without LLM — passes proper args."""
         from app.services.agentscope.toolkit import AGENT_TOOL_MAP
@@ -633,7 +652,7 @@ class AgentScopeRegistry:
                 kwargs = self._build_tool_kwargs(
                     tool_id, ohlc=ohlc, snapshot=snapshot,
                     pair=pair, timeframe=timeframe, risk_percent=risk_percent,
-                    trader_out=trader_out, risk_out=risk_out,
+                    trader_out=trader_out, risk_out=risk_out, news=news,
                 )
                 result = await client.call_tool(tool_id, kwargs)
                 results[tool_id] = result
@@ -648,6 +667,7 @@ class AgentScopeRegistry:
         tool_id: str, ohlc: dict, snapshot: dict,
         pair: str = "", timeframe: str = "", risk_percent: float = 1.0,
         trader_out: dict | None = None, risk_out: dict | None = None,
+        news: dict | None = None,
     ) -> dict:
         """Build appropriate kwargs for each MCP tool in deterministic mode."""
         closes = ohlc.get("closes", [])
@@ -723,8 +743,19 @@ class AgentScopeRegistry:
                 "trader_decision": (trader_out or {}).get("metadata", {}),
                 "risk_percent": risk_percent,
             }
-        if tool_id in ("news_search", "macro_event_feed", "sentiment_parser", "symbol_relevance_filter"):
-            return {"symbol": pair}
+        if tool_id == "news_search":
+            news = news or {}
+            return {"items": news.get("news", []), "symbol": pair, "asset_class": "forex"}
+        if tool_id == "macro_event_feed":
+            news = news or {}
+            return {"items": news.get("macro_events", []), "currency_filter": pair[:3] if pair else ""}
+        if tool_id == "sentiment_parser":
+            news = news or {}
+            headlines = [n.get("title", "") for n in news.get("news", []) if n.get("title")]
+            return {"headlines": headlines, "asset_class": "forex"}
+        if tool_id == "symbol_relevance_filter":
+            news = news or {}
+            return {"news_items": news.get("news", []), "macro_items": news.get("macro_events", []), "symbol": pair}
         if tool_id in ("evidence_query", "thesis_support_extractor", "scenario_validation"):
             return {}
         return {}
@@ -808,6 +839,7 @@ class AgentScopeRegistry:
                     ohlc=ohlc, snapshot=snapshot, pair=pair, timeframe=timeframe,
                     risk_percent=risk_percent, analysis_outputs=analysis_outputs,
                     trader_out=trader_out, risk_out=risk_out,
+                    news=market_data.get("news", {}),
                 )
 
             # ── Phase 1: Parallel analysts ──
@@ -827,7 +859,7 @@ class AgentScopeRegistry:
                     tool_invocations=invocations,
                 )
                 msg_dict["llm_enabled"] = llm_enabled.get(name, False)
-                msg_dict["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False))
+                msg_dict["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False), variables=base_vars)
                 analysis_outputs[name] = msg_dict
                 self._record_step(db, run, name,
                     {"pair": pair, "timeframe": timeframe, "llm_enabled": llm_enabled.get(name, False)},
@@ -867,10 +899,15 @@ class AgentScopeRegistry:
                 )
             debate_ms = (time.time() - t0) * 1000
 
+            # Update vars for researchers
+            base_vars["analysis_summary"] = analysis_summary
+            base_vars["bullish_summary"] = bullish_msg.get_text_content()[:500]
+            base_vars["bearish_summary"] = bearish_msg.get_text_content()[:500]
+
             for name, msg in [("bullish-researcher", bullish_msg), ("bearish-researcher", bearish_msg)]:
                 d = _msg_to_dict(msg, tool_invocations=agent_tool_invocations.get(name, {}))
                 d["llm_enabled"] = llm_enabled.get(name, False)
-                d["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False))
+                d["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False), variables=base_vars)
                 analysis_outputs[name] = d
                 self._record_step(db, run, name,
                     {"phase": "debate", "llm_enabled": llm_enabled.get(name, False)},
@@ -878,6 +915,13 @@ class AgentScopeRegistry:
 
             # ── Phase 4: Sequential decision ──
             logger.info("Phase 4: Trader -> Risk -> Execution for %s/%s", pair, timeframe)
+
+            # Update vars for Phase 4 agents
+            base_vars["debate_winner"] = str(debate_result.winning_side or "neutral")
+            base_vars["debate_confidence"] = str(debate_result.confidence)
+            base_vars["debate_reason"] = str(debate_result.reason or "")
+            base_vars["mode"] = getattr(run, "mode", "simulation")
+
             decision_context = (
                 f"Make a trading decision for {pair} on {timeframe}.\n\n"
                 f"Debate result: {debate_result.winning_side} "
@@ -898,7 +942,17 @@ class AgentScopeRegistry:
                 step_ms = (time.time() - t0) * 1000
                 d = _msg_to_dict(current_msg, tool_invocations=agent_tool_invocations.get(name, {}))
                 d["llm_enabled"] = llm_enabled.get(name, False)
-                d["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False))
+                # Update vars with trader/risk outputs for downstream agents
+                if name == "trader-agent":
+                    meta = d.get("metadata", {})
+                    base_vars["trader_decision"] = meta.get("decision", "HOLD")
+                    base_vars["entry"] = str(meta.get("entry", "N/A"))
+                    base_vars["stop_loss"] = str(meta.get("stop_loss", "N/A"))
+                    base_vars["take_profit"] = str(meta.get("take_profit", "N/A"))
+                    base_vars["risk_percent"] = str(risk_percent)
+                elif name == "risk-manager":
+                    base_vars["risk_result"] = d.get("text", "")[:500]
+                d["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False), variables=base_vars)
                 analysis_outputs[name] = d
                 self._record_step(db, run, name,
                     {"phase": "decision", "llm_enabled": llm_enabled.get(name, False)},
