@@ -95,7 +95,11 @@ class AgentScopeRegistry:
         return f"You are the {agent_name} agent in a multi-agent trading system."
 
     def _build_context_msg(self, pair: str, timeframe: str, market_data: dict) -> Msg:
-        """Build a context message with all market data for the agents."""
+        """Build a context message with market summary for the agents.
+
+        OHLC arrays are NOT included in the prompt — they are injected as
+        preset_kwargs on tools that need them. This keeps the prompt small.
+        """
         snapshot = market_data.get("snapshot", {})
         ohlc = market_data.get("ohlc", {})
         news = market_data.get("news", {})
@@ -114,21 +118,17 @@ class AgentScopeRegistry:
                 "trend": snapshot.get("trend", "neutral"),
                 "degraded": snapshot.get("degraded", True),
             },
-            "ohlc_data": {
-                "bar_count": len(ohlc.get("closes", [])),
-                "note": "Use OHLC arrays below as input to indicator_bundle, pattern_detector, etc.",
-                **ohlc,
-            },
+            "ohlc_bars_available": len(ohlc.get("closes", [])),
             "news_context": news,
         }
 
         return Msg(
             "system",
-            f"You are analyzing {pair} on {timeframe} timeframe.\n\n"
-            f"Market data:\n```json\n{json.dumps(context, default=str)}\n```\n\n"
-            f"IMPORTANT: When calling tools that require price data (indicator_bundle, "
-            f"pattern_detector, divergence_detector, support_resistance_detector), "
-            f"use the 'closes', 'opens', 'highs', 'lows' arrays from ohlc_data above.",
+            f"You are analyzing {pair} on the {timeframe} timeframe.\n\n"
+            f"Market summary:\n```json\n{json.dumps(context, default=str)}\n```\n\n"
+            f"IMPORTANT: Price data (closes, opens, highs, lows) is pre-loaded into your tools. "
+            f"Just call indicator_bundle(), pattern_detector(), divergence_detector(), "
+            f"support_resistance_detector() directly — they already have the price arrays.",
             "system",
         )
 
@@ -167,10 +167,10 @@ class AgentScopeRegistry:
                 market_data.get("snapshot", {}).get("degraded", True),
             )
 
-            # Build toolkits
+            # Build toolkits — inject OHLC as preset kwargs (not in prompt)
             toolkits = {}
             for agent_name in ALL_AGENT_FACTORIES:
-                toolkits[agent_name] = await build_toolkit(agent_name)
+                toolkits[agent_name] = await build_toolkit(agent_name, ohlc=ohlc)
 
             # Build agents
             agents = {}

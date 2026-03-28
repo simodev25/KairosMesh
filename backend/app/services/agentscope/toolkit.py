@@ -90,18 +90,42 @@ def _wrap_mcp_tool(tool_id: str, original_fn) -> Any:
     return tool_fn
 
 
-async def build_toolkit(agent_name: str) -> Toolkit:
-    """Build a Toolkit with the MCP tools assigned to the given agent."""
+OHLC_PARAMS = frozenset({"closes", "highs", "lows", "opens"})
+
+
+async def build_toolkit(
+    agent_name: str,
+    ohlc: dict[str, list[float]] | None = None,
+) -> Toolkit:
+    """Build a Toolkit with the MCP tools assigned to the given agent.
+
+    Args:
+        agent_name: Agent identifier.
+        ohlc: Optional dict with keys "opens", "highs", "lows", "closes".
+              If provided, tools that accept these params get them as
+              preset_kwargs (hidden from LLM, injected at call time).
+    """
     from app.services.mcp import trading_server
 
     toolkit = Toolkit()
     tool_ids = AGENT_TOOL_MAP.get(agent_name, [])
+    ohlc = ohlc or {}
 
     for tool_id in tool_ids:
         original_fn = getattr(trading_server, tool_id, None)
         if original_fn is None:
             logger.warning("MCP tool %s not found in trading_server, skipping", tool_id)
             continue
-        toolkit.register_tool_function(_wrap_mcp_tool(tool_id, original_fn))
+
+        wrapped = _wrap_mcp_tool(tool_id, original_fn)
+
+        # Auto-inject OHLC arrays as preset kwargs when the tool accepts them
+        sig = inspect.signature(original_fn)
+        preset = {}
+        for param_name in sig.parameters:
+            if param_name in OHLC_PARAMS and param_name in ohlc:
+                preset[param_name] = ohlc[param_name]
+
+        toolkit.register_tool_function(wrapped, preset_kwargs=preset if preset else None)
 
     return toolkit
