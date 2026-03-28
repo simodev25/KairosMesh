@@ -309,15 +309,28 @@ class AgentScopeRegistry:
         snapshot["market_data_source"] = market_source
         return {"snapshot": snapshot, "news": news, "ohlc": ohlc}
 
-    def _get_sys_prompt(self, agent_name: str, db) -> str:
+    def _render_prompt(self, db, agent_name: str, variables: dict | None = None) -> dict[str, Any]:
+        """Render prompt via PromptTemplateService, returns full dict with system_prompt, user_prompt, skills, etc."""
+        from app.services.prompts.registry import DEFAULT_PROMPTS
+        fallback = DEFAULT_PROMPTS.get(agent_name, {})
+        fallback_system = fallback.get("system", f"You are the {agent_name} agent in a multi-agent trading system.")
+        fallback_user = fallback.get("user", "")
+
         if self.prompt_service:
             try:
-                rendered = self.prompt_service.render(db, agent_name)
-                if rendered and rendered[0]:
-                    return rendered[0]
-            except Exception:
-                pass
-        return f"You are the {agent_name} agent in a multi-agent trading system."
+                return self.prompt_service.render(db, agent_name, fallback_system, fallback_user, variables or {})
+            except Exception as exc:
+                logger.warning("Prompt render failed for %s: %s", agent_name, exc)
+
+        return {
+            "prompt_id": None, "version": 0,
+            "system_prompt": fallback_system, "user_prompt": fallback_user,
+            "skills": [], "missing_variables": [],
+        }
+
+    def _get_sys_prompt(self, agent_name: str, db, variables: dict | None = None) -> str:
+        rendered = self._render_prompt(db, agent_name, variables)
+        return rendered.get("system_prompt", f"You are the {agent_name} agent.")
 
     def _build_context_msg(self, pair: str, timeframe: str, market_data: dict) -> Msg:
         snapshot = market_data.get("snapshot", {})
@@ -435,6 +448,9 @@ class AgentScopeRegistry:
                 # Add tooling section
                 if out.get("tooling"):
                     step_output["tooling"] = out["tooling"]
+                # Add prompt_meta
+                if out.get("prompt_meta"):
+                    step_output["prompt_meta"] = out["prompt_meta"]
                 step_output["llm_enabled"] = out.get("llm_enabled", False)
                 step_output.setdefault("degraded", False)
 
@@ -502,6 +518,27 @@ class AgentScopeRegistry:
             }
         except Exception as exc:
             logger.warning("Failed to write debug trace: %s", exc)
+
+    def _build_prompt_meta(self, db, agent_name: str, model_name: str, llm_enabled: bool,
+                           variables: dict | None = None) -> dict[str, Any]:
+        """Build prompt_meta dict matching v1 format for an agent."""
+        from app.services.llm.model_selector import AgentModelSelector
+        from app.services.agentscope.toolkit import AGENT_TOOL_MAP
+
+        rendered = self._render_prompt(db, agent_name, variables)
+        enabled_tools = AGENT_TOOL_MAP.get(agent_name, [])
+
+        return {
+            "prompt_id": rendered.get("prompt_id"),
+            "prompt_version": rendered.get("version", 0),
+            "llm_model": model_name if llm_enabled else None,
+            "llm_enabled": llm_enabled,
+            "skills_count": len(rendered.get("skills", [])),
+            "enabled_tools_count": len(enabled_tools),
+            "skills": rendered.get("skills", []),
+            "system_prompt": (rendered.get("system_prompt") or "")[:3000],
+            "user_prompt": (rendered.get("user_prompt") or "")[:3000],
+        }
 
     async def _run_deterministic(self, agent_name: str, toolkit, context_msg: Msg) -> Msg:
         """Run agent tools deterministically without LLM — returns raw tool results."""
@@ -610,6 +647,7 @@ class AgentScopeRegistry:
                     tool_invocations=invocations,
                 )
                 msg_dict["llm_enabled"] = llm_enabled.get(name, False)
+                msg_dict["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False))
                 analysis_outputs[name] = msg_dict
                 self._record_step(db, run, name,
                     {"pair": pair, "timeframe": timeframe, "llm_enabled": llm_enabled.get(name, False)},
@@ -652,6 +690,7 @@ class AgentScopeRegistry:
             for name, msg in [("bullish-researcher", bullish_msg), ("bearish-researcher", bearish_msg)]:
                 d = _msg_to_dict(msg, tool_invocations=agent_tool_invocations.get(name, {}))
                 d["llm_enabled"] = llm_enabled.get(name, False)
+                d["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False))
                 analysis_outputs[name] = d
                 self._record_step(db, run, name,
                     {"phase": "debate", "llm_enabled": llm_enabled.get(name, False)},
@@ -674,6 +713,7 @@ class AgentScopeRegistry:
                 step_ms = (time.time() - t0) * 1000
                 d = _msg_to_dict(current_msg, tool_invocations=agent_tool_invocations.get(name, {}))
                 d["llm_enabled"] = llm_enabled.get(name, False)
+                d["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False))
                 analysis_outputs[name] = d
                 self._record_step(db, run, name,
                     {"phase": "decision", "llm_enabled": llm_enabled.get(name, False)},

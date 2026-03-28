@@ -43,7 +43,11 @@ async def test_execute_runs_all_phases(mock_debate, mock_formatter, mock_model, 
     run.timeframe = "H1"
 
     prompt_service = MagicMock()
-    prompt_service.render.return_value = ("You are a trading agent.", None)
+    prompt_service.render.return_value = {
+        "prompt_id": 1, "version": 1,
+        "system_prompt": "You are a trading agent.",
+        "user_prompt": "", "skills": ["skill1"], "missing_variables": [],
+    }
 
     registry = AgentScopeRegistry(
         prompt_service=prompt_service,
