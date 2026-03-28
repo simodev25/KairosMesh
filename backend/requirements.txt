@@ -21,8 +21,9 @@ opentelemetry-api==1.36.0
 opentelemetry-sdk==1.36.0
 opentelemetry-instrumentation-fastapi==0.57b0
 langchain-core==0.3.79
-mcp[cli]==1.9.4
+mcp[cli]>=1.13
 fastmcp==2.5.1
+agentscope==1.0.18
 metaapi-cloud-sdk
 email-validator==2.2.0
 pytest==8.4.1
