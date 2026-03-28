@@ -22,6 +22,35 @@ from app.services.agentscope.toolkit import build_toolkit
 logger = logging.getLogger(__name__)
 
 
+def _try_extract_json(text: str) -> dict[str, Any]:
+    """Try to extract a JSON object from text (agent output or deterministic result)."""
+    if not text:
+        return {}
+    # Strip deterministic prefix
+    clean = text.strip()
+    if clean.startswith("[deterministic]"):
+        clean = clean[len("[deterministic]"):].strip()
+    # Try to parse as JSON
+    try:
+        parsed = json.loads(clean)
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Try to find JSON block in text
+    start = clean.find("{")
+    if start >= 0:
+        end = clean.rfind("}")
+        if end > start:
+            try:
+                parsed = json.loads(clean[start:end + 1])
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+    return {}
+
+
 def _msg_to_dict(msg: Msg | None) -> dict[str, Any]:
     if msg is None:
         return {}
@@ -31,8 +60,11 @@ def _msg_to_dict(msg: Msg | None) -> dict[str, Any]:
     except Exception:
         text = str(getattr(msg, "content", ""))
     metadata = {}
-    if hasattr(msg, "metadata") and isinstance(msg.metadata, dict):
+    if hasattr(msg, "metadata") and isinstance(msg.metadata, dict) and msg.metadata:
         metadata = msg.metadata
+    # If metadata is empty, try to extract structured data from text
+    if not metadata:
+        metadata = _try_extract_json(text)
     return {"text": text, "metadata": metadata, "name": getattr(msg, "name", "")}
 
 
