@@ -10,8 +10,9 @@ def test_build_ollama_model(mock_cls):
     mock_cls.assert_called_once()
     call_kwargs = mock_cls.call_args[1]
     assert call_kwargs["model_name"] == "llama3.1"
-    assert "v1" in call_kwargs["client_kwargs"]["base_url"]
+    assert call_kwargs["host"] == "http://localhost:11434"
     assert call_kwargs["stream"] is False
+    assert call_kwargs["options"]["temperature"] == 0.0
 
 
 @patch("app.services.agentscope.model_factory.OpenAIChatModel")

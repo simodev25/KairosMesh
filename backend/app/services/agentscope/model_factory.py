@@ -22,12 +22,12 @@ def build_model(
 ) -> OllamaChatModel | OpenAIChatModel:
     """Build an AgentScope model instance for the given provider."""
     if provider == "ollama":
+        # OllamaChatModel uses native ollama SDK — `host` param, `options` for temp
         return OllamaChatModel(
             model_name=model_name,
-            api_key=api_key or None,
-            client_kwargs={"base_url": _ensure_v1(base_url)},
+            host=base_url.rstrip("/"),
             stream=stream,
-            generate_kwargs={"temperature": temperature},
+            options={"temperature": temperature},
         )
     if provider in ("openai", "mistral"):
         return OpenAIChatModel(
