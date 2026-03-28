@@ -310,9 +310,15 @@ class AgentScopeRegistry:
         return {"snapshot": snapshot, "news": news, "ohlc": ohlc}
 
     def _render_prompt(self, db, agent_name: str, variables: dict | None = None) -> dict[str, Any]:
-        """Render prompt via PromptTemplateService, returns full dict with system_prompt, user_prompt, skills, etc."""
+        """Render prompt via PromptTemplateService (DB first, then fallback).
+
+        Priority: DB prompt > DEFAULT_PROMPTS (technical-analyst) > AGENT_PROMPTS (all others).
+        """
         from app.services.prompts.registry import DEFAULT_PROMPTS
-        fallback = DEFAULT_PROMPTS.get(agent_name, {})
+        from app.services.agentscope.prompts import AGENT_PROMPTS
+
+        # Fallback chain: DEFAULT_PROMPTS (legacy) > AGENT_PROMPTS (new) > generic
+        fallback = DEFAULT_PROMPTS.get(agent_name) or AGENT_PROMPTS.get(agent_name, {})
         fallback_system = fallback.get("system", f"You are the {agent_name} agent in a multi-agent trading system.")
         fallback_user = fallback.get("user", "")
 
@@ -332,36 +338,101 @@ class AgentScopeRegistry:
         rendered = self._render_prompt(db, agent_name, variables)
         return rendered.get("system_prompt", f"You are the {agent_name} agent.")
 
-    def _build_context_msg(self, pair: str, timeframe: str, market_data: dict) -> Msg:
+    def _build_prompt_variables(
+        self, pair: str, timeframe: str, snapshot: dict, news: dict,
+        analysis_summary: str = "", debate_result: Any = None,
+        trader_out: dict | None = None, risk_out: dict | None = None,
+    ) -> dict[str, str]:
+        """Build template variables for user_prompt injection."""
+        from app.services.market.instrument import normalize_instrument
+        try:
+            instr = normalize_instrument(pair)
+            asset_class = instr.asset_class.value if instr else "forex"
+        except Exception:
+            asset_class = "forex"
+
+        # Snapshot block
+        snapshot_lines = [f"- {k}: {v}" for k, v in snapshot.items()
+                         if k not in ("degraded", "market_data_source", "market_data_provider") and v]
+        snapshot_block = "\n".join(snapshot_lines) if snapshot_lines else "No market data available."
+
+        # News items
+        news_items = news.get("news", []) if isinstance(news, dict) else []
+        macro_items = news.get("macro_events", []) if isinstance(news, dict) else []
+        news_block = "\n".join(
+            f"- [{n.get('source', '?')}] {n.get('title', '')}" for n in news_items[:10]
+        ) if news_items else "No news items available."
+        macro_block = "\n".join(
+            f"- [{m.get('currency', '?')}] {m.get('event', '')} (importance={m.get('importance', '?')})"
+            for m in macro_items[:10]
+        ) if macro_items else "No macro events available."
+
+        # Raw facts block (for technical-analyst)
+        raw_facts_lines = []
+        for key in ("trend", "rsi", "macd_diff", "atr", "last_price", "change_pct"):
+            val = snapshot.get(key)
+            if val is not None:
+                raw_facts_lines.append(f"- {key.replace('_', ' ').title()}: {val} [tool:indicator_bundle]")
+        raw_facts_block = "\n".join(raw_facts_lines) if raw_facts_lines else "No raw facts available."
+
+        variables = {
+            "pair": pair,
+            "asset_class": asset_class,
+            "timeframe": timeframe,
+            "snapshot_block": snapshot_block,
+            "raw_facts_block": raw_facts_block,
+            "tool_results_block": "Use your tools to gather additional data.",
+            "runtime_score_breakdown_block": "UNAVAILABLE_RUNTIME_SCORE_BREAKDOWN",
+            "interpretation_rules_block": "",
+            "news_count": str(len(news_items)),
+            "news_items_block": news_block,
+            "macro_count": str(len(macro_items)),
+            "macro_items_block": macro_block,
+            "analysis_summary": analysis_summary or "No analysis yet.",
+            "decision_mode": "balanced",
+            "mode": "simulation",
+            "risk_percent": "1.0",
+        }
+
+        # Debate variables
+        if debate_result:
+            variables["debate_winner"] = str(getattr(debate_result, "winning_side", "neutral"))
+            variables["debate_confidence"] = str(getattr(debate_result, "confidence", 0.5))
+            variables["debate_reason"] = str(getattr(debate_result, "reason", ""))
+
+        # Trader/risk variables for downstream agents
+        if trader_out:
+            variables["trader_decision"] = trader_out.get("metadata", {}).get("decision", "HOLD")
+            variables["entry"] = str(trader_out.get("metadata", {}).get("entry", "N/A"))
+            variables["stop_loss"] = str(trader_out.get("metadata", {}).get("stop_loss", "N/A"))
+            variables["take_profit"] = str(trader_out.get("metadata", {}).get("take_profit", "N/A"))
+        if risk_out:
+            variables["risk_result"] = risk_out.get("text", "")[:500]
+
+        return variables
+
+    def _build_context_msg(self, pair: str, timeframe: str, market_data: dict, db=None, variables: dict | None = None) -> Msg:
+        """Build context message. If DB prompts exist for agents, include rendered user_prompt."""
         snapshot = market_data.get("snapshot", {})
         ohlc = market_data.get("ohlc", {})
-        news = market_data.get("news", {})
-        context = {
-            "pair": pair, "timeframe": timeframe,
-            "market_snapshot": {
-                "last_price": snapshot.get("last_price", 0),
-                "change_pct": snapshot.get("change_pct", 0),
-                "rsi": snapshot.get("rsi", 50),
-                "ema_fast": snapshot.get("ema_fast", 0),
-                "ema_slow": snapshot.get("ema_slow", 0),
-                "macd_diff": snapshot.get("macd_diff", 0),
-                "atr": snapshot.get("atr", 0),
-                "trend": snapshot.get("trend", "neutral"),
-                "degraded": snapshot.get("degraded", True),
-                "market_data_source": snapshot.get("market_data_source", "unknown"),
-            },
-            "ohlc_bars_available": len(ohlc.get("closes", [])),
-            "news_context": news,
-        }
-        return Msg(
-            "system",
+
+        # Compact market summary (always included)
+        market_lines = []
+        for key in ("last_price", "change_pct", "rsi", "ema_fast", "ema_slow", "macd_diff", "atr", "trend"):
+            val = snapshot.get(key)
+            if val is not None:
+                market_lines.append(f"- {key}: {val}")
+
+        content = (
             f"You are analyzing {pair} on the {timeframe} timeframe.\n\n"
-            f"Market summary:\n```json\n{json.dumps(context, default=str)}\n```\n\n"
+            f"Market snapshot ({snapshot.get('market_data_source', 'unknown')}):\n"
+            + "\n".join(market_lines) + "\n"
+            f"- bars available: {len(ohlc.get('closes', []))}\n\n"
             f"IMPORTANT: Price data (closes, opens, highs, lows) is pre-loaded into your tools. "
-            f"Just call indicator_bundle(), pattern_detector(), divergence_detector(), "
-            f"support_resistance_detector() directly — they already have the price arrays.",
-            "system",
+            f"Call indicator_bundle(), pattern_detector(), divergence_detector(), "
+            f"support_resistance_detector() directly — they already have the price arrays."
         )
+        return Msg("system", content, "system")
 
     def _record_step(self, db, run, agent_name: str, input_data: dict, output_data: dict,
                      status: str = "completed", error: str | None = None, elapsed_ms: float = 0) -> None:
@@ -599,6 +670,9 @@ class AgentScopeRegistry:
             for name in ALL_AGENT_FACTORIES:
                 toolkits[name] = await build_toolkit(name, ohlc=ohlc)
 
+            # Build prompt variables for context injection
+            base_vars = self._build_prompt_variables(pair, timeframe, snapshot, market_data.get("news", {}))
+
             # Build agents (only for LLM-enabled agents)
             agents: dict[str, Any] = {}
             for name, factory in ALL_AGENT_FACTORIES.items():
@@ -609,7 +683,7 @@ class AgentScopeRegistry:
                     model=model,
                     formatter=debate_fmt if is_debate else chat_fmt,
                     toolkit=toolkits[name],
-                    sys_prompt=self._get_sys_prompt(name, db),
+                    sys_prompt=self._get_sys_prompt(name, db, base_vars),
                 )
 
             analysis_outputs: dict[str, dict] = {}
