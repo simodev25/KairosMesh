@@ -239,7 +239,7 @@ class AgentScopeRegistry:
         self, run, pair: str, timeframe: str, risk_percent: float,
         market_data: dict, analysis_outputs: dict, elapsed: float,
     ) -> None:
-        """Write debug trace JSON file if enabled in settings."""
+        """Write debug trace JSON file compatible with schema v1 format."""
         from app.core.config import get_settings
         import os
 
@@ -255,51 +255,98 @@ class AgentScopeRegistry:
             filename = f"run-{run.id}-{ts}.json"
             filepath = os.path.join(trace_dir, filename)
 
+            snapshot = market_data.get("snapshot", {})
+            ohlc = market_data.get("ohlc", {})
+            news = market_data.get("news", {})
+
+            # Build price_history in v1 format (list of candle dicts)
+            price_history = []
+            if settings.debug_trade_json_include_price_history:
+                limit = settings.debug_trade_json_price_history_limit
+                closes = ohlc.get("closes", [])[-limit:]
+                opens = ohlc.get("opens", [])[-limit:]
+                highs = ohlc.get("highs", [])[-limit:]
+                lows = ohlc.get("lows", [])[-limit:]
+                for i in range(len(closes)):
+                    price_history.append({
+                        "open": opens[i] if i < len(opens) else 0,
+                        "high": highs[i] if i < len(highs) else 0,
+                        "low": lows[i] if i < len(lows) else 0,
+                        "close": closes[i] if i < len(closes) else 0,
+                        "volume": None,
+                    })
+
+            # Build agent_steps in v1 format
+            agent_steps = []
+            workflow = []
+            for agent_name in [
+                "technical-analyst", "news-analyst", "market-context-analyst",
+                "bullish-researcher", "bearish-researcher",
+                "trader-agent", "risk-manager", "execution-manager",
+            ]:
+                workflow.append(agent_name)
+                out = analysis_outputs.get(agent_name, {})
+                agent_steps.append({
+                    "agent_name": agent_name,
+                    "status": "completed",
+                    "llm_enabled": out.get("llm_enabled", False),
+                    "input_payload": {},
+                    "output_payload": out.get("metadata", {}),
+                    "output_text": out.get("text", "")[:2000],
+                })
+
+            # Build analysis_bundle in v1 format
+            analysis_bundle = {
+                "analysis_outputs": {
+                    k: v.get("metadata", {})
+                    for k, v in analysis_outputs.items()
+                    if k in ("technical-analyst", "news-analyst", "market-context-analyst")
+                },
+                "bullish": analysis_outputs.get("bullish-researcher", {}).get("metadata", {}),
+                "bearish": analysis_outputs.get("bearish-researcher", {}).get("metadata", {}),
+                "trader_decision": analysis_outputs.get("trader-agent", {}).get("metadata", {}),
+                "risk": analysis_outputs.get("risk-manager", {}).get("metadata", {}),
+                "execution_manager": analysis_outputs.get("execution-manager", {}).get("metadata", {}),
+            }
+
             payload = {
                 "schema_version": 2,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
                 "runtime_engine": "agentscope_v1",
                 "run": {
                     "id": run.id,
                     "pair": pair,
                     "timeframe": timeframe,
-                    "risk_percent": risk_percent,
+                    "mode": getattr(run, "mode", "simulation"),
                     "status": run.status,
+                    "risk_percent": risk_percent,
                     "created_at": str(getattr(run, "created_at", "")),
+                    "updated_at": str(getattr(run, "updated_at", "")),
                 },
+                "context": {
+                    "market_snapshot": snapshot,
+                    "price_history": price_history,
+                    "news_context": news,
+                },
+                "workflow": workflow,
+                "agent_steps": agent_steps,
+                "analysis_bundle": analysis_bundle,
+                "final_decision": run.decision,
+                "execution": run.decision.get("execution", {}),
                 "elapsed_seconds": round(elapsed, 1),
-                "market": {
-                    "source": market_data.get("snapshot", {}).get("market_data_source", "unknown"),
-                    "bars": len(market_data.get("ohlc", {}).get("closes", [])),
-                    "snapshot": market_data.get("snapshot", {}),
-                },
-                "decision": run.decision,
-                "analysis_outputs": {
-                    k: {
-                        "text": v.get("text", ""),
-                        "metadata": v.get("metadata", {}),
-                    }
-                    for k, v in analysis_outputs.items()
-                },
             }
-
-            # Include price history if configured
-            if settings.debug_trade_json_include_price_history:
-                limit = settings.debug_trade_json_price_history_limit
-                ohlc = market_data.get("ohlc", {})
-                payload["price_history"] = {
-                    k: v[-limit:] for k, v in ohlc.items() if isinstance(v, list)
-                }
 
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
 
             logger.info("Debug trace written: %s", filepath)
 
-            # Record in run.trace
             run.trace["debug_trace_meta"] = {
                 "enabled": True,
                 "file": filepath,
+                "file_written": True,
                 "schema_version": 2,
+                "steps_count": len(agent_steps),
             }
         except Exception as exc:
             logger.warning("Failed to write debug trace: %s", exc)
