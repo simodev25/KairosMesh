@@ -97,6 +97,7 @@ async def build_toolkit(
     agent_name: str,
     ohlc: dict[str, list[float]] | None = None,
     news: dict | None = None,
+    analysis_outputs: dict | None = None,
 ) -> Toolkit:
     """Build a Toolkit with the MCP tools assigned to the given agent.
 
@@ -104,7 +105,7 @@ async def build_toolkit(
         agent_name: Agent identifier.
         ohlc: Optional dict with keys "opens", "highs", "lows", "closes".
         news: Optional dict with keys "news" (list), "macro_events" (list).
-              If provided, news tools get items as preset_kwargs.
+        analysis_outputs: Optional dict of agent outputs for evidence_query tool.
     """
     from app.services.mcp import trading_server
 
@@ -127,6 +128,13 @@ async def build_toolkit(
         for param_name in sig.parameters:
             if param_name in OHLC_PARAMS and param_name in ohlc:
                 preset[param_name] = ohlc[param_name]
+
+        # Inject analysis_outputs for evidence tools
+        if tool_id == "evidence_query" and analysis_outputs:
+            # Build summary dict for evidence_query
+            preset["analysis_outputs"] = {
+                k: v.get("metadata", {}) for k, v in (analysis_outputs or {}).items()
+            }
 
         # Inject news items for news-related tools
         if tool_id == "news_search" and news.get("news"):

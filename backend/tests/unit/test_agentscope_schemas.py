@@ -11,9 +11,10 @@ def test_technical_analysis_valid():
     assert r.signal == "bullish"
     assert r.degraded is False
 
-def test_technical_analysis_score_bounds():
-    with pytest.raises(ValidationError):
-        TechnicalAnalysisResult(signal="bullish", score=1.5, confidence=0.5, setup_state="actionable", summary="test")
+def test_technical_analysis_score_bounds_clamped():
+    # Score 1.5 is clamped to 1.0 (not rejected)
+    r = TechnicalAnalysisResult(signal="bullish", score=1.5, confidence=0.5, setup_state="actionable", summary="test")
+    assert r.score == 1.0
 
 def test_news_analysis_valid():
     r = NewsAnalysisResult(signal="bearish", score=-0.3, confidence=0.6, coverage="medium", evidence_strength=0.7, summary="Negative news")

@@ -119,6 +119,11 @@ AGENT_PROMPTS: dict[str, dict[str, str]] = {
     "trader-agent": {
         "system": (
             "You are a multi-asset trader assistant. You synthesize all analysis into a final trading decision.\n\n"
+            "CRITICAL SIGN CONVENTION:\n"
+            "- combined_score MUST be NEGATIVE for bearish setups (SELL)\n"
+            "- combined_score MUST be POSITIVE for bullish setups (BUY)\n"
+            "- combined_score near zero = HOLD\n"
+            "- NEVER use a positive score to represent bearish strength\n\n"
             "Rules:\n"
             "- Synthesize into BUY, SELL or HOLD. HOLD is the default when edge is unclear.\n"
             "- Only validate BUY or SELL if direction, setup quality, and risk/reward are simultaneously satisfactory.\n"
@@ -162,18 +167,20 @@ AGENT_PROMPTS: dict[str, dict[str, str]] = {
             "- Never reinterpret the trader's strategy — control risk compliance only.\n"
             "- In case of ambiguity, prefer REJECT.\n"
             "- No trade should be accepted if risk cannot be simply explained and quantitatively justified.\n"
-            "- Use position_size_calculator and risk_evaluation tools to validate.\n"
+            "- Use position_size_calculator and risk_evaluation tools to validate BUY/SELL.\n"
+            "- STRICT: For HOLD decisions, immediately return the minimal response without calling any tool.\n"
         ),
         "user": (
             "Instrument: {pair}\nTimeframe: {timeframe}\nMode: {mode}\n\n"
             "Trader decision: {trader_decision}\n"
             "Entry: {entry}\nStop loss: {stop_loss}\nTake profit: {take_profit}\n"
             "Risk %: {risk_percent}\n\n"
-            "If decision is HOLD, respond: accepted=false, suggested_volume=0, reasons=[\"HOLD decision\"]\n"
-            "If decision is BUY/SELL, use risk_evaluation tool then respond:\n"
-            "- accepted=true|false\n"
-            "- suggested_volume=<lots>\n"
-            "- reasons=<list of reasons>\n"
+            "STRICT CONTRACT:\n"
+            "- If trader_decision is HOLD: immediately generate_response with accepted=false, suggested_volume=0, reasons=[\"HOLD decision\"]. Do NOT call any tool. Do NOT add commentary.\n"
+            "- If trader_decision is BUY or SELL: call risk_evaluation tool, then generate_response with:\n"
+            "  - accepted=true|false\n"
+            "  - suggested_volume=<lots from tool result>\n"
+            "  - reasons=<list from tool result>\n"
         ),
     },
     "execution-manager": {

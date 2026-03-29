@@ -378,6 +378,24 @@ class AgentScopeRegistry:
                 raw_facts_lines.append(f"- {key.replace('_', ' ').title()}: {val} [tool:indicator_bundle]")
         raw_facts_block = "\n".join(raw_facts_lines) if raw_facts_lines else "No raw facts available."
 
+        # Pre-compute technical_scoring for score_breakdown
+        try:
+            from app.services.mcp.trading_server import technical_scoring
+            scoring = technical_scoring(
+                trend=snapshot.get("trend", "neutral"),
+                rsi=snapshot.get("rsi", 50.0),
+                macd_diff=snapshot.get("macd_diff", 0.0),
+                atr=snapshot.get("atr", 0.0),
+                ema_fast_above_slow=snapshot.get("ema_fast", 0) > snapshot.get("ema_slow", 0),
+                change_pct=snapshot.get("change_pct", 0.0),
+            )
+            components = scoring.get("components", {})
+            score_lines = [f"{k}={v}" for k, v in components.items()]
+            score_lines.append(f"final_score={scoring.get('score', 0)}")
+            raw_facts_block += f"\n\nAuthoritative runtime score breakdown:\n" + "\n".join(score_lines)
+        except Exception:
+            pass
+
         variables = {
             "pair": pair,
             "asset_class": asset_class,
@@ -874,6 +892,19 @@ class AgentScopeRegistry:
             research_msg = Msg("system",
                 f"Analysis results from Phase 1:\n{analysis_summary}\n\n"
                 f"Original context:\n{context_msg.get_text_content()}", "system")
+
+            # Rebuild researcher toolkits with Phase 1 outputs for evidence_query
+            for rname in ("bullish-researcher", "bearish-researcher"):
+                toolkits[rname] = await build_toolkit(
+                    rname, ohlc=ohlc, news=market_data.get("news", {}),
+                    analysis_outputs=analysis_outputs,
+                )
+                if rname in agents:
+                    agents[rname] = ALL_AGENT_FACTORIES[rname](
+                        model=model, formatter=debate_fmt,
+                        toolkit=toolkits[rname],
+                        sys_prompt=self._get_sys_prompt(rname, db, base_vars),
+                    )
 
             # ── Phase 2+3: Researchers + Debate ──
             logger.info("Phase 2+3: Running debate for %s/%s", pair, timeframe)

@@ -6,13 +6,21 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _SIGNAL_ALIASES = {"hold": "neutral", "none": "neutral", "flat": "neutral", "buy": "bullish", "sell": "bearish"}
 _DECISION_ALIASES = {"bullish": "BUY", "bearish": "SELL", "neutral": "HOLD", "hold": "HOLD", "buy": "BUY", "sell": "SELL"}
+_MOMENTUM_VALID = {"bullish", "bearish", "neutral", "mixed"}
 
 
 def _normalize_signal(value: Any) -> str:
     if not isinstance(value, str):
         return "neutral"
     lower = value.strip().lower()
-    return _SIGNAL_ALIASES.get(lower, lower)
+    mapped = _SIGNAL_ALIASES.get(lower, lower)
+    # If it's a long phrase, extract the first recognized keyword
+    if mapped not in {"bullish", "bearish", "neutral", "mixed"}:
+        for keyword in ("bearish", "bullish", "mixed", "neutral"):
+            if keyword in mapped:
+                return keyword
+        return "neutral"
+    return mapped
 
 
 def _normalize_decision(value: Any) -> str:
@@ -45,6 +53,25 @@ class TechnicalAnalysisResult(_SchemaBase):
             for field in ("signal", "structural_bias", "local_momentum"):
                 if field in data:
                     data[field] = _normalize_signal(data[field])
+            # Clamp score/confidence/tradability to valid ranges
+            for field, lo, hi, default in [("score", -1.0, 1.0, 0.0), ("confidence", 0.0, 1.0, 0.5), ("tradability", 0.0, 1.0, 0.0)]:
+                if field in data:
+                    try:
+                        data[field] = max(lo, min(hi, float(data[field])))
+                    except (TypeError, ValueError):
+                        data[field] = default
+            # Normalize setup_state
+            if "setup_state" in data:
+                ss = str(data["setup_state"]).strip().lower().replace(" ", "_").replace("-", "_")
+                valid = {"non_actionable", "conditional", "weak_actionable", "actionable", "high_conviction"}
+                if ss not in valid:
+                    for v in valid:
+                        if v in ss:
+                            ss = v
+                            break
+                    else:
+                        ss = "conditional"
+                data["setup_state"] = ss
         return data
 
 
@@ -95,12 +122,28 @@ class DebateThesis(_SchemaBase):
 
     @model_validator(mode="before")
     @classmethod
-    def clamp_confidence(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "confidence" in data:
-            try:
-                data["confidence"] = max(0.0, min(1.0, float(data["confidence"])))
-            except (TypeError, ValueError):
-                data["confidence"] = 0.5
+    def normalize_thesis_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Clamp confidence
+            if "confidence" in data:
+                try:
+                    data["confidence"] = max(0.0, min(1.0, float(data["confidence"])))
+                except (TypeError, ValueError):
+                    data["confidence"] = 0.5
+            # Normalize arguments to list of strings (LLM sometimes sends objects)
+            for field in ("arguments", "invalidation_conditions"):
+                if field in data and isinstance(data[field], list):
+                    normalized = []
+                    for item in data[field]:
+                        if isinstance(item, str):
+                            normalized.append(item)
+                        elif isinstance(item, dict):
+                            # Convert dict to string: "type: detail" or just the values
+                            parts = [str(v) for v in item.values() if v]
+                            normalized.append(" — ".join(parts) if parts else str(item))
+                        else:
+                            normalized.append(str(item))
+                    data[field] = normalized
         return data
 
 
@@ -125,8 +168,27 @@ class TraderDecisionDraft(_SchemaBase):
     @model_validator(mode="before")
     @classmethod
     def normalize_decision(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "decision" in data:
-            data["decision"] = _normalize_decision(data["decision"])
+        if isinstance(data, dict):
+            if "decision" in data:
+                data["decision"] = _normalize_decision(data["decision"])
+            # Enforce sign convention: SELL => negative score, BUY => positive
+            if "combined_score" in data and "decision" in data:
+                try:
+                    score = float(data["combined_score"])
+                    decision = data["decision"]
+                    if decision == "SELL" and score > 0:
+                        data["combined_score"] = -abs(score)
+                    elif decision == "BUY" and score < 0:
+                        data["combined_score"] = abs(score)
+                except (TypeError, ValueError):
+                    pass
+            # Clamp values
+            for field, lo, hi in [("confidence", 0.0, 1.0), ("combined_score", -1.0, 1.0)]:
+                if field in data:
+                    try:
+                        data[field] = max(lo, min(hi, float(data[field])))
+                    except (TypeError, ValueError):
+                        pass
         return data
 
     @model_validator(mode="after")
