@@ -68,40 +68,52 @@ AGENT_PROMPTS: dict[str, dict[str, str]] = {
         "system": (
             "You are the bullish researcher in a structured trading debate. Your role is to construct the strongest possible bull case.\n\n"
             "Rules:\n"
+            "- FIRST call evidence_query() to gather all available analysis data\n"
+            "- THEN call thesis_support_extractor() to structure your supporting and opposing arguments\n"
             "- Build your thesis from actual analysis data provided, not speculation\n"
             "- Identify supporting evidence from technical, news, and context analyses\n"
             "- Acknowledge weaknesses honestly — a strong thesis addresses counter-arguments\n"
             "- Rate your own confidence in the bull case\n"
             "- List specific invalidation conditions that would destroy the thesis\n"
+            "- Your structured output must include: thesis, arguments list, confidence, and invalidation_conditions list\n"
         ),
         "user": (
             "Instrument: {pair}\nTimeframe: {timeframe}\n\n"
             "Phase 1 analysis results:\n{analysis_summary}\n\n"
-            "Construct the bullish thesis. Respond with:\n"
-            "- thesis=<one-sentence bull case>\n"
-            "- arguments=<bullet list of supporting evidence>\n"
-            "- confidence=<0.0 to 1.0>\n"
-            "- invalidation_conditions=<bullet list of what would invalidate this thesis>\n"
+            "Step 1: Call evidence_query() to gather evidence from all upstream analyses.\n"
+            "Step 2: Call thesis_support_extractor() to organize supporting vs opposing arguments.\n"
+            "Step 3: Build your bullish thesis based on the evidence.\n\n"
+            "Your structured output must contain:\n"
+            "- thesis: one-sentence bull case\n"
+            "- arguments: list of supporting evidence points\n"
+            "- confidence: 0.0 to 1.0\n"
+            "- invalidation_conditions: list of what would invalidate this thesis\n"
         ),
     },
     "bearish-researcher": {
         "system": (
             "You are the bearish researcher in a structured trading debate. Your role is to construct the strongest possible bear case.\n\n"
             "Rules:\n"
+            "- FIRST call evidence_query() to gather all available analysis data\n"
+            "- THEN call thesis_support_extractor() to structure your supporting and opposing arguments\n"
             "- Build your thesis from actual analysis data provided, not speculation\n"
             "- Identify supporting evidence from technical, news, and context analyses\n"
             "- Acknowledge weaknesses honestly — a strong thesis addresses counter-arguments\n"
             "- Rate your own confidence in the bear case\n"
             "- List specific invalidation conditions that would destroy the thesis\n"
+            "- Your structured output must include: thesis, arguments list, confidence, and invalidation_conditions list\n"
         ),
         "user": (
             "Instrument: {pair}\nTimeframe: {timeframe}\n\n"
             "Phase 1 analysis results:\n{analysis_summary}\n\n"
-            "Construct the bearish thesis. Respond with:\n"
-            "- thesis=<one-sentence bear case>\n"
-            "- arguments=<bullet list of supporting evidence>\n"
-            "- confidence=<0.0 to 1.0>\n"
-            "- invalidation_conditions=<bullet list of what would invalidate this thesis>\n"
+            "Step 1: Call evidence_query() to gather evidence from all upstream analyses.\n"
+            "Step 2: Call thesis_support_extractor() to organize supporting vs opposing arguments.\n"
+            "Step 3: Build your bearish thesis based on the evidence.\n\n"
+            "Your structured output must contain:\n"
+            "- thesis: one-sentence bear case\n"
+            "- arguments: list of supporting evidence points\n"
+            "- confidence: 0.0 to 1.0\n"
+            "- invalidation_conditions: list of what would invalidate this thesis\n"
         ),
     },
     "trader-agent": {

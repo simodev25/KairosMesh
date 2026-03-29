@@ -18,6 +18,7 @@ from app.services.agentscope.formatter_factory import build_formatter
 from app.services.agentscope.model_factory import build_model
 from app.services.agentscope.schemas import (
     DebateResult,
+    DebateThesis,
     ExecutionPlanResult,
     MarketContextResult,
     NewsAnalysisResult,
@@ -32,6 +33,8 @@ AGENT_STRUCTURED_MODELS: dict[str, type] = {
     "technical-analyst": TechnicalAnalysisResult,
     "news-analyst": NewsAnalysisResult,
     "market-context-analyst": MarketContextResult,
+    "bullish-researcher": DebateThesis,
+    "bearish-researcher": DebateThesis,
     "trader-agent": TraderDecisionDraft,
     "risk-manager": RiskAssessmentResult,
     "execution-manager": ExecutionPlanResult,

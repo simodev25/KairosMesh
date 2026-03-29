@@ -89,9 +89,19 @@ class MarketContextResult(_SchemaBase):
 class DebateThesis(_SchemaBase):
     arguments: list[str] = Field(default_factory=list)
     thesis: str = ""
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0, default=0.5)
     invalidation_conditions: list[str] = Field(default_factory=list)
     degraded: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def clamp_confidence(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "confidence" in data:
+            try:
+                data["confidence"] = max(0.0, min(1.0, float(data["confidence"])))
+            except (TypeError, ValueError):
+                data["confidence"] = 0.5
+        return data
 
 
 class DebateResult(_SchemaBase):

@@ -38,11 +38,11 @@ def build_market_context_analyst(*, model, formatter, toolkit, sys_prompt: str, 
     return _build_agent("market-context-analyst", model, formatter, toolkit, sys_prompt, max_iters, parallel_tool_calls=True)
 
 
-def build_bullish_researcher(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 3) -> ReActAgent:
+def build_bullish_researcher(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 4) -> ReActAgent:
     return _build_agent("bullish-researcher", model, formatter, toolkit, sys_prompt, max_iters)
 
 
-def build_bearish_researcher(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 3) -> ReActAgent:
+def build_bearish_researcher(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 4) -> ReActAgent:
     return _build_agent("bearish-researcher", model, formatter, toolkit, sys_prompt, max_iters)
 
 
@@ -50,11 +50,11 @@ def build_trader(*, model, formatter, toolkit, sys_prompt: str, max_iters: int =
     return _build_agent("trader-agent", model, formatter, toolkit, sys_prompt, max_iters)
 
 
-def build_risk_manager(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 3) -> ReActAgent:
+def build_risk_manager(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 4) -> ReActAgent:
     return _build_agent("risk-manager", model, formatter, toolkit, sys_prompt, max_iters)
 
 
-def build_execution_manager(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 3) -> ReActAgent:
+def build_execution_manager(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 4) -> ReActAgent:
     return _build_agent("execution-manager", model, formatter, toolkit, sys_prompt, max_iters)
 
 
