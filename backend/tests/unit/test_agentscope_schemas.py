@@ -29,9 +29,10 @@ def test_debate_result_unfinished():
     assert r.winning_side is None
     assert r.confidence == 0.5
 
-def test_trader_decision_buy_requires_levels():
-    with pytest.raises(ValidationError):
-        TraderDecisionDraft(decision="BUY", confidence=0.7, combined_score=0.4, execution_allowed=True, reason="Go long", entry=None, stop_loss=None, take_profit=None)
+def test_trader_decision_buy_without_levels_disables_execution():
+    # BUY without entry/SL/TP auto-disables execution instead of raising
+    r = TraderDecisionDraft(decision="BUY", confidence=0.7, combined_score=0.4, execution_allowed=True, reason="Go long", entry=None, stop_loss=None, take_profit=None)
+    assert r.execution_allowed is False
 
 def test_trader_decision_hold_no_levels_needed():
     r = TraderDecisionDraft(decision="HOLD", confidence=0.5, combined_score=0.1, execution_allowed=False, reason="No signal")

@@ -221,7 +221,9 @@ class TraderDecisionDraft(_SchemaBase):
         if self.decision == "HOLD" or not self.execution_allowed:
             return self
         if self.entry is None or self.stop_loss is None or self.take_profit is None:
-            raise ValueError("entry, stop_loss, and take_profit required for executable BUY/SELL")
+            # Auto-correct: disable execution instead of rejecting
+            self.execution_allowed = False
+            return self
         if self.decision == "BUY" and not (self.stop_loss < self.entry < self.take_profit):
             raise ValueError("BUY requires stop_loss < entry < take_profit")
         if self.decision == "SELL" and not (self.take_profit < self.entry < self.stop_loss):
