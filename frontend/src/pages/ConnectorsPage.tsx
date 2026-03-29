@@ -21,7 +21,6 @@ const ORCHESTRATION_AGENTS = [
   'trader-agent',
   'risk-manager',
   'execution-manager',
-  'schedule-planner-agent',
 ];
 const MODEL_EDIT_AGENTS = [...ORCHESTRATION_AGENTS];
 const NON_SWITCHABLE_LLM_AGENTS = new Set<string>();
@@ -37,7 +36,6 @@ const DEFAULT_AGENT_LLM_ENABLED: Record<string, boolean> = {
   'trader-agent': false,
   'risk-manager': false,
   'execution-manager': false,
-  'schedule-planner-agent': true,
 };
 const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> = {
   'technical-analyst': {
@@ -89,15 +87,6 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
       + 'Risk accepted: {risk_accepted}\nSuggested volume: {suggested_volume}\n'
       + 'Stop loss: {stop_loss}\nTake profit: {take_profit}\n'
       + 'Expected return: BUY, SELL or HOLD followed by concise justification.'
-    ),
-  },
-  'schedule-planner-agent': {
-    system: 'You are an agent dedicated to intelligent automation of multi-asset cron plans.',
-    user: (
-      'Build a scheduling plan.\n'
-      + 'Constraints: target_count plans, allowed instruments/timeframes, requested mode, bounded risk_percent, coherent cron.\n'
-      + 'Return: strict JSON with keys plans and note.\n'
-      + 'Context JSON:\n{context_json}'
     ),
   },
 };

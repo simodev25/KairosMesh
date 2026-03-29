@@ -243,14 +243,3 @@ def test_rendered_prompt_is_english() -> None:
         assert 'respond in english' in system.lower(), 'Language directive missing from rendered prompt'
         assert 'réponds en français' not in system.lower(), 'French directive found in rendered prompt'
 
-
-# ---------------------------------------------------------------------------
-# Test: Automation agent prompts
-# ---------------------------------------------------------------------------
-
-def test_schedule_planner_prompts_are_english() -> None:
-    from app.services.scheduler.automation_agent import FALLBACK_SYSTEM_PROMPT, FALLBACK_USER_PROMPT
-
-    for label, text in [('system', FALLBACK_SYSTEM_PROMPT), ('user', FALLBACK_USER_PROMPT)]:
-        violations = _contains_disallowed_french(text)
-        assert not violations, f'French text in schedule planner {label}: {violations}'

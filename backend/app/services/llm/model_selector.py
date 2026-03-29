@@ -21,7 +21,6 @@ DEFAULT_AGENT_LLM_ENABLED: dict[str, bool] = {
     'agentic-runtime-planner': True,
     'risk-manager': False,
     'execution-manager': False,
-    'schedule-planner-agent': True,
 }
 
 SUPPORTED_LLM_PROVIDERS = {'ollama', 'openai', 'mistral'}
@@ -188,7 +187,6 @@ DEFAULT_AGENT_ALLOWED_TOOLS: dict[str, tuple[str, ...]] = {
         'scenario_validation',
         'position_size_calculator',
     ),
-    'schedule-planner-agent': (),
     'agentic-runtime-planner': (),
 }
 

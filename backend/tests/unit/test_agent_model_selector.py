@@ -46,7 +46,6 @@ def test_agent_model_selector_falls_back_to_env_default() -> None:
     assert selector.resolve(None, 'news-analyst') == 'llama3.1'
     assert selector.is_enabled(None, 'news-analyst') is True
     assert selector.is_enabled(None, 'market-context-analyst') is False
-    assert selector.is_enabled(None, 'schedule-planner-agent') is True
 
     with Session(engine) as db:
         db.add(
