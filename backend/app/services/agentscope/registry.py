@@ -907,6 +907,11 @@ class AgentScopeRegistry:
             base_vars["bullish_summary"] = bullish_msg.get_text_content()[:500]
             base_vars["bearish_summary"] = bearish_msg.get_text_content()[:500]
 
+            # Extract tool invocations from researcher agents after debate
+            for rname in ("bullish-researcher", "bearish-researcher"):
+                if rname in agents:
+                    agent_tool_invocations[rname] = await _extract_tool_invocations(agents[rname])
+
             for name, msg in [("bullish-researcher", bullish_msg), ("bearish-researcher", bearish_msg)]:
                 d = _msg_to_dict(msg, tool_invocations=agent_tool_invocations.get(name, {}))
                 d["llm_enabled"] = llm_enabled.get(name, False)
