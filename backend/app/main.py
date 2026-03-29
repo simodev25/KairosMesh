@@ -73,10 +73,10 @@ async def lifespan(_: FastAPI):
                 )
                 db.add(admin)
 
-            for name in ['ollama', 'metaapi', 'yfinance', 'order-guardian']:
+            for name in ['ollama', 'metaapi', 'yfinance']:
                 exists = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == name).first()
                 if not exists:
-                    enabled = name != 'order-guardian'
+                    enabled = True
                     connector_settings: dict = {}
                     if name == 'ollama':
                         connector_settings = {'provider': settings.llm_provider}

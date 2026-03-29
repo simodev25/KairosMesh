@@ -23,7 +23,7 @@ const ORCHESTRATION_AGENTS = [
   'execution-manager',
   'schedule-planner-agent',
 ];
-const MODEL_EDIT_AGENTS = [...ORCHESTRATION_AGENTS, 'order-guardian'];
+const MODEL_EDIT_AGENTS = [...ORCHESTRATION_AGENTS];
 const NON_SWITCHABLE_LLM_AGENTS = new Set<string>();
 const PROMPT_EDITABLE_AGENTS = MODEL_EDIT_AGENTS.filter((agentName) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName));
 const SWITCHABLE_LLM_AGENTS = new Set(MODEL_EDIT_AGENTS.filter((agentName) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName)));
@@ -38,7 +38,6 @@ const DEFAULT_AGENT_LLM_ENABLED: Record<string, boolean> = {
   'risk-manager': false,
   'execution-manager': false,
   'schedule-planner-agent': true,
-  'order-guardian': false,
 };
 const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> = {
   'technical-analyst': {
@@ -90,14 +89,6 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
       + 'Risk accepted: {risk_accepted}\nSuggested volume: {suggested_volume}\n'
       + 'Stop loss: {stop_loss}\nTake profit: {take_profit}\n'
       + 'Expected return: BUY, SELL or HOLD followed by concise justification.'
-    ),
-  },
-  'order-guardian': {
-    system: 'You are Order Guardian MT5.',
-    user: (
-      'Account: {account_label}\nGuardian timeframe: {timeframe}\nMode: {mode}\n'
-      + 'Cycle summary: {summary_json}\nActions: {actions_json}\n'
-      + 'Produce a short report: critical points, major executions, and follow-up priorities.'
     ),
   },
   'schedule-planner-agent': {

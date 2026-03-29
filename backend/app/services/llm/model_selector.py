@@ -22,7 +22,6 @@ DEFAULT_AGENT_LLM_ENABLED: dict[str, bool] = {
     'risk-manager': False,
     'execution-manager': False,
     'schedule-planner-agent': True,
-    'order-guardian': False,
 }
 
 SUPPORTED_LLM_PROVIDERS = {'ollama', 'openai', 'mistral'}
@@ -190,7 +189,6 @@ DEFAULT_AGENT_ALLOWED_TOOLS: dict[str, tuple[str, ...]] = {
         'position_size_calculator',
     ),
     'schedule-planner-agent': (),
-    'order-guardian': (),
     'agentic-runtime-planner': (),
 }
 

@@ -143,8 +143,3 @@ risk_evaluation_total = Counter(
     'Risk engine evaluations',
     ['accepted', 'asset_class', 'mode'],
 )
-order_guardian_actions_total = Counter(
-    'order_guardian_actions_total',
-    'Order guardian actions taken',
-    ['action', 'executed'],
-)
