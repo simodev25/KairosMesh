@@ -98,6 +98,7 @@ async def build_toolkit(
     ohlc: dict[str, list[float]] | None = None,
     news: dict | None = None,
     analysis_outputs: dict | None = None,
+    skills: list[str] | None = None,
 ) -> Toolkit:
     """Build a Toolkit with the MCP tools assigned to the given agent.
 
@@ -106,10 +107,38 @@ async def build_toolkit(
         ohlc: Optional dict with keys "opens", "highs", "lows", "closes".
         news: Optional dict with keys "news" (list), "macro_events" (list).
         analysis_outputs: Optional dict of agent outputs for evidence_query tool.
+        skills: Optional list of skill strings from DB to inject via AgentScope native mechanism.
     """
     from app.services.mcp import trading_server
+    from agentscope.tool._toolkit import AgentSkill
 
-    toolkit = Toolkit()
+    toolkit = Toolkit(
+        agent_skill_instruction="# Agent Behavioral Rules\nYou MUST follow these rules strictly:\n",
+        agent_skill_template="## {name}\n{description}",
+    )
+
+    # Try loading skills from SKILL.md file first (AgentScope native)
+    import os
+    # backend/config/skills/{agent_name}/SKILL.md
+    _backend_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    skill_dir = os.path.join(_backend_root, "config", "skills", agent_name)
+    if os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
+        try:
+            toolkit.register_agent_skill(skill_dir)
+            logger.info("Loaded SKILL.md for %s from %s", agent_name, skill_dir)
+        except Exception as exc:
+            logger.warning("Failed to load SKILL.md for %s: %s", agent_name, exc)
+
+    # Also inject DB skills as additional rules (if not already loaded from file)
+    if skills and not toolkit.skills:
+        for i, skill_text in enumerate(skills):
+            skill_name = f"{agent_name}-rule-{i + 1}"
+            toolkit.skills[skill_name] = AgentSkill(
+                name=skill_name,
+                description=skill_text,
+                dir="",
+            )
+
     tool_ids = AGENT_TOOL_MAP.get(agent_name, [])
     ohlc = ohlc or {}
     news = news or {}

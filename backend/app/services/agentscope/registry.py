@@ -540,6 +540,170 @@ class AgentScopeRegistry:
         except Exception as exc:
             logger.warning("Failed to record step for %s: %s", agent_name, exc)
 
+    @staticmethod
+    def _build_agentic_runtime(
+        pair: str,
+        timeframe: str,
+        elapsed: float,
+        snapshot: dict,
+        analysis_outputs: dict[str, dict],
+        debate_result: DebateResult,
+        llm_enabled: dict[str, bool],
+    ) -> dict:
+        """Build agentic_runtime structure consumed by the frontend panels."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # ── Agent phase/role mapping ──
+        phase_map: dict[str, tuple[str, str, int]] = {
+            # agent_name → (phase, role, depth)
+            "technical-analyst": ("analysis", "analyst", 0),
+            "news-analyst": ("analysis", "analyst", 0),
+            "market-context-analyst": ("analysis", "analyst", 0),
+            "bullish-researcher": ("debate", "researcher", 1),
+            "bearish-researcher": ("debate", "researcher", 1),
+            "trader-agent": ("decision", "decision-maker", 2),
+            "risk-manager": ("decision", "risk-manager", 2),
+            "execution-manager": ("decision", "execution-manager", 2),
+        }
+
+        # ── Sessions ──
+        sessions: dict[str, dict] = {}
+        for agent_name, output in analysis_outputs.items():
+            phase, role, depth = phase_map.get(agent_name, ("unknown", "agent", 0))
+            mode = "parallel" if phase == "analysis" else "sequential"
+            sessions[agent_name] = {
+                "session_key": agent_name,
+                "label": agent_name,
+                "depth": depth,
+                "role": role,
+                "mode": mode,
+                "current_phase": phase,
+                "turn": 1,
+                "status": "completed" if output.get("text") else "skipped",
+                "llm_enabled": llm_enabled.get(agent_name, False),
+            }
+
+        # ── Events ──
+        events: list[dict] = []
+        event_id = 0
+
+        def _add_event(name: str, stream: str, phase: str,
+                       session_key: str | None = None, **extra: Any) -> None:
+            nonlocal event_id
+            event_id += 1
+            ev: dict[str, Any] = {
+                "id": event_id,
+                "name": name,
+                "type": stream,
+                "stream": stream,
+                "turn": 1,
+                "payload": {"phase": phase, **extra},
+                "created_at": now_iso,
+            }
+            if session_key:
+                ev["sessionKey"] = session_key
+            events.append(ev)
+
+        _add_event("pipeline_start", "lifecycle", "init",
+                    pair=pair, timeframe=timeframe)
+        _add_event("market_data_resolved", "data", "init",
+                    source=snapshot.get("market_data_source", "unknown"),
+                    degraded=snapshot.get("degraded", False))
+
+        # Phase 1 analyst events
+        analyst_names = ["technical-analyst", "news-analyst", "market-context-analyst"]
+        _add_event("phase1_start", "lifecycle", "analysis")
+        for name in analyst_names:
+            if name in analysis_outputs:
+                _add_event("agent_complete", "agent", "analysis",
+                           session_key=name,
+                           llm_enabled=llm_enabled.get(name, False))
+        _add_event("phase1_complete", "lifecycle", "analysis")
+
+        # Phase 2+3 debate events
+        _add_event("debate_start", "lifecycle", "debate")
+        for name in ("bullish-researcher", "bearish-researcher"):
+            if name in analysis_outputs:
+                _add_event("agent_complete", "agent", "debate",
+                           session_key=name,
+                           llm_enabled=llm_enabled.get(name, False))
+        _add_event("debate_complete", "lifecycle", "debate",
+                    winner=debate_result.winning_side,
+                    confidence=debate_result.confidence,
+                    finished=debate_result.finished)
+
+        # Phase 4 decision events
+        _add_event("phase4_start", "lifecycle", "decision")
+        for name in ("trader-agent", "risk-manager", "execution-manager"):
+            if name in analysis_outputs:
+                _add_event("agent_complete", "agent", "decision",
+                           session_key=name,
+                           llm_enabled=llm_enabled.get(name, False))
+        _add_event("phase4_complete", "lifecycle", "decision")
+
+        _add_event("pipeline_complete", "lifecycle", "done",
+                    elapsed_seconds=round(elapsed, 1))
+
+        # ── Session history (agent messages) ──
+        session_history: dict[str, list[dict]] = {}
+        msg_id = 0
+        for agent_name, output in analysis_outputs.items():
+            messages: list[dict] = []
+            msg_id += 1
+            messages.append({
+                "id": msg_id,
+                "session_key": agent_name,
+                "role": "system",
+                "content": f"[{agent_name}] input context for {pair}/{timeframe}",
+                "created_at": now_iso,
+            })
+            text = output.get("text", "")
+            if text:
+                msg_id += 1
+                messages.append({
+                    "id": msg_id,
+                    "session_key": agent_name,
+                    "role": "assistant",
+                    "content": text[:2000],
+                    "created_at": now_iso,
+                })
+            session_history[agent_name] = messages
+
+        return {
+            "sessions": sessions,
+            "events": events,
+            "session_history": session_history,
+            "last_event_id": event_id,
+        }
+
+    @staticmethod
+    def _build_instrument_context(pair: str, snapshot: dict) -> dict:
+        """Build instrument descriptor for the INSTRUMENT_RESOLUTION panel."""
+        try:
+            from app.services.market.instrument import normalize_instrument
+            inst = normalize_instrument(pair)
+            result: dict[str, Any] = {
+                "canonical_symbol": inst.canonical_symbol,
+                "display_symbol": inst.display_symbol,
+                "asset_class": inst.asset_class.value if inst.asset_class else None,
+                "instrument_type": inst.instrument_type.value if inst.instrument_type else None,
+                "market": inst.market,
+                "provider": inst.provider or snapshot.get("market_data_source"),
+                "provider_symbol": inst.provider_symbol,
+                "base_asset": inst.base_asset,
+                "quote_asset": inst.quote_asset,
+                "reference_asset": inst.reference_asset,
+                "venue": inst.venue,
+                "is_cfd": inst.is_cfd,
+                "classification_trace": inst.classification_trace,
+            }
+            if inst.provider_symbols:
+                result["provider_symbols"] = inst.provider_symbols
+            return result
+        except Exception as exc:
+            logger.warning("Failed to build instrument context for %s: %s", pair, exc)
+            return {"canonical_symbol": pair.upper(), "display_symbol": pair}
+
     def _write_debug_trace(
         self, run, pair: str, timeframe: str, risk_percent: float,
         market_data: dict, analysis_outputs: dict, elapsed: float,
@@ -878,10 +1042,14 @@ class AgentScopeRegistry:
                 if not enabled:
                     logger.info("LLM disabled for agent %s — will run deterministic", name)
 
-            # Build toolkits with OHLC preset
+            # Build toolkits with OHLC preset + DB skills
             toolkits = {}
             for name in ALL_AGENT_FACTORIES:
-                toolkits[name] = await build_toolkit(name, ohlc=ohlc, news=market_data.get("news", {}))
+                agent_skills = model_selector.resolve_skills(db, name)
+                toolkits[name] = await build_toolkit(
+                    name, ohlc=ohlc, news=market_data.get("news", {}),
+                    skills=agent_skills,
+                )
 
             # Build prompt variables for context injection
             base_vars = self._build_prompt_variables(pair, timeframe, snapshot, market_data.get("news", {}))
@@ -985,6 +1153,7 @@ class AgentScopeRegistry:
                 toolkits[rname] = await build_toolkit(
                     rname, ohlc=ohlc, news=market_data.get("news", {}),
                     analysis_outputs=analysis_outputs,
+                    skills=model_selector.resolve_skills(db, rname),
                 )
                 if rname in agents:
                     agents[rname] = ALL_AGENT_FACTORIES[rname](
@@ -1199,6 +1368,17 @@ class AgentScopeRegistry:
                     k: {"text": v.get("text", "")[:300]} for k, v in analysis_outputs.items()
                 },
             }
+
+            # ── Build agentic_runtime for frontend panels ──
+            run.trace["agentic_runtime"] = self._build_agentic_runtime(
+                pair, timeframe, elapsed, snapshot, analysis_outputs,
+                debate_result, llm_enabled,
+            )
+
+            # ── Instrument context for INSTRUMENT_RESOLUTION panel ──
+            run.trace["instrument_context"] = self._build_instrument_context(
+                pair, snapshot,
+            )
 
             # ── Debug trace JSON file ──
             self._write_debug_trace(run, pair, timeframe, risk_percent,
