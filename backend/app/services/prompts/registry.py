@@ -256,7 +256,12 @@ class PromptTemplateService:
         return f'{user_template}\n\n{cls.TECHNICAL_RUNTIME_SCORE_BLOCK_TEMPLATE}'
 
     def seed_defaults(self, db: Session) -> None:
-        for agent_name, templates in DEFAULT_PROMPTS.items():
+        from app.services.agentscope.prompts import AGENT_PROMPTS
+
+        # Merge: AGENT_PROMPTS (7 agents) + DEFAULT_PROMPTS (technical-analyst override)
+        all_prompts = {**AGENT_PROMPTS, **DEFAULT_PROMPTS}
+
+        for agent_name, templates in all_prompts.items():
             exists = db.query(PromptTemplate).filter(PromptTemplate.agent_name == agent_name).first()
             if exists:
                 continue
@@ -265,8 +270,8 @@ class PromptTemplateService:
                     agent_name=agent_name,
                     version=1,
                     is_active=True,
-                    system_prompt=templates['system'],
-                    user_prompt_template=templates['user'],
+                    system_prompt=templates.get('system', ''),
+                    user_prompt_template=templates.get('user', ''),
                     notes='seed default',
                 )
             )
