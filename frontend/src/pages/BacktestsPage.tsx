@@ -9,7 +9,6 @@ import { ExpansionPanel } from '../components/ExpansionPanel';
 import type { BacktestRun } from '../types';
 
 const STRATEGIES = [
-  { value: 'multi_agent', label: 'Multi-Agent Pipeline (8 agents)' },
   { value: 'ema_rsi', label: 'Trend Following (EMA + RSI)' },
 ];
 
@@ -131,12 +130,20 @@ export function BacktestsPage() {
   const { instruments } = useMarketSymbols(token);
   const [pair, setPair] = useState(DEFAULT_PAIR);
   const [timeframe, setTimeframe] = useState('H1');
-  const [strategy, setStrategy] = useState('multi_agent');
+  const [strategy, setStrategy] = useState('ema_rsi');
   const [rangeDays, setRangeDays] = useState(90);
-  const [llmEnabled, setLlmEnabled] = useState(false);
+  const [useAgentPipeline, setUseAgentPipeline] = useState(false);
   const [agentConfig, setAgentConfig] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(AGENTS.map(a => [a.key, true]))
   );
+
+  // When agent pipeline is toggled OFF, disable all agents visually
+  const effectiveAgentConfig = useAgentPipeline
+    ? agentConfig
+    : Object.fromEntries(AGENTS.map(a => [a.key, false]));
+
+  // Effective strategy: multi_agent when pipeline is on, otherwise selected strategy
+  const effectiveStrategy = useAgentPipeline ? 'multi_agent' : strategy;
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -175,11 +182,11 @@ export function BacktestsPage() {
       const result = (await api.createBacktest(token, {
         pair,
         timeframe,
-        strategy,
+        strategy: effectiveStrategy,
         start_date: daysAgo(rangeDays),
         end_date: todayStr(),
-        llm_enabled: llmEnabled,
-        agent_config: agentConfig,
+        llm_enabled: useAgentPipeline,
+        agent_config: effectiveAgentConfig,
       })) as BacktestRun;
 
       setProgress(100);
@@ -259,53 +266,55 @@ export function BacktestsPage() {
               </select>
             </div>
             <div>
-              <label className="micro-label block mb-1.5">LLM Calls</label>
+              <label className="micro-label block mb-1.5">Agent Pipeline</label>
               <button
                 type="button"
-                onClick={() => setLlmEnabled(!llmEnabled)}
+                onClick={() => setUseAgentPipeline(!useAgentPipeline)}
                 className={`flex items-center h-[38px] px-3 gap-2 rounded-lg border transition-all w-full ${
-                  llmEnabled ? 'border-green-500/50 bg-green-500/10' : 'border-border bg-surface-alt'
+                  useAgentPipeline ? 'border-green-500/50 bg-green-500/10' : 'border-border bg-surface-alt'
                 }`}
               >
-                <div className={`w-8 h-4 rounded-full relative transition-all ${llmEnabled ? 'bg-green-500' : 'bg-border'}`}>
-                  <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${llmEnabled ? 'left-4.5' : 'left-0.5'}`}
-                       style={{ left: llmEnabled ? '17px' : '2px' }} />
+                <div className={`w-8 h-4 rounded-full relative transition-all ${useAgentPipeline ? 'bg-green-500' : 'bg-border'}`}>
+                  <div className="w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all"
+                       style={{ left: useAgentPipeline ? '17px' : '2px' }} />
                 </div>
-                <span className={`text-[10px] font-mono ${llmEnabled ? 'text-green-400' : 'text-text-dim'}`}>
-                  {llmEnabled ? 'ON' : 'OFF'}
+                <span className={`text-[10px] font-mono ${useAgentPipeline ? 'text-green-400' : 'text-text-dim'}`}>
+                  {useAgentPipeline ? 'ON' : 'OFF'}
                 </span>
               </button>
             </div>
           </div>
 
-          {/* Agent toggles — only show for multi_agent strategy */}
-          {strategy === 'multi_agent' && (
-            <div className="flex flex-col gap-2">
-              <span className="micro-label">Agent Pipeline</span>
-              <div className="flex flex-wrap gap-2">
-                {AGENTS.map((agent) => (
+          {/* Agent toggles — always visible, grayed out when pipeline is OFF */}
+          <div className="flex flex-col gap-2">
+            <span className="micro-label">Agents {!useAgentPipeline && <span className="text-text-dim">(pipeline OFF)</span>}</span>
+            <div className="flex flex-wrap gap-2">
+              {AGENTS.map((agent) => {
+                const isActive = effectiveAgentConfig[agent.key];
+                return (
                   <button
                     key={agent.key}
                     type="button"
+                    disabled={!useAgentPipeline}
                     onClick={() => setAgentConfig(prev => ({ ...prev, [agent.key]: !prev[agent.key] }))}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[10px] font-mono transition-all ${
-                      agentConfig[agent.key]
+                      isActive
                         ? 'border-accent/40 bg-accent/10 text-accent'
-                        : 'border-border bg-surface-alt text-text-dim line-through'
-                    }`}
+                        : 'border-border bg-surface-alt text-text-dim line-through opacity-40'
+                    } ${!useAgentPipeline ? 'cursor-not-allowed' : ''}`}
                   >
-                    <div className={`w-2 h-2 rounded-full ${agentConfig[agent.key] ? 'bg-green-400' : 'bg-border'}`} />
+                    <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-400' : 'bg-border'}`} />
                     {agent.label}
                   </button>
-                ))}
-              </div>
-              {llmEnabled && (
-                <p className="text-[9px] text-text-dim">
-                  LLM enabled — agents with LLM will call the model. Backtest will be slower (~90s per sample point).
-                </p>
-              )}
+                );
+              })}
             </div>
-          )}
+            {useAgentPipeline && (
+              <p className="text-[9px] text-text-dim">
+                Agent pipeline active — each bar scored using the same MCP tools as live analysis.
+              </p>
+            )}
+          </div>
 
           {/* Range presets */}
           <div className="flex items-center gap-3">
