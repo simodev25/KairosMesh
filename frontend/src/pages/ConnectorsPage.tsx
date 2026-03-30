@@ -11,6 +11,7 @@ import type {
   MetaApiAccount,
   PromptTemplate,
 } from '../types';
+import { ExpansionPanel, ExpansionPanelAlt } from '../components/ExpansionPanel';
 
 const ORCHESTRATION_AGENTS = [
   'technical-analyst',
@@ -379,7 +380,6 @@ export function ConnectorsPage() {
   const [promptSystem, setPromptSystem] = useState(AGENT_PROMPT_FALLBACKS['news-analyst'].system);
   const [promptUser, setPromptUser] = useState(AGENT_PROMPT_FALLBACKS['news-analyst'].user);
   const [promptSaving, setPromptSaving] = useState(false);
-  const [skillsSaving, setSkillsSaving] = useState(false);
 
   const [marketSymbols, setMarketSymbols] = useState<MarketSymbolsConfig>({
     forex_pairs: FOREX_PAIRS,
@@ -825,57 +825,45 @@ export function ConnectorsPage() {
     await loadAll();
   };
 
-  const createPrompt = async (e: FormEvent) => {
+  const createPromptAndSkills = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
     try {
       setPromptSaving(true);
+      setError(null);
+
+      // 1. Create + activate new prompt version
       const created = (await api.createPrompt(token, {
         agent_name: promptAgent,
         system_prompt: promptSystem,
         user_prompt_template: promptUser,
       })) as PromptTemplate;
       await api.activatePrompt(token, created.id);
+
+      // 2. Save skills to connector settings (same atomic action)
+      const ollama = connectors.find((item) => item.connector_name === 'ollama');
+      if (ollama) {
+        const cleanedSkills = Object.fromEntries(
+          Object.entries(agentSkills)
+            .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
+            .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
+            .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
+        );
+        const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
+        await api.updateConnector(token, 'ollama', {
+          enabled: ollama.enabled,
+          settings: {
+            ...existingSettings,
+            agent_skills: cleanedSkills,
+          },
+        });
+      }
+
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Cannot create prompt');
+      setError(err instanceof Error ? err.message : 'Cannot create prompt & skills');
     } finally {
       setPromptSaving(false);
-    }
-  };
-
-  const savePromptAgentSkills = async () => {
-    if (!token) return;
-
-    const ollama = connectors.find((item) => item.connector_name === 'ollama');
-    if (!ollama) {
-      setError('Connecteur ollama introuvable');
-      return;
-    }
-
-    const cleanedSkills = Object.fromEntries(
-      Object.entries(agentSkills)
-        .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
-        .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
-        .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
-    );
-    const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
-
-    setSkillsSaving(true);
-    setError(null);
-    try {
-      await api.updateConnector(token, 'ollama', {
-        enabled: ollama.enabled,
-        settings: {
-          ...existingSettings,
-          agent_skills: cleanedSkills,
-        },
-      });
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Cannot save agent skills');
-    } finally {
-      setSkillsSaving(false);
     }
   };
 
@@ -1076,38 +1064,33 @@ export function ConnectorsPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <section className="hw-surface p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="section-title">SYSTEM_CONFIG</span>
-            <p className="text-xs text-text-muted mt-1">Manage connectors, AI models and trading parameters.</p>
+      <ExpansionPanel title="SYSTEM_CONFIG">
+        <p className="text-xs text-text-muted mb-3">Manage connectors, AI models and trading parameters.</p>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <div className={`led ${ollamaConnector?.enabled ? 'led-green' : 'led-red'}`} />
+            <span className="micro-label">LLM</span>
           </div>
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <div className={`led ${ollamaConnector?.enabled ? 'led-green' : 'led-red'}`} />
-              <span className="micro-label">LLM</span>
+          <div className="grid grid-cols-4 gap-4">
+            <div className="text-center">
+              <span className="micro-label block">Status</span>
+              <strong className={`text-xs font-mono ${ollamaConnector?.enabled ? 'text-success' : 'text-danger'}`}>{ollamaConnector?.enabled ? 'Online' : 'Offline'}</strong>
             </div>
-            <div className="grid grid-cols-4 gap-4">
-              <div className="text-center">
-                <span className="micro-label block">Status</span>
-                <strong className={`text-xs font-mono ${ollamaConnector?.enabled ? 'text-success' : 'text-danger'}`}>{ollamaConnector?.enabled ? 'Online' : 'Offline'}</strong>
-              </div>
-              <div className="text-center">
-                <span className="micro-label block">Provider</span>
-                <strong className="text-xs font-mono text-text">{llmProvider}</strong>
-              </div>
-              <div className="text-center">
-                <span className="micro-label block">Avg Cost</span>
-                <strong className="text-xs font-mono text-text">${averageCostPerRun.toFixed(3)} / run</strong>
-              </div>
-              <div className="text-center">
-                <span className="micro-label block">Latence</span>
-                <strong className="text-xs font-mono text-text">{averageLatencySeconds > 0 ? `${averageLatencySeconds.toFixed(1)} s` : '-'}</strong>
-              </div>
+            <div className="text-center">
+              <span className="micro-label block">Provider</span>
+              <strong className="text-xs font-mono text-text">{llmProvider}</strong>
+            </div>
+            <div className="text-center">
+              <span className="micro-label block">Avg Cost</span>
+              <strong className="text-xs font-mono text-text">${averageCostPerRun.toFixed(3)} / run</strong>
+            </div>
+            <div className="text-center">
+              <span className="micro-label block">Latence</span>
+              <strong className="text-xs font-mono text-text">{averageLatencySeconds > 0 ? `${averageLatencySeconds.toFixed(1)} s` : '-'}</strong>
             </div>
           </div>
         </div>
-      </section>
+      </ExpansionPanel>
 
       <section className="hw-surface p-5">
         <div className="flex gap-1 mb-4 border-b border-border pb-3" role="tablist" aria-label="Configuration tabs">
@@ -1128,8 +1111,7 @@ export function ConnectorsPage() {
 
         {activeConfigTab === 'connectors' && (
           <div className="flex flex-col gap-4">
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">CONNECTORS</span></div>
+            <ExpansionPanelAlt title="CONNECTORS">
               <table>
                 <thead>
                   <tr>
@@ -1146,9 +1128,6 @@ export function ConnectorsPage() {
                         <span className={`badge ${connector.enabled ? 'ok' : 'blocked'}`}>{connector.enabled ? 'enabled' : 'disabled'}</span>
                       </td>
                       <td>
-                        <button className="btn-ghost btn-small" type="button" onClick={() => void toggleConnector(connector)}>
-                          {connector.enabled ? 'Disable' : 'Enable'}
-                        </button>
                         <button className="btn-primary btn-small" type="button" onClick={() => void testConnector(connector.connector_name)}>
                           Test
                         </button>
@@ -1157,15 +1136,13 @@ export function ConnectorsPage() {
                   ))}
                 </tbody>
               </table>
-            </section>
+            </ExpansionPanelAlt>
 
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">TEST_RESULT</span></div>
+            <ExpansionPanelAlt title="TEST_RESULT" defaultOpen={false}>
               <pre>{JSON.stringify(testResult, null, 2)}</pre>
-            </section>
+            </ExpansionPanelAlt>
 
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">NEWS_PROVIDERS</span></div>
+            <ExpansionPanelAlt title="NEWS_PROVIDERS">
               <p className="model-source">
                 Enable or disable each news provider from the Connectors tab.
               </p>
@@ -1202,14 +1179,13 @@ export function ConnectorsPage() {
                   {savingNewsProviders ? 'Saving...' : 'Save providers'}
                 </button>
               </form>
-            </section>
+            </ExpansionPanelAlt>
           </div>
         )}
 
         {activeConfigTab === 'models' && (
           <div className="flex flex-col gap-4">
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">LLM_TELEMETRY</span></div>
+            <ExpansionPanelAlt title="LLM_TELEMETRY">
               <div className="grid grid-cols-4 gap-4">
                 <div>
                   <span>Calls</span>
@@ -1228,10 +1204,9 @@ export function ConnectorsPage() {
                   <strong>{summary?.total_cost_usd ?? 0}</strong>
                 </div>
               </div>
-            </section>
+            </ExpansionPanelAlt>
 
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">LLM_MODELS_PER_AGENT</span></div>
+            <ExpansionPanelAlt title="LLM_MODELS_PER_AGENT">
               <form className="flex flex-col gap-3" onSubmit={saveAgentModels}>
                 <label>
                   Provider LLM
@@ -1405,11 +1380,10 @@ export function ConnectorsPage() {
 
                 <button className="btn-primary" disabled={savingModels}>{savingModels ? 'Saving...' : 'Save models'}</button>
               </form>
-            </section>
+            </ExpansionPanelAlt>
 
-            <section className="hw-surface-alt p-4" id="agent-prompts-editor">
-              <div className="section-header"><span className="section-title">PROMPT_SKILLS_EDITOR</span></div>
-              <form className="flex flex-col gap-3" onSubmit={createPrompt}>
+            <ExpansionPanelAlt title="PROMPT_SKILLS_EDITOR" id="agent-prompts-editor">
+              <form className="flex flex-col gap-3" onSubmit={createPromptAndSkills}>
                 <label>
                   Agent
                   <select value={promptAgent} onChange={(e) => setPromptAgent(e.target.value)}>
@@ -1440,17 +1414,7 @@ export function ConnectorsPage() {
                     placeholder={'e.g.:\nPrioritize high-impact events for the analyzed instrument\nExplicitly flag uncertainties'}
                   />
                 </label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
-                  <button className="btn-primary" disabled={promptSaving}>{promptSaving ? 'Saving...' : 'Create + activate prompt version'}</button>
-                  <button
-                    className="btn-ghost"
-                    type="button"
-                    onClick={() => void savePromptAgentSkills()}
-                    disabled={skillsSaving}
-                  >
-                    {skillsSaving ? 'Saving...' : 'Save agent skills'}
-                  </button>
-                </div>
+                <button className="btn-primary" disabled={promptSaving}>{promptSaving ? 'Saving...' : 'Create + activate prompt and skills version'}</button>
               </form>
               <p className="model-source">
                 Selected agent: <code>{promptAgent}</code> | active version: <code>v{activePromptByAgent.get(promptAgent)?.version ?? 0}</code>
@@ -1481,14 +1445,13 @@ export function ConnectorsPage() {
                   ))}
                 </tbody>
               </table>
-            </section>
+            </ExpansionPanelAlt>
           </div>
         )}
 
         {activeConfigTab === 'trading' && (
           <div className="flex flex-col gap-4">
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">DECISION_MODE</span></div>
+            <ExpansionPanelAlt title="DECISION_MODE">
               <form className="flex flex-col gap-3" onSubmit={saveDecisionMode}>
                 <label>
                   Decision Mode
@@ -1511,10 +1474,9 @@ export function ConnectorsPage() {
                   {decisionModeSaving ? 'Saving...' : 'Save decision mode'}
                 </button>
               </form>
-            </section>
+            </ExpansionPanelAlt>
 
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">METAAPI_ACCOUNTS</span></div>
+            <ExpansionPanelAlt title="METAAPI_ACCOUNTS">
               <form className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end" onSubmit={createAccount}>
                 <label>
                   Label
@@ -1560,10 +1522,9 @@ export function ConnectorsPage() {
                   ))}
                 </tbody>
               </table>
-            </section>
+            </ExpansionPanelAlt>
 
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">CACHE_REDIS_METAAPI</span></div>
+            <ExpansionPanelAlt title="CACHE_REDIS_METAAPI">
               <p className="model-source">
                 Redis cache to reduce MetaAPI calls. TTL in seconds (0 = disabled for the resource).
               </p>
@@ -1603,10 +1564,9 @@ export function ConnectorsPage() {
                   {savingCache ? 'Saving...' : 'Save cache'}
                 </button>
               </form>
-            </section>
+            </ExpansionPanelAlt>
 
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">MARKET_SYMBOLS</span></div>
+            <ExpansionPanelAlt title="MARKET_SYMBOLS">
               <p className="model-source">
                 Source active: <code>{marketSymbols.source}</code>
               </p>
@@ -1642,14 +1602,13 @@ export function ConnectorsPage() {
                 </div>
                 <button className="btn-primary" disabled={symbolsSaving}>{symbolsSaving ? 'Saving...' : 'Save symbols'}</button>
               </form>
-            </section>
+            </ExpansionPanelAlt>
           </div>
         )}
 
         {activeConfigTab === 'security' && (
           <div className="flex flex-col gap-4">
-            <section className="hw-surface-alt p-4">
-              <div className="section-header"><span className="section-title">API_RUNTIME_KEYS</span></div>
+            <ExpansionPanelAlt title="API_RUNTIME_KEYS">
               <p className="model-source">
                 These values are stored in connector settings and used at runtime (LLM, news providers, MetaApi).
               </p>
@@ -1751,7 +1710,7 @@ export function ConnectorsPage() {
                   {savingSecrets ? 'Saving...' : 'Save API keys'}
                 </button>
               </form>
-            </section>
+            </ExpansionPanelAlt>
 
           </div>
         )}

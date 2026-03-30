@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
-  LayoutDashboard,
   Receipt,
   FlaskConical,
   Settings,
@@ -14,7 +13,7 @@ import {
 } from 'lucide-react';
 
 const navItems = [
-  { to: '/', label: 'DASHBOARD', icon: LayoutDashboard, node: '01' },
+  { to: '/', label: 'TERMINAL', icon: Terminal, node: '01' },
   { to: '/orders', label: 'ORDRES', icon: Receipt, node: '02' },
   { to: '/backtests', label: 'BACKTESTS', icon: FlaskConical, node: '03' },
   { to: '/connectors', label: 'CONFIG', icon: Settings, node: '04' },

@@ -370,15 +370,13 @@ class AgentScopeRegistry:
         return {"snapshot": snapshot, "news": news, "ohlc": ohlc}
 
     def _render_prompt(self, db, agent_name: str, variables: dict | None = None) -> dict[str, Any]:
-        """Render prompt via PromptTemplateService (DB first, then fallback).
+        """Render prompt via PromptTemplateService (DB first, then DEFAULT_PROMPTS fallback).
 
-        Priority: DB prompt > DEFAULT_PROMPTS (technical-analyst) > AGENT_PROMPTS (all others).
+        All 8 agents are in DEFAULT_PROMPTS — same pipeline for all.
         """
         from app.services.prompts.registry import DEFAULT_PROMPTS
-        from app.services.agentscope.prompts import AGENT_PROMPTS
 
-        # Fallback chain: DEFAULT_PROMPTS (legacy) > AGENT_PROMPTS (new) > generic
-        fallback = DEFAULT_PROMPTS.get(agent_name) or AGENT_PROMPTS.get(agent_name, {})
+        fallback = DEFAULT_PROMPTS.get(agent_name, {})
         fallback_system = fallback.get("system", f"You are the {agent_name} agent in a multi-agent trading system.")
         fallback_user = fallback.get("user", "")
 

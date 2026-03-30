@@ -100,6 +100,15 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     },
 }
 
+# Merge all agent prompts into DEFAULT_PROMPTS so they all go through the same pipeline
+# (skills injection, language enforcement, variable substitution)
+from app.services.agentscope.prompts import AGENT_PROMPTS as _AGENT_PROMPTS
+for _agent_name, _templates in _AGENT_PROMPTS.items():
+    if _agent_name not in DEFAULT_PROMPTS:
+        DEFAULT_PROMPTS[_agent_name] = _templates
+del _agent_name, _templates, _AGENT_PROMPTS
+
+
 class SafeDict(dict):
     def __missing__(self, key: str) -> str:
         return f'<MISSING:{key}>'
@@ -265,8 +274,8 @@ class PromptTemplateService:
                     agent_name=agent_name,
                     version=1,
                     is_active=True,
-                    system_prompt=templates['system'],
-                    user_prompt_template=templates['user'],
+                    system_prompt=templates.get('system', ''),
+                    user_prompt_template=templates.get('user', ''),
                     notes='seed default',
                 )
             )
