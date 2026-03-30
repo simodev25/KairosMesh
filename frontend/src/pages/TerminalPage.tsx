@@ -81,7 +81,7 @@ function formatRunDecisionSummary(run: Run): string {
   return `${traderDecision} / ${executionStatus}`;
 }
 
-export function DashboardPage() {
+export function TerminalPage() {
   const { token } = useAuth();
   const { instruments } = useMarketSymbols(token);
   const [runs, setRuns] = useState<Run[]>([]);
