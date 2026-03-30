@@ -344,8 +344,7 @@ export function DashboardPage() {
             </div>
           </div>
         )}
-        </div>)}
-      </section>
+      </ExpansionPanel>
     </div>
   );
 }

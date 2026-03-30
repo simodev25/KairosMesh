@@ -380,7 +380,6 @@ export function ConnectorsPage() {
   const [promptSystem, setPromptSystem] = useState(AGENT_PROMPT_FALLBACKS['news-analyst'].system);
   const [promptUser, setPromptUser] = useState(AGENT_PROMPT_FALLBACKS['news-analyst'].user);
   const [promptSaving, setPromptSaving] = useState(false);
-  const [skillsSaving, setSkillsSaving] = useState(false);
 
   const [marketSymbols, setMarketSymbols] = useState<MarketSymbolsConfig>({
     forex_pairs: FOREX_PAIRS,
@@ -826,57 +825,45 @@ export function ConnectorsPage() {
     await loadAll();
   };
 
-  const createPrompt = async (e: FormEvent) => {
+  const createPromptAndSkills = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
     try {
       setPromptSaving(true);
+      setError(null);
+
+      // 1. Create + activate new prompt version
       const created = (await api.createPrompt(token, {
         agent_name: promptAgent,
         system_prompt: promptSystem,
         user_prompt_template: promptUser,
       })) as PromptTemplate;
       await api.activatePrompt(token, created.id);
+
+      // 2. Save skills to connector settings (same atomic action)
+      const ollama = connectors.find((item) => item.connector_name === 'ollama');
+      if (ollama) {
+        const cleanedSkills = Object.fromEntries(
+          Object.entries(agentSkills)
+            .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
+            .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
+            .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
+        );
+        const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
+        await api.updateConnector(token, 'ollama', {
+          enabled: ollama.enabled,
+          settings: {
+            ...existingSettings,
+            agent_skills: cleanedSkills,
+          },
+        });
+      }
+
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Cannot create prompt');
+      setError(err instanceof Error ? err.message : 'Cannot create prompt & skills');
     } finally {
       setPromptSaving(false);
-    }
-  };
-
-  const savePromptAgentSkills = async () => {
-    if (!token) return;
-
-    const ollama = connectors.find((item) => item.connector_name === 'ollama');
-    if (!ollama) {
-      setError('Connecteur ollama introuvable');
-      return;
-    }
-
-    const cleanedSkills = Object.fromEntries(
-      Object.entries(agentSkills)
-        .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
-        .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
-        .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
-    );
-    const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
-
-    setSkillsSaving(true);
-    setError(null);
-    try {
-      await api.updateConnector(token, 'ollama', {
-        enabled: ollama.enabled,
-        settings: {
-          ...existingSettings,
-          agent_skills: cleanedSkills,
-        },
-      });
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Cannot save agent skills');
-    } finally {
-      setSkillsSaving(false);
     }
   };
 
@@ -1180,6 +1167,12 @@ export function ConnectorsPage() {
                       />
                     </label>
                     <button
+                      className="btn-ghost btn-small"
+                      type="button"
+                      onClick={() => void testNewsProvider(providerName)}
+                    >
+                      Test
+                    </button>
                   </div>
                 ))}
                 <button className="btn-primary" disabled={savingNewsProviders}>
@@ -1379,7 +1372,7 @@ export function ConnectorsPage() {
             </ExpansionPanelAlt>
 
             <ExpansionPanelAlt title="PROMPT_SKILLS_EDITOR" id="agent-prompts-editor">
-              <form className="flex flex-col gap-3" onSubmit={createPrompt}>
+              <form className="flex flex-col gap-3" onSubmit={createPromptAndSkills}>
                 <label>
                   Agent
                   <select value={promptAgent} onChange={(e) => setPromptAgent(e.target.value)}>
@@ -1411,7 +1404,7 @@ export function ConnectorsPage() {
                   />
                 </label>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
-                  <button className="btn-primary" disabled={promptSaving}>{promptSaving ? 'Saving...' : 'Create + activate prompt version'}</button>
+                  <button className="btn-primary" disabled={promptSaving}>{promptSaving ? 'Saving...' : 'Create + activate prompt and skills version'}</button>
                   <button
                 </div>
               </form>
