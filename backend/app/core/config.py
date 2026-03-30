@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         alias='CORS_ORIGINS',
     )
 
-    database_url: str = Field(default='sqlite:///./forex.db', alias='DATABASE_URL')
+    database_url: str = Field(default='sqlite:///./trading.db', alias='DATABASE_URL')
     db_pool_size: int = Field(default=12, alias='DB_POOL_SIZE')
     db_max_overflow: int = Field(default=24, alias='DB_MAX_OVERFLOW')
     db_pool_timeout_seconds: int = Field(default=30, alias='DB_POOL_TIMEOUT_SECONDS')

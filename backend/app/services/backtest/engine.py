@@ -247,10 +247,12 @@ class BacktestEngine:
         if not entries:
             return raw_signals, []
 
-        # Limit number of entries to validate
+        # Limit number of entries to validate — entries beyond max are rejected (set to 0)
         max_entries = int((agent_config or {}).get('max_entries', 0) or len(entries))
+        skipped_entries: list[tuple[int, int]] = []
         if max_entries < len(entries):
-            logger.info('agent_validate_signals: limiting entries from %d to %d', len(entries), max_entries)
+            logger.info('agent_validate_signals: limiting entries from %d to %d, rejecting rest', len(entries), max_entries)
+            skipped_entries = entries[max_entries:]
             entries = entries[:max_entries]
 
         logger.info('agent_validate_signals: %d entries to validate via agent pipeline', len(entries))
@@ -302,6 +304,15 @@ class BacktestEngine:
 
         validation_results = asyncio.run(_validate_all())
 
+        # Helper: zero out an entire signal block (entry bar + all continuation bars)
+        def _zero_signal_block(series: pd.Series, start_idx: int, direction: int) -> None:
+            """Set to 0 from start_idx while signal matches direction."""
+            for j in range(start_idx, len(series)):
+                if int(series.iloc[j]) == direction:
+                    series.iloc[j] = 0
+                else:
+                    break
+
         # Apply results and collect details
         validated = raw_signals.copy()
         entries_rejected = 0
@@ -318,11 +329,11 @@ class BacktestEngine:
             if agent_decision == 'KEEP':
                 status = 'error_fallback'
             elif agent_decision == 'HOLD':
-                validated.iloc[bar_idx] = 0
+                _zero_signal_block(validated, bar_idx, signal)
                 entries_rejected += 1
                 status = 'rejected'
             elif (signal == 1 and agent_decision == 'SELL') or (signal == -1 and agent_decision == 'BUY'):
-                validated.iloc[bar_idx] = 0
+                _zero_signal_block(validated, bar_idx, signal)
                 entries_rejected += 1
                 status = 'rejected'
 
@@ -340,7 +351,13 @@ class BacktestEngine:
 
             logger.info('agent_%s entry=%s bar=%d decision=%s conf=%.2f', status, side, bar_idx, agent_decision, result.get('confidence', 0))
 
-        logger.info('agent_validation_summary entries=%d rejected=%d kept=%d', len(entries), entries_rejected, len(entries) - entries_rejected)
+        # Reject all entries beyond max_entries (not validated = not allowed)
+        for bar_idx, signal in skipped_entries:
+            _zero_signal_block(validated, bar_idx, signal)
+
+        logger.info('agent_validation_summary validated=%d rejected=%d kept=%d skipped=%d',
+                     len(entries), entries_rejected, len(entries) - entries_rejected,
+                     len(skipped_entries))
         return validated, agent_validations
 
     def _update_progress(self, db: Session | None, run_id: int | None, progress: int) -> None:
@@ -418,6 +435,29 @@ class BacktestEngine:
                 frame, signal_series, pair, timeframe, db=db, agent_config=agent_config,
                 run_id=run_id,
             )
+        else:
+            # Apply max_entries limit even without agents
+            max_entries = int((agent_config or {}).get('max_entries', 0))
+            if max_entries > 0:
+                entry_count = 0
+                prev = 0
+                zeroing = False
+                zero_direction = 0
+                for i in range(len(signal_series)):
+                    sig = int(signal_series.iloc[i])
+                    # If we're zeroing a block, continue until signal changes
+                    if zeroing and sig == zero_direction:
+                        signal_series.iloc[i] = 0
+                        continue
+                    zeroing = False
+                    if sig != 0 and sig != prev:
+                        entry_count += 1
+                        if entry_count > max_entries:
+                            signal_series.iloc[i] = 0
+                            zeroing = True
+                            zero_direction = sig
+                            sig = 0
+                    prev = sig
         self._update_progress(db, run_id, 90)
 
         # ── Phase 5: Metrics (90→100%)

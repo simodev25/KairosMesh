@@ -405,9 +405,9 @@ class AgentScopeRegistry:
         from app.services.market.instrument import normalize_instrument
         try:
             instr = normalize_instrument(pair)
-            asset_class = instr.asset_class.value if instr else "forex"
+            asset_class = instr.asset_class.value if instr else "unknown"
         except Exception:
-            asset_class = "forex"
+            asset_class = "unknown"
 
         # Snapshot block
         snapshot_lines = [f"- {k}: {v}" for k, v in snapshot.items()
@@ -982,7 +982,7 @@ class AgentScopeRegistry:
         if tool_id == "position_size_calculator":
             td = (trader_out or {}).get("metadata", {})
             return {
-                "asset_class": "forex",
+                "asset_class": "unknown",
                 "entry_price": td.get("entry", snapshot.get("last_price", 0)),
                 "stop_loss": td.get("stop_loss", 0),
                 "risk_percent": risk_percent,
@@ -994,14 +994,14 @@ class AgentScopeRegistry:
             }
         if tool_id == "news_search":
             news = news or {}
-            return {"items": news.get("news", []), "symbol": pair, "asset_class": "forex"}
+            return {"items": news.get("news", []), "symbol": pair, "asset_class": "unknown"}
         if tool_id == "macro_event_feed":
             news = news or {}
             return {"items": news.get("macro_events", []), "currency_filter": pair[:3] if pair else ""}
         if tool_id == "sentiment_parser":
             news = news or {}
             headlines = [n.get("title", "") for n in news.get("news", []) if n.get("title")]
-            return {"headlines": headlines, "asset_class": "forex"}
+            return {"headlines": headlines, "asset_class": "unknown"}
         if tool_id == "symbol_relevance_filter":
             news = news or {}
             return {"news_items": news.get("news", []), "macro_items": news.get("macro_events", []), "symbol": pair}

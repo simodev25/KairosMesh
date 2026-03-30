@@ -645,7 +645,7 @@ export function BacktestsPage() {
   const [strategy, setStrategy] = useState('ema_rsi');
   const [rangeDays, setRangeDays] = useState(90);
   const [useAgentPipeline, setUseAgentPipeline] = useState(false);
-  const [maxEntries, setMaxEntries] = useState(0); // 0 = ALL
+  const [maxEntries, setMaxEntries] = useState(51); // 51 = ALL
   const [agentConfig, setAgentConfig] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(AGENTS.map(a => [a.key, true]))
   );
@@ -705,7 +705,7 @@ export function BacktestsPage() {
         start_date: daysAgo(rangeDays),
         end_date: todayStr(),
         llm_enabled: useAgentPipeline,
-        agent_config: { ...effectiveAgentConfig, max_entries: maxEntries || undefined },
+        agent_config: { ...effectiveAgentConfig, max_entries: maxEntries >= 51 ? undefined : maxEntries },
       })) as BacktestRun;
 
       // Poll until completed or failed
@@ -845,9 +845,9 @@ export function BacktestsPage() {
                 </span>
                 <div className="flex items-center gap-3">
                   <span className="text-[10px] font-bold font-mono text-accent">
-                    {maxEntries === 0 ? 'ALL' : `${maxEntries} entries`}
+                    {maxEntries >= 51 ? 'ALL' : `${maxEntries} entries`}
                   </span>
-                  {maxEntries > 0 && (
+                  {maxEntries < 51 && (
                     <span className="text-[9px] font-mono text-text-dim">
                       ~{useAgentPipeline ? `${maxEntries}min` : `${Math.max(1, Math.ceil(maxEntries * 0.2))}s`}
                     </span>
@@ -856,8 +856,8 @@ export function BacktestsPage() {
               </div>
               <input
                 type="range"
-                min={0}
-                max={50}
+                min={1}
+                max={51}
                 value={maxEntries}
                 onChange={(e) => setMaxEntries(Number(e.target.value))}
                 className="w-full h-1.5 bg-border rounded-full appearance-none cursor-pointer accent-accent"
@@ -1034,10 +1034,11 @@ export function BacktestsPage() {
                       </td>
                       <td className="px-3 py-2 text-[10px] font-mono text-text-dim">
                         {(() => {
-                          const s = bt.started_at ? new Date(bt.started_at).getTime() : 0;
+                          const toUtc = (v: string) => v.endsWith('Z') || v.includes('+') ? v : v + 'Z';
+                          const s = bt.started_at ? new Date(toUtc(bt.started_at)).getTime() : 0;
                           if (!s) return '-';
                           const e = bt.status === 'completed' || bt.status === 'failed'
-                            ? (bt.updated_at ? new Date(bt.updated_at).getTime() : Date.now())
+                            ? (bt.updated_at ? new Date(toUtc(bt.updated_at)).getTime() : Date.now())
                             : Date.now();
                           const sec = Math.max(0, Math.floor((e - s) / 1000));
                           const min = Math.floor(sec / 60);
