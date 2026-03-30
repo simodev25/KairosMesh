@@ -100,6 +100,15 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     },
 }
 
+# Merge all agent prompts into DEFAULT_PROMPTS so they all go through the same pipeline
+# (skills injection, language enforcement, variable substitution)
+from app.services.agentscope.prompts import AGENT_PROMPTS as _AGENT_PROMPTS
+for _agent_name, _templates in _AGENT_PROMPTS.items():
+    if _agent_name not in DEFAULT_PROMPTS:
+        DEFAULT_PROMPTS[_agent_name] = _templates
+del _agent_name, _templates, _AGENT_PROMPTS
+
+
 class SafeDict(dict):
     def __missing__(self, key: str) -> str:
         return f'<MISSING:{key}>'
@@ -256,12 +265,7 @@ class PromptTemplateService:
         return f'{user_template}\n\n{cls.TECHNICAL_RUNTIME_SCORE_BLOCK_TEMPLATE}'
 
     def seed_defaults(self, db: Session) -> None:
-        from app.services.agentscope.prompts import AGENT_PROMPTS
-
-        # Merge: AGENT_PROMPTS (7 agents) + DEFAULT_PROMPTS (technical-analyst override)
-        all_prompts = {**AGENT_PROMPTS, **DEFAULT_PROMPTS}
-
-        for agent_name, templates in all_prompts.items():
+        for agent_name, templates in DEFAULT_PROMPTS.items():
             exists = db.query(PromptTemplate).filter(PromptTemplate.agent_name == agent_name).first()
             if exists:
                 continue
