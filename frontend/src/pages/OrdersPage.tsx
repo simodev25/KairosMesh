@@ -131,7 +131,6 @@ export function OrdersPage() {
   const { token, user } = useAuth();
   const [dealsPage, setDealsPage] = useState(1);
   const [platformOrdersPage, setPlatformOrdersPage] = useState(1);
-  const [activePanel, setActivePanel] = useState<'analysis' | 'metaapi' | 'queue'>('analysis');
   const {
     orders,
     loading: ordersLoading,
@@ -423,10 +422,6 @@ export function OrdersPage() {
     return { rows, totalPnl, totalOrders };
   }, [openPositions, openOrders]);
 
-  const quickNavigate = (sectionId: string, panelId?: 'analysis' | 'metaapi' | 'queue') => {
-    if (panelId) setActivePanel(panelId);
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
 
   useEffect(() => {
     setDealsPage(1);
@@ -451,116 +446,54 @@ export function OrdersPage() {
           <p className="alert">{pageError}</p>
         </section>
       )}
-      <section className="hw-surface p-5">
-        <form
-          className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void loadMetaTrading(accountRef, 'manual');
-          }}
-        >
-          <div>
-            <label className="micro-label block mb-1.5">Account</label>
-            <select value={accountRef ?? ''} onChange={(e) => setAccountRef(e.target.value ? Number(e.target.value) : null)}>
-              {accounts.length === 0 && <option value="">Default</option>}
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.label} ({account.region}){account.is_default ? ' [default]' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="micro-label block mb-1.5">Window</label>
-            <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              {runtimeConfig.metaApiRealTradesDaysOptions.map((daysOption) => (
-                <option key={daysOption} value={daysOption}>
-                  {formatDaysWindowLabel(daysOption)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <button className="btn-primary w-full" disabled={metaLoading}>{metaLoading ? 'Refreshing...' : 'Refresh'}</button>
-          </div>
-          <p className="model-source col-span-2">
-            Provider: <code>{provider || 'unknown'}</code> | Sync: <code>{syncing ? 'yes' : 'no'}</code>
-          </p>
-        </form>
-      </section>
+      <div className="hw-surface flex items-center gap-4 px-5 py-3">
+        <div className="flex items-center gap-3">
+          <label className="micro-label">Account</label>
+          <select value={accountRef ?? ''} onChange={(e) => setAccountRef(e.target.value ? Number(e.target.value) : null)}>
+            {accounts.length === 0 && <option value="">Default</option>}
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.label} ({account.region}){account.is_default ? ' [default]' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="micro-label">Window</label>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            {runtimeConfig.metaApiRealTradesDaysOptions.map((daysOption) => (
+              <option key={daysOption} value={daysOption}>
+                {formatDaysWindowLabel(daysOption)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button className="btn-primary" disabled={metaLoading} onClick={() => void loadMetaTrading(accountRef, 'manual')}>
+          {metaLoading ? 'Refreshing...' : 'Refresh'}
+        </button>
+        <span className="text-border">|</span>
+        <span className="text-[10px] font-mono">Provider: <code>{provider || 'unknown'}</code></span>
+        <div className="ml-auto flex items-center gap-4 text-[10px] font-mono">
+          <span>BUY: <strong className="text-success">{buyCount}</strong></span>
+          <span>SELL: <strong className="text-danger">{sellCount}</strong></span>
+          <span>Pending: <strong>{openOrders.length}</strong></span>
+        </div>
+      </div>
 
-      <ExpansionPanel title="TRADE_ANALYTICS" id="orders-summary">
-        <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
+      <div className="hw-surface px-5 py-3" id="orders-summary">
+        <div className="flex items-center gap-6 flex-wrap">
           {tradingSummaryCards.map((card) => (
-            <article key={card.label} className="hw-surface-alt p-3 text-center">
-              <span className="micro-label">{card.label}</span>
-              <strong className={`block text-lg font-bold font-mono mt-1 ${card.tone === 'up' ? 'text-success' : card.tone === 'down' ? 'text-danger' : 'text-text'}`}>
-                {card.value}
-                {card.suffix}
+            <div key={card.label} className="flex items-center gap-2">
+              <span className="text-[9px] tracking-widest text-text-muted uppercase">{card.label}</span>
+              <strong className={`text-sm font-mono ${card.tone === 'up' ? 'text-success' : card.tone === 'down' ? 'text-danger' : 'text-text'}`}>
+                {card.value}{card.suffix}
               </strong>
-            </article>
+            </div>
           ))}
         </div>
-      </ExpansionPanel>
+      </div>
 
-      <section className="grid grid-cols-[200px_1fr] gap-5">
-        <aside className="hw-surface p-4">
-          <div className="section-header"><span className="section-title">NAV_PANEL</span></div>
-          <nav className="flex flex-col gap-1" aria-label="Orders navigation">
-            <button
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${activePanel === 'analysis' ? 'bg-accent/10 text-accent border border-accent/20' : 'text-text-muted hover:text-text border border-transparent'}`}
-              type="button"
-              onClick={() => quickNavigate('orders-summary', 'analysis')}
-            >
-              <span className="w-5 h-5 rounded bg-surface-alt border border-border flex items-center justify-center text-[9px] font-bold">A</span>
-              <span>Trading Analysis</span>
-            </button>
-            <button
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${activePanel === 'metaapi' ? 'bg-accent/10 text-accent border border-accent/20' : 'text-text-muted hover:text-text border border-transparent'}`}
-              type="button"
-              onClick={() => quickNavigate('orders-metaapi', 'metaapi')}
-            >
-              <span className="w-5 h-5 rounded bg-surface-alt border border-border flex items-center justify-center text-[9px] font-bold">M</span>
-              <span>Trades MT5</span>
-            </button>
-          </nav>
-          <div className="mt-4 pt-3 border-t border-border space-y-1">
-            <p className="text-[10px] font-mono text-text-muted">BUY: <strong className="text-success">{buyCount}</strong></p>
-            <p className="text-[10px] font-mono text-text-muted">SELL: <strong className="text-danger">{sellCount}</strong></p>
-            <p className="text-[10px] font-mono text-text-muted">Pending: <strong className="text-text">{openOrders.length}</strong></p>
-          </div>
-          <div className="mt-4 pt-3 border-t border-border">
-            <div className="section-header"><span className="section-title">ORDER_QUEUE</span></div>
-            <p className="model-source">
-              Live update: {Math.max(1, Math.round(liveExposurePollMs / 1000))}s (visible tab)
-            </p>
-            <div className="space-y-2">
-              {watchlist.rows.length === 0 ? (
-                <p className="model-source">No active symbol.</p>
-              ) : (
-                <>
-                  {watchlist.rows.map((row) => (
-                    <div key={row.symbol} className="flex items-center justify-between text-[10px] font-mono">
-                      <span className="text-text">{row.symbol}</span>
-                      <span className="text-text-muted">{row.last > 0 ? row.last.toFixed(5) : '-'}</span>
-                      <strong className={row.pnl >= 0 ? 'text-success' : 'text-danger'}>{formatSigned(row.pnl)}</strong>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between text-[10px] font-mono pt-2 border-t border-border">
-                    <span className="text-text font-semibold">Total</span>
-                    <span className="text-text-muted">{watchlist.totalOrders} orders</span>
-                    <strong className={watchlist.totalPnl >= 0 ? 'text-success' : 'text-danger'}>
-                      {formatSigned(watchlist.totalPnl)}
-                    </strong>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </aside>
-
-        <div className="flex flex-col gap-5">
-          <section className="hw-surface overflow-hidden" id="orders-chart">
+      <section className="hw-surface overflow-hidden" id="orders-chart">
             {/* ── Chart header bar ── */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-border">
               <div className="flex items-center gap-3">
@@ -649,9 +582,27 @@ export function OrdersPage() {
                 </div>
               </>
             )}
-          </section>
+      </section>
 
-          <ExpansionPanel title="REAL_TRADES // MT5_METAAPI" id="orders-metaapi">
+      {watchlist.rows.length > 0 && (
+        <div className="hw-surface px-5 py-2 flex items-center gap-6 overflow-x-auto">
+          <span className="micro-label shrink-0">WATCHLIST</span>
+          {watchlist.rows.map((row) => (
+            <div key={row.symbol} className="flex items-center gap-3 text-[10px] font-mono shrink-0">
+              <span className="text-text font-medium">{row.symbol}</span>
+              <span className="text-text-muted">{row.last > 0 ? row.last.toFixed(5) : '-'}</span>
+              <strong className={row.pnl >= 0 ? 'text-success' : 'text-danger'}>{formatSigned(row.pnl)}</strong>
+            </div>
+          ))}
+          <div className="flex items-center gap-3 text-[10px] font-mono shrink-0 ml-auto border-l border-border pl-4">
+            <span className="text-text font-semibold">Total</span>
+            <span className="text-text-muted">{watchlist.totalOrders} orders</span>
+            <strong className={watchlist.totalPnl >= 0 ? 'text-success' : 'text-danger'}>{formatSigned(watchlist.totalPnl)}</strong>
+          </div>
+        </div>
+      )}
+
+      <ExpansionPanel title="REAL_TRADES // MT5_METAAPI" id="orders-metaapi">
             {metaFeatureDisabled ? (
               <>
                 <p className="model-source">
@@ -731,10 +682,7 @@ export function OrdersPage() {
                 onNextPage={() => setPlatformOrdersPage((prev) => Math.min(platformOrdersTotalPages, prev + 1))}
               />
             </Suspense>
-          </ExpansionPanel>
-        </div>
-
-      </section>
+      </ExpansionPanel>
     </div>
   );
 }
