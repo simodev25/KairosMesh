@@ -51,7 +51,8 @@ async def _extract_tool_invocations(agent) -> dict[str, dict[str, Any]]:
 
     try:
         msgs = await agent.memory.get_memory()
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to extract tool invocations from agent memory: %s", exc)
         return invocations
 
     # Collect tool_use and tool_result pairs by id
@@ -61,7 +62,8 @@ async def _extract_tool_invocations(agent) -> dict[str, dict[str, Any]]:
     for msg in msgs:
         try:
             blocks = msg.get_content_blocks()
-        except Exception:
+        except Exception as exc:
+            logger.debug("Failed to get content blocks from message: %s", exc)
             continue
         for block in blocks:
             if not isinstance(block, dict):
@@ -449,8 +451,8 @@ class AgentScopeRegistry:
             score_lines = [f"{k}={v}" for k, v in components.items()]
             score_lines.append(f"final_score={scoring.get('score', 0)}")
             runtime_score_breakdown_text = "\n".join(score_lines)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to compute runtime score breakdown: %s", exc)
 
         # Store the full scoring result for runtime injection (Fix 1)
         _scoring_result: dict[str, Any] = {}
@@ -1017,8 +1019,8 @@ class AgentScopeRegistry:
             try:
                 run.progress = pct
                 db.commit()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to update run progress to %d%%: %s", pct, exc)
 
         try:
             run.status = "running"
@@ -1087,34 +1089,49 @@ class AgentScopeRegistry:
             # Store tool invocations per agent (filled after each call)
             agent_tool_invocations: dict[str, dict] = {}
 
+            from app.core.config import get_settings as _gs
+            _agent_timeout = getattr(_gs(), "agentscope_agent_timeout_seconds", 60)
+
             async def _call_agent(
                 name: str, msg: Msg,
                 trader_out: dict | None = None, risk_out: dict | None = None,
             ) -> Msg:
-                """Call agent via LLM (with retry on 5xx) or deterministic."""
+                """Call agent via LLM (with retry on 5xx and timeout) or deterministic."""
                 if name in agents:
                     schema = AGENT_STRUCTURED_MODELS.get(name)
                     last_err: Exception | None = None
                     for attempt in range(3):
                         try:
                             if schema:
-                                result = await agents[name](msg, structured_model=schema)
+                                result = await asyncio.wait_for(
+                                    agents[name](msg, structured_model=schema),
+                                    timeout=_agent_timeout,
+                                )
                             else:
-                                result = await agents[name](msg)
+                                result = await asyncio.wait_for(
+                                    agents[name](msg),
+                                    timeout=_agent_timeout,
+                                )
                             agent_tool_invocations[name] = await _extract_tool_invocations(agents[name])
                             return result
+                        except asyncio.TimeoutError:
+                            logger.warning("Agent %s timed out after %ds, falling back to deterministic", name, _agent_timeout)
+                            break
                         except Exception as exc:
                             last_err = exc
                             err_str = str(exc)
                             if any(code in err_str for code in ("500", "502", "503", "Internal Server Error")):
-                                wait = (attempt + 1) * 3
+                                wait = min((attempt + 1) * 3, 9)
                                 logger.warning("Agent %s got 5xx, retry in %ds (%d/3): %s", name, wait, attempt + 1, err_str[:100])
                                 await asyncio.sleep(wait)
                                 continue
                             raise
-                    # All retries exhausted — propagate the error
-                    logger.error("Agent %s failed after 3 retries: %s", name, str(last_err)[:200])
-                    raise last_err  # type: ignore[misc]
+                    else:
+                        if last_err is not None:
+                            # All retries exhausted — propagate the error
+                            logger.error("Agent %s failed after 3 retries: %s", name, str(last_err)[:200])
+                            raise last_err
+                # Deterministic fallback (LLM disabled, timeout, or retry exhaustion)
                 return await self._run_deterministic(
                     name, toolkits.get(name), msg,
                     ohlc=ohlc, snapshot=snapshot, pair=pair, timeframe=timeframe,
@@ -1205,12 +1222,24 @@ class AgentScopeRegistry:
             )
 
             if debate_agents_enabled:
-                bullish_msg, bearish_msg, debate_result = await run_debate(
-                    bullish=agents["bullish-researcher"],
-                    bearish=agents["bearish-researcher"],
-                    moderator=agents["trader-agent"],
-                    context_msg=research_msg, config=DebateConfig(),
-                )
+                try:
+                    bullish_msg, bearish_msg, debate_result = await asyncio.wait_for(
+                        run_debate(
+                            bullish=agents["bullish-researcher"],
+                            bearish=agents["bearish-researcher"],
+                            moderator=agents["trader-agent"],
+                            context_msg=research_msg, config=DebateConfig(),
+                        ),
+                        timeout=_agent_timeout * 3,  # debate involves multiple agent rounds
+                    )
+                except (asyncio.TimeoutError, Exception) as exc:
+                    logger.warning("Debate failed or timed out, falling back to independent researchers: %s", exc)
+                    bullish_msg = await _call_agent("bullish-researcher", research_msg)
+                    bearish_msg = await _call_agent("bearish-researcher", research_msg)
+                    debate_result = DebateResult(
+                        finished=False, winning_side="neutral", confidence=0.3,
+                        reason=f"Debate failed: {type(exc).__name__}",
+                    )
             else:
                 # Deterministic: run researchers without debate
                 bullish_msg = await _call_agent("bullish-researcher", research_msg)
@@ -1347,25 +1376,52 @@ class AgentScopeRegistry:
             risk_out = analysis_outputs.get("risk-manager", {})
             exec_out = analysis_outputs.get("execution-manager", {})
 
-            # Determine trade decision from debate + trader output
-            signal = debate_result.winning_side or "neutral"
-            trade_decision = "HOLD"
-            if signal == "bullish":
-                trade_decision = "BUY"
-            elif signal == "bearish":
-                trade_decision = "SELL"
+            # ── Determine trade decision: trader-agent is authoritative, debate is advisory ──
+            trader_meta = trader_out.get("metadata", {})
+            trader_decision_raw = trader_meta.get("decision", "").strip().upper()
+            debate_signal = debate_result.winning_side or "neutral"
+
+            # Trader-agent structured output takes priority over debate
+            if trader_decision_raw in ("BUY", "SELL", "HOLD"):
+                trade_decision = trader_decision_raw
+            else:
+                # Fallback to debate if trader didn't produce valid decision
+                trade_decision = "HOLD"
+                if debate_signal == "bullish":
+                    trade_decision = "BUY"
+                elif debate_signal == "bearish":
+                    trade_decision = "SELL"
+                logger.warning("Trader-agent did not produce valid decision (%r), falling back to debate signal: %s",
+                               trader_decision_raw, trade_decision)
+
+            # Determine signal from authoritative decision
+            signal = {"BUY": "bullish", "SELL": "bearish"}.get(trade_decision, "neutral")
+
+            # Use trader confidence/score if available, debate as fallback
+            trade_confidence = trader_meta.get("confidence", debate_result.confidence)
+            trade_combined_score = trader_meta.get("combined_score")
+            trade_execution_allowed = trader_meta.get("execution_allowed", trade_decision != "HOLD")
+
+            # combined_score recovery from tool invocations (only if truly absent, not 0.0)
+            if trade_combined_score is None:
+                trader_invocations = agent_tool_invocations.get("trader-agent", {})
+                gating_inv = trader_invocations.get("decision_gating", {})
+                trade_combined_score = gating_inv.get("input", {}).get("combined_score")
+                if trade_combined_score is None:
+                    trade_combined_score = gating_inv.get("data", {}).get("combined_score", 0.0)
 
             run.status = "completed"
             run.decision = {
                 # Frontend reads these exact fields
                 "decision": trade_decision,
                 "signal": signal,
-                "confidence": debate_result.confidence,
-                "execution_allowed": trade_decision != "HOLD",
+                "confidence": trade_confidence,
+                "combined_score": trade_combined_score,
+                "execution_allowed": trade_execution_allowed,
                 "execution": {
                     "status": "skipped" if trade_decision == "HOLD" else "simulation",
                 },
-                # Debate details
+                # Debate details (advisory)
                 "debate": {
                     "finished": debate_result.finished,
                     "winning_side": debate_result.winning_side,
@@ -1376,20 +1432,9 @@ class AgentScopeRegistry:
                 "trader_summary": trader_out.get("text", "")[:500],
                 "risk_summary": risk_out.get("text", "")[:500],
                 "execution_summary": exec_out.get("text", "")[:500],
-                # Merge trader metadata if structured output was used
-                **trader_out.get("metadata", {}),
+                # Merge remaining trader metadata (entry, stop_loss, take_profit, reason, etc.)
+                **{k: v for k, v in trader_meta.items() if k not in ("decision", "confidence", "combined_score", "execution_allowed")},
             }
-
-            # Fix combined_score divergence: if metadata has 0.0, check tool invocations
-            if not run.decision.get("combined_score"):
-                trader_invocations = agent_tool_invocations.get("trader-agent", {})
-                gating_inv = trader_invocations.get("decision_gating", {})
-                tool_combined = gating_inv.get("input", {}).get("combined_score")
-                if tool_combined is not None and tool_combined != 0.0:
-                    run.decision["combined_score"] = tool_combined
-                    # Also try to extract from tool output data
-                elif gating_inv.get("data", {}).get("combined_score"):
-                    run.decision["combined_score"] = gating_inv["data"]["combined_score"]
 
             # Preserve initial trace metadata (e.g. triggered_by, strategy info)
             initial_trace = dict(run.trace) if run.trace else {}

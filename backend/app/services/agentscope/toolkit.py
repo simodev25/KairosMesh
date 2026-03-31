@@ -81,13 +81,20 @@ def _wrap_mcp_tool(tool_id: str, original_fn) -> Any:
 
     @functools.wraps(original_fn)
     async def tool_fn(*args: Any, **kwargs: Any) -> ToolResponse:
-        # Bind positional args to parameter names
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-        result = await client.call_tool(tool_id, dict(bound.arguments))
-        return ToolResponse(
-            content=[TextBlock(type="text", text=json.dumps(result, default=str))],
-        )
+        try:
+            # Bind positional args to parameter names
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            result = await client.call_tool(tool_id, dict(bound.arguments))
+            return ToolResponse(
+                content=[TextBlock(type="text", text=json.dumps(result, default=str))],
+            )
+        except Exception as exc:
+            logger.warning("Tool %s execution failed: %s", tool_id, exc, exc_info=True)
+            error_result = {"error": f"{type(exc).__name__}: {exc}", "tool_id": tool_id}
+            return ToolResponse(
+                content=[TextBlock(type="text", text=json.dumps(error_result, default=str))],
+            )
 
     # Override docstring with a clean Args section for AgentScope parsing
     tool_fn.__doc__ = _build_docstring(tool_id, original_fn)

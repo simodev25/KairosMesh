@@ -51,9 +51,13 @@ def _serialize_run(
 def list_runs(
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> list[RunOut]:
-    runs = db.query(AnalysisRun).order_by(AnalysisRun.created_at.desc()).limit(limit).all()
+    query = db.query(AnalysisRun)
+    # Per-user data isolation: admins see all, others see only their own
+    if user.role not in {Role.SUPER_ADMIN, Role.ADMIN}:
+        query = query.filter(AnalysisRun.created_by_id == user.id)
+    runs = query.order_by(AnalysisRun.created_at.desc()).limit(limit).all()
     return [_serialize_run(run) for run in runs]
 
 
