@@ -1,16 +1,23 @@
 import json
 import logging
 import random
+from typing import Any
+
 import httpx
+import numpy as np
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator, MACD
+from ta.volatility import BollingerBands
 
 from app.core.config import get_settings
 from app.core.security import Role, require_roles
 from app.db.models.strategy import Strategy
 from app.db.models.user import User
 from app.db.session import get_db
-from app.schemas.strategy import StrategyOut, StrategyGenerateRequest, StrategyEditRequest, StrategyPromoteRequest
+from app.schemas.strategy import StrategyOut, StrategyGenerateRequest, StrategyEditRequest, StrategyPromoteRequest, StrategyStartMonitoringRequest
 
 router = APIRouter(prefix='/strategies', tags=['strategies'])
 logger = logging.getLogger(__name__)
@@ -42,10 +49,17 @@ Available strategy templates and their configurable parameters:
    - slow: int (18-30, default 26)
    - signal: int (5-12, default 9)
 
+Available symbols: EURUSD.PRO, GBPUSD.PRO, USDJPY.PRO, AUDUSD.PRO, USDCAD.PRO, NZDUSD.PRO, USDCHF.PRO, EURGBP.PRO, EURJPY.PRO, GBPJPY.PRO, BTCUSD, ETHUSD, ADAUSD, XRPUSD, SOLUSD, DOTUSD, LINKUSD, AVAXUSD, MATICUSD, UNIUSD, AAVEUSD, LTCUSD, ATOMUSD
+Available timeframes: M5, M15, H1, H4, D1
+
+Choose the symbol and timeframe that best match the user's description. If unspecified, default to EURUSD.PRO and H1.
+
 RESPOND ONLY WITH VALID JSON (no markdown, no explanation):
 {
   "template": "<one of the 4 template names>",
   "name": "<short strategy name using underscores, max 30 chars>",
+  "symbol": "<symbol>",
+  "timeframe": "<timeframe>",
   "params": { <template-specific params> },
   "description": "<one sentence describing the strategy logic>"
 }"""
@@ -189,6 +203,8 @@ async def generate_strategy(
     params = agent_result.get('params', {})
     name = agent_result.get('name', '')
     description = agent_result.get('description', '')
+    symbol = agent_result.get('symbol', 'EURUSD.PRO')
+    timeframe_val = agent_result.get('timeframe', 'H1')
     prompt_history = agent_result.get('prompt_history', [])
 
     if not template or template not in VALID_TEMPLATES:
@@ -200,6 +216,8 @@ async def generate_strategy(
             params = llm_result.get('params', {})
             name = llm_result.get('name', f'{template}_{random.randint(100, 999)}')
             description = llm_result.get('description', '')
+            symbol = llm_result.get('symbol', 'EURUSD.PRO')
+            timeframe_val = llm_result.get('timeframe', 'H1')
             prompt_history = [
                 {'role': 'user', 'content': payload.prompt},
                 {'role': 'assistant', 'content': json.dumps(llm_result, indent=2)},
@@ -229,6 +247,8 @@ async def generate_strategy(
         status='DRAFT',
         score=0.0,
         template=template,
+        symbol=symbol or 'EURUSD.PRO',
+        timeframe=timeframe_val or 'H1',
         params=params,
         metrics={},
         prompt_history=prompt_history,
@@ -338,4 +358,207 @@ async def edit_strategy(
         strategy.status = 'DRAFT'
     db.commit()
     db.refresh(strategy)
+    return StrategyOut.model_validate(strategy)
+
+
+def _compute_indicators(candles: list[dict], template: str, params: dict) -> dict[str, Any]:
+    """Compute indicator overlay series from candle data based on strategy template."""
+    if not candles:
+        return {'overlays': [], 'signals': []}
+
+    df = pd.DataFrame(candles)
+    close = df['close'].astype(float)
+    high = df['high'].astype(float)
+    low = df['low'].astype(float)
+    times = df['time'].tolist()
+
+    overlays: list[dict] = []
+    signals: list[dict] = []
+
+    if template == 'ema_crossover':
+        fast_period = params.get('ema_fast', 9)
+        slow_period = params.get('ema_slow', 21)
+        rsi_filter = params.get('rsi_filter', 30)
+        ema_fast = close.ewm(span=fast_period, adjust=False).mean()
+        ema_slow = close.ewm(span=slow_period, adjust=False).mean()
+        rsi = RSIIndicator(close=close, window=14).rsi()
+
+        overlays.append({
+            'name': f'EMA_{fast_period}',
+            'color': '#4a90d9',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, ema_fast) if pd.notna(v)],
+        })
+        overlays.append({
+            'name': f'EMA_{slow_period}',
+            'color': '#e6a23c',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, ema_slow) if pd.notna(v)],
+        })
+
+        # Generate BUY/SELL signals
+        for i in range(1, len(df)):
+            if pd.isna(ema_fast.iloc[i]) or pd.isna(rsi.iloc[i]):
+                continue
+            if ema_fast.iloc[i] > ema_slow.iloc[i] and ema_fast.iloc[i - 1] <= ema_slow.iloc[i - 1] and rsi.iloc[i] < (100 - rsi_filter):
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'BUY'})
+            elif ema_fast.iloc[i] < ema_slow.iloc[i] and ema_fast.iloc[i - 1] >= ema_slow.iloc[i - 1] and rsi.iloc[i] > rsi_filter:
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'SELL'})
+
+    elif template == 'rsi_mean_reversion':
+        rsi_period = params.get('rsi_period', 14)
+        oversold = params.get('oversold', 30)
+        overbought = params.get('overbought', 70)
+        rsi = RSIIndicator(close=close, window=rsi_period).rsi()
+
+        # Show EMA20 as reference overlay
+        ema20 = EMAIndicator(close=close, window=20).ema_indicator()
+        overlays.append({
+            'name': 'EMA_20',
+            'color': '#4a90d9',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, ema20) if pd.notna(v)],
+        })
+
+        for i in range(1, len(df)):
+            if pd.isna(rsi.iloc[i]):
+                continue
+            if rsi.iloc[i] < oversold and rsi.iloc[i - 1] >= oversold:
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'BUY'})
+            elif rsi.iloc[i] > overbought and rsi.iloc[i - 1] <= overbought:
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'SELL'})
+
+    elif template == 'bollinger_breakout':
+        bb_period = params.get('bb_period', 20)
+        bb_std = params.get('bb_std', 2.0)
+        bb = BollingerBands(close=close, window=bb_period, window_dev=bb_std)
+        upper = bb.bollinger_hband()
+        lower = bb.bollinger_lband()
+        middle = bb.bollinger_mavg()
+
+        overlays.append({
+            'name': 'BB_Upper',
+            'color': '#ef4444',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, upper) if pd.notna(v)],
+        })
+        overlays.append({
+            'name': 'BB_Middle',
+            'color': '#8a8f98',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, middle) if pd.notna(v)],
+        })
+        overlays.append({
+            'name': 'BB_Lower',
+            'color': '#22c55e',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, lower) if pd.notna(v)],
+        })
+
+        for i in range(1, len(df)):
+            if pd.isna(lower.iloc[i]):
+                continue
+            if close.iloc[i] <= lower.iloc[i] and close.iloc[i - 1] > lower.iloc[i - 1]:
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'BUY'})
+            elif close.iloc[i] >= upper.iloc[i] and close.iloc[i - 1] < upper.iloc[i - 1]:
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'SELL'})
+
+    elif template == 'macd_divergence':
+        fast = params.get('fast', 12)
+        slow = params.get('slow', 26)
+        signal_period = params.get('signal', 9)
+        macd_ind = MACD(close=close, window_fast=fast, window_slow=slow, window_sign=signal_period)
+        macd_line = macd_ind.macd()
+        signal_line = macd_ind.macd_signal()
+
+        # Show EMA lines as overlays on price chart
+        ema_fast = close.ewm(span=fast, adjust=False).mean()
+        ema_slow_line = close.ewm(span=slow, adjust=False).mean()
+        overlays.append({
+            'name': f'EMA_{fast}',
+            'color': '#4a90d9',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, ema_fast) if pd.notna(v)],
+        })
+        overlays.append({
+            'name': f'EMA_{slow}',
+            'color': '#e6a23c',
+            'data': [{'time': t, 'value': round(float(v), 6)} for t, v in zip(times, ema_slow_line) if pd.notna(v)],
+        })
+
+        for i in range(1, len(df)):
+            if pd.isna(macd_line.iloc[i]) or pd.isna(signal_line.iloc[i]):
+                continue
+            if macd_line.iloc[i] > signal_line.iloc[i] and macd_line.iloc[i - 1] <= signal_line.iloc[i - 1]:
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'BUY'})
+            elif macd_line.iloc[i] < signal_line.iloc[i] and macd_line.iloc[i - 1] >= signal_line.iloc[i - 1]:
+                signals.append({'time': times[i], 'price': float(close.iloc[i]), 'side': 'SELL'})
+
+    return {'overlays': overlays, 'signals': signals}
+
+
+@router.get('/{strategy_id}/indicators')
+async def get_strategy_indicators(
+    strategy_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
+) -> dict:
+    """Compute indicator overlays and signals for a strategy based on live market candles."""
+    strategy = db.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail='Strategy not found')
+
+    from app.services.trading.metaapi_client import MetaApiClient
+
+    client = MetaApiClient()
+    try:
+        result_data = await client.get_market_candles(
+            pair=strategy.symbol,
+            timeframe=strategy.timeframe,
+            limit=200,
+        )
+        candles = result_data.get('candles', []) if isinstance(result_data, dict) else []
+    except Exception as exc:
+        logger.warning('indicators_candle_fetch_failed: %s', str(exc)[:100])
+        candles = []
+
+    result = _compute_indicators(candles, strategy.template, strategy.params or {})
+    result['strategy_id'] = strategy.id
+    result['template'] = strategy.template
+    result['symbol'] = strategy.symbol
+    result['timeframe'] = strategy.timeframe
+    result['params'] = strategy.params
+    return result
+
+
+@router.post('/{strategy_id}/start-monitoring', response_model=StrategyOut)
+def start_monitoring(
+    strategy_id: int,
+    payload: StrategyStartMonitoringRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> StrategyOut:
+    """Start monitoring a strategy for signals. When a new signal is detected, a Run is created."""
+    strategy = db.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail='Strategy not found')
+
+    strategy.is_monitoring = True
+    strategy.monitoring_mode = payload.mode
+    strategy.monitoring_risk_percent = payload.risk_percent
+    strategy.last_signal_key = None  # Reset so first signal triggers
+    db.commit()
+    db.refresh(strategy)
+    logger.info('strategy_monitoring_started id=%s symbol=%s mode=%s', strategy.strategy_id, strategy.symbol, payload.mode)
+    return StrategyOut.model_validate(strategy)
+
+
+@router.post('/{strategy_id}/stop-monitoring', response_model=StrategyOut)
+def stop_monitoring(
+    strategy_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> StrategyOut:
+    """Stop monitoring a strategy."""
+    strategy = db.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail='Strategy not found')
+
+    strategy.is_monitoring = False
+    db.commit()
+    db.refresh(strategy)
+    logger.info('strategy_monitoring_stopped id=%s', strategy.strategy_id)
     return StrategyOut.model_validate(strategy)

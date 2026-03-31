@@ -15,6 +15,8 @@ interface Strategy {
   status: 'DRAFT' | 'BACKTESTING' | 'VALIDATED' | 'PAPER' | 'LIVE' | 'REJECTED';
   score: number;
   template: string;
+  symbol: string;
+  timeframe: string;
   params: Record<string, unknown>;
   metrics: Record<string, unknown>;
   prompt_history: Array<{ role: string; content: string }>;
@@ -113,9 +115,10 @@ function StrategyCard({
           ))}
         </div>
 
-        {/* Template + params */}
+        {/* Template + symbol/timeframe + params */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent">{strategy.template}</span>
+          <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">{strategy.symbol} · {strategy.timeframe}</span>
           {Object.entries(strategy.params || {}).slice(0, 3).map(([k, v]) => (
             <span key={k} className="text-[7px] font-mono px-1 py-0.5 rounded bg-border/30 text-text-dim">{k}={String(v)}</span>
           ))}

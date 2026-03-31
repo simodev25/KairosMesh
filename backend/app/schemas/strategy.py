@@ -10,8 +10,14 @@ class StrategyOut(BaseModel):
     status: str
     score: float
     template: str
+    symbol: str
+    timeframe: str
     params: dict
     metrics: dict
+    is_monitoring: bool = False
+    monitoring_mode: str = 'simulation'
+    monitoring_risk_percent: float = 1.0
+    last_signal_key: str | None = None
     prompt_history: list = []
     last_backtest_id: int | None = None
     created_by_id: int
@@ -31,3 +37,8 @@ class StrategyEditRequest(BaseModel):
 
 class StrategyPromoteRequest(BaseModel):
     target: str = Field(pattern='^(PAPER|LIVE)$')
+
+
+class StrategyStartMonitoringRequest(BaseModel):
+    mode: str = Field(default='simulation', pattern='^(simulation|paper|live)$')
+    risk_percent: float = Field(default=1.0, ge=0.1, le=5.0)

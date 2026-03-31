@@ -181,6 +181,15 @@ export const api = {
     request(`/strategies/${id}/edit`, { method: 'POST', body: JSON.stringify({ prompt }) }, token),
   deleteStrategy: (token: string, id: number) =>
     request(`/strategies/${id}`, { method: 'DELETE' }, token),
+  getStrategyIndicators: (token: string, id: number) =>
+    request(`/strategies/${id}/indicators`, {}, token),
+  startMonitoring: (token: string, id: number, mode: string, riskPercent: number) =>
+    request(`/strategies/${id}/start-monitoring`, {
+      method: 'POST',
+      body: JSON.stringify({ mode, risk_percent: riskPercent }),
+    }, token),
+  stopMonitoring: (token: string, id: number) =>
+    request(`/strategies/${id}/stop-monitoring`, { method: 'POST' }, token),
 };
 
 export function wsRunUrl(runId: number, token?: string): string {
