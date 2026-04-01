@@ -27,7 +27,7 @@ from app.services.trading.metaapi_client import MetaApiClient
 
 router = APIRouter(prefix='/connectors', tags=['connectors'])
 
-SUPPORTED_CONNECTORS = ['ollama', 'metaapi', 'news']
+SUPPORTED_CONNECTORS = ['ollama', 'metaapi', 'news', 'trading']
 CONNECTOR_SECRET_DEFAULT_FIELDS: dict[str, dict[str, str]] = {
     'ollama': {
         'OLLAMA_API_KEY': 'ollama_api_key',
@@ -323,6 +323,22 @@ def update_connector(
     if connector_name == 'ollama':
         AgentModelSelector.clear_cache()
     return ConnectorConfigOut.model_validate(conn)
+
+
+@router.get('/trading-config')
+def get_trading_config(
+    decision_mode: str = Query(default='balanced'),
+    execution_mode: str = Query(default='simulation'),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
+) -> dict:
+    """Return the trading parameter catalog with descriptions and current effective values."""
+    from app.services.config.trading_config import get_current_values, get_param_catalog
+    return {
+        "catalog": get_param_catalog(),
+        "values": get_current_values(decision_mode, execution_mode),
+        "decision_mode": decision_mode,
+        "execution_mode": execution_mode,
+    }
 
 
 @router.post('/{connector_name}/test')

@@ -66,6 +66,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }, token),
+  getTradingConfig: (token: string, decisionMode?: string, executionMode?: string) =>
+    request<{ catalog: Record<string, Array<Record<string, unknown>>>; values: Record<string, Record<string, unknown>> }>(
+      `/connectors/trading-config?decision_mode=${decisionMode || 'balanced'}&execution_mode=${executionMode || 'simulation'}`,
+      {},
+      token,
+    ),
   testConnector: (token: string, connector: string) =>
     request(`/connectors/${connector}/test`, { method: 'POST' }, token),
   testNewsProvider: (token: string, provider: string, pair?: string) => {

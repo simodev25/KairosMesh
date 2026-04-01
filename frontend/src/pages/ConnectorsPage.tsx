@@ -412,6 +412,62 @@ export function ConnectorsPage() {
   const [cacheAccountInfoTtl, setCacheAccountInfoTtl] = useState(5);
   const [savingCache, setSavingCache] = useState(false);
 
+  // ── Trading config (decision gating + risk limits + trade sizing) ──
+  type TradingParamCatalog = Record<string, Array<{ key: string; label: string; description: string; type: string; min?: number; max?: number; step?: number }>>;
+  type TradingParamValues = Record<string, Record<string, unknown>>;
+  const [tradingCatalog, setTradingCatalog] = useState<TradingParamCatalog>({});
+  const [tradingValues, setTradingValues] = useState<TradingParamValues>({});
+  const [tradingEdits, setTradingEdits] = useState<TradingParamValues>({});
+  const [savingTrading, setSavingTrading] = useState(false);
+
+  const loadTradingConfig = async () => {
+    if (!token) return;
+    try {
+      const resp = await api.getTradingConfig(token, decisionMode, 'simulation');
+      setTradingCatalog(resp.catalog as TradingParamCatalog);
+      setTradingValues(resp.values as TradingParamValues);
+      // Initialize edits from current values
+      setTradingEdits(resp.values as TradingParamValues);
+    } catch {
+      // ignore — trading connector may not exist yet
+    }
+  };
+
+  const saveTradingConfig = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token) return;
+
+    const tradingConn = connectors.find((c) => c.connector_name === 'trading');
+    const existingSettings = (tradingConn?.settings ?? {}) as Record<string, unknown>;
+
+    setSavingTrading(true);
+    setError(null);
+    try {
+      await api.updateConnector(token, 'trading', {
+        enabled: tradingConn?.enabled ?? true,
+        settings: {
+          ...existingSettings,
+          gating: tradingEdits.gating ?? {},
+          risk_limits: tradingEdits.risk_limits ?? {},
+          sizing: tradingEdits.sizing ?? {},
+        },
+      });
+      await loadAll();
+      await loadTradingConfig();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Cannot save trading config');
+    } finally {
+      setSavingTrading(false);
+    }
+  };
+
+  const updateTradingParam = (section: string, key: string, value: unknown) => {
+    setTradingEdits((prev) => ({
+      ...prev,
+      [section]: { ...(prev[section] ?? {}), [key]: value },
+    }));
+  };
+
   const hydrateAgentModels = (connectorRows: ConnectorConfig[]): LlmProvider => {
     const ollama = connectorRows.find((item) => item.connector_name === 'ollama');
     const settings = (ollama?.settings ?? {}) as Record<string, unknown>;
@@ -659,6 +715,7 @@ export function ConnectorsPage() {
 
   useEffect(() => {
     void loadAll();
+    void loadTradingConfig();
   }, [token]);
 
   const activePromptByAgent = useMemo(() => {
@@ -1482,6 +1539,54 @@ export function ConnectorsPage() {
                 <button className="btn-primary" disabled={decisionModeSaving}>
                   {decisionModeSaving ? 'Saving...' : 'Save decision mode'}
                 </button>
+              </form>
+            </ExpansionPanelAlt>
+
+            <ExpansionPanelAlt title="TRADING_PARAMETERS">
+              <form className="flex flex-col gap-4" onSubmit={saveTradingConfig}>
+                {Object.entries(tradingCatalog).map(([section, params]) => (
+                  <div key={section}>
+                    <h4 style={{ textTransform: 'uppercase', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text-secondary, #888)' }}>
+                      {section === 'gating' ? 'Decision Gating — Seuils de declenchement' : section === 'risk_limits' ? 'Risk Limits — Contraintes de portefeuille' : 'Trade Sizing — Calcul SL/TP'}
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {params.map((param) => {
+                        const currentVal = tradingEdits[section]?.[param.key] ?? tradingValues[section]?.[param.key] ?? '';
+                        return (
+                          <label key={param.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontWeight: 500 }}>{param.label}</span>
+                            <span className="model-source" style={{ fontSize: 11, lineHeight: 1.3, marginBottom: 4 }}>{param.description}</span>
+                            {param.type === 'bool' ? (
+                              <input
+                                className="ui-switch"
+                                type="checkbox"
+                                checked={Boolean(currentVal)}
+                                onChange={(e) => updateTradingParam(section, param.key, e.target.checked)}
+                              />
+                            ) : (
+                              <input
+                                type="number"
+                                min={param.min}
+                                max={param.max}
+                                step={param.step}
+                                value={typeof currentVal === 'number' ? currentVal : Number(currentVal) || 0}
+                                onChange={(e) => updateTradingParam(section, param.key, Number(e.target.value))}
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                {Object.keys(tradingCatalog).length > 0 && (
+                  <button className="btn-primary" disabled={savingTrading}>
+                    {savingTrading ? 'Saving...' : 'Save trading parameters'}
+                  </button>
+                )}
+                {Object.keys(tradingCatalog).length === 0 && (
+                  <p className="model-source">Loading trading parameters...</p>
+                )}
               </form>
             </ExpansionPanelAlt>
 

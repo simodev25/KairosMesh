@@ -1259,8 +1259,12 @@ def decision_gating(
     aligned_sources: int = 0,
     mode: str = "balanced",
 ) -> dict:
-    """Apply decision gates based on policy mode."""
-    policy = DECISION_MODES.get(mode, DECISION_MODES["balanced"])
+    """Apply decision gates based on policy mode (with runtime DB overrides)."""
+    try:
+        from app.services.config.trading_config import get_effective_gating_policy
+        policy = get_effective_gating_policy(mode)
+    except Exception:
+        policy = DECISION_MODES.get(mode, DECISION_MODES["balanced"])
     blocked_by = []
     if abs(combined_score) < policy.min_combined_score:
         blocked_by.append(f"Score {abs(combined_score):.2f} < {policy.min_combined_score}")
@@ -1298,9 +1302,17 @@ def trade_sizing(
     atr: float = 0.0,
     decision_side: str = "BUY",
 ) -> dict:
-    """Compute entry, stop-loss, and take-profit from ATR."""
-    sl_dist = atr * SL_ATR_MULTIPLIER if atr > 0 else price * SL_PERCENT_FALLBACK
-    tp_dist = atr * TP_ATR_MULTIPLIER if atr > 0 else price * TP_PERCENT_FALLBACK
+    """Compute entry, stop-loss, and take-profit from ATR (with runtime DB overrides)."""
+    try:
+        from app.services.config.trading_config import get_effective_sizing
+        sizing = get_effective_sizing()
+        _sl_mult = sizing["sl_atr_multiplier"]
+        _tp_mult = sizing["tp_atr_multiplier"]
+    except Exception:
+        _sl_mult = SL_ATR_MULTIPLIER
+        _tp_mult = TP_ATR_MULTIPLIER
+    sl_dist = atr * _sl_mult if atr > 0 else price * SL_PERCENT_FALLBACK
+    tp_dist = atr * _tp_mult if atr > 0 else price * TP_PERCENT_FALLBACK
     if decision_side == "BUY":
         return {"entry": round(price, 5), "stop_loss": round(price - sl_dist, 5), "take_profit": round(price + tp_dist, 5)}
     return {"entry": round(price, 5), "stop_loss": round(price + sl_dist, 5), "take_profit": round(price - tp_dist, 5)}

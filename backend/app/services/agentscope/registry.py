@@ -1548,11 +1548,38 @@ class AgentScopeRegistry:
             _set_progress(65)
             logger.info("Phase 4: Trader -> Risk -> Execution for %s/%s", pair, timeframe)
 
+            # ── Pre-compute deterministic decision inputs ──
+            from app.services.agentscope.decision_helpers import (
+                compute_deterministic_score,
+                compute_score_band,
+                count_aligned_sources,
+                derive_trend_momentum,
+            )
+
+            _det_score = compute_deterministic_score(
+                analysis_outputs,
+                debate_winner=debate_result.winning_side,
+                debate_confidence=debate_result.confidence,
+            )
+            _score_band = compute_score_band(_det_score)
+            _det_direction = "bullish" if _det_score > 0 else ("bearish" if _det_score < 0 else "neutral")
+            _det_aligned = count_aligned_sources(analysis_outputs, _det_direction)
+            _det_trend, _det_momentum = derive_trend_momentum(snapshot)
+
+            logger.info(
+                "Deterministic inputs: score=%.4f band=[%.4f,%.4f] aligned=%d trend=%s momentum=%s",
+                _det_score, _score_band[0], _score_band[1], _det_aligned, _det_trend, _det_momentum,
+            )
+
             # Update vars for Phase 4 agents
             base_vars["debate_winner"] = str(debate_result.winning_side or "neutral")
             base_vars["debate_confidence"] = str(debate_result.confidence)
             base_vars["debate_reason"] = str(debate_result.reason or "")
             base_vars["mode"] = getattr(run, "mode", "simulation")
+            base_vars["deterministic_score"] = str(_det_score)
+            base_vars["score_band_min"] = str(_score_band[0])
+            base_vars["score_band_max"] = str(_score_band[1])
+            base_vars["deterministic_aligned_sources"] = str(_det_aligned)
 
             decision_context = (
                 f"Make a trading decision for {pair} on {timeframe}.\n\n"
@@ -1669,6 +1696,44 @@ class AgentScopeRegistry:
                 # Update vars with trader/risk outputs for downstream agents
                 if name == "trader-agent":
                     meta = d.get("metadata", {})
+
+                    # ── DM-2: Validate required tool calls ──
+                    from app.services.agentscope.decision_helpers import validate_tool_calls
+                    _trader_tools = agent_tool_invocations.get("trader-agent", {})
+                    _tools_ok, _tools_missing = validate_tool_calls(
+                        _trader_tools, meta.get("decision", "HOLD"),
+                    )
+                    if not _tools_ok:
+                        logger.warning(
+                            "Trader-agent missing required tool calls: %s — forcing execution_allowed=false",
+                            _tools_missing,
+                        )
+                        meta["execution_allowed"] = False
+                        meta["degraded"] = True
+                        meta.setdefault("reason", "")
+                        meta["reason"] += f" [DEGRADED: missing tool calls: {_tools_missing}]"
+                        d["metadata"] = meta
+
+                    # ── DM-1: Enforce combined_score within deterministic band ──
+                    _raw_score = meta.get("combined_score", 0.0)
+                    try:
+                        _raw_score = float(_raw_score)
+                    except (TypeError, ValueError):
+                        _raw_score = 0.0
+                    if _raw_score < _score_band[0] or _raw_score > _score_band[1]:
+                        _clamped = max(_score_band[0], min(_score_band[1], _raw_score))
+                        logger.info(
+                            "Clamping combined_score %.4f to band [%.4f, %.4f] → %.4f",
+                            _raw_score, _score_band[0], _score_band[1], _clamped,
+                        )
+                        meta["combined_score"] = round(_clamped, 4)
+                        d["metadata"] = meta
+
+                    # ── DM-7: Fallback combined_score recovery ──
+                    if meta.get("combined_score") is None or meta.get("combined_score") == 0.0:
+                        meta["combined_score"] = _det_score
+                        d["metadata"] = meta
+
                     base_vars["trader_decision"] = meta.get("decision", "HOLD")
                     base_vars["entry"] = str(meta.get("entry", "N/A"))
                     base_vars["stop_loss"] = str(meta.get("stop_loss", "N/A"))
