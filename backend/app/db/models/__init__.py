@@ -9,6 +9,7 @@ from app.db.models.connector_config import ConnectorConfig
 from app.db.models.execution_order import ExecutionOrder
 from app.db.models.llm_call_log import LlmCallLog
 from app.db.models.metaapi_account import MetaApiAccount
+from app.db.models.portfolio_snapshot import PortfolioSnapshot
 from app.db.models.prompt_template import PromptTemplate
 from app.db.models.run import AnalysisRun
 from app.db.models.strategy import Strategy
@@ -28,6 +29,7 @@ __all__ = [
     'BacktestRun',
     'BacktestTrade',
     'MetaApiAccount',
+    'PortfolioSnapshot',
     'LlmCallLog',
     'Strategy',
 ]

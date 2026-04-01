@@ -1506,6 +1506,44 @@ class AgentScopeRegistry:
                     {"phase": "debate", "llm_enabled": llm_enabled.get(name, False)},
                     d, elapsed_ms=debate_ms / 2)
 
+            # ── Fetch portfolio state for Phase 4 ──
+            _portfolio_state = None
+            _portfolio_account_id: str | None = None
+            try:
+                from app.services.risk.portfolio_state import PortfolioStateService
+                from app.services.trading.account_selector import MetaApiAccountSelector as _AccSel
+                _acct = _AccSel().resolve(db, metaapi_account_ref)
+                _portfolio_account_id = str(_acct.account_id) if _acct else None
+                _acct_region = (_acct.region if _acct else None)
+                _portfolio_state = await PortfolioStateService.get_current_state(
+                    account_id=_portfolio_account_id, region=_acct_region, db=db,
+                )
+            except Exception as exc:
+                logger.warning("Failed to fetch portfolio state: %s", exc)
+                from app.services.risk.portfolio_state import PortfolioStateService
+                _portfolio_state = PortfolioStateService.build_defaults()
+
+            # Save pre_trade snapshot
+            if _portfolio_state and not _portfolio_state.degraded:
+                try:
+                    from app.db.models.portfolio_snapshot import PortfolioSnapshot as _PSnap
+                    _pre_snap = _PSnap(
+                        account_id=_portfolio_account_id or "unknown",
+                        balance=_portfolio_state.balance,
+                        equity=_portfolio_state.equity,
+                        free_margin=_portfolio_state.free_margin,
+                        used_margin=_portfolio_state.used_margin,
+                        open_position_count=_portfolio_state.open_position_count,
+                        open_risk_total_pct=_portfolio_state.open_risk_total_pct,
+                        daily_realized_pnl=_portfolio_state.daily_realized_pnl,
+                        daily_high_equity=_portfolio_state.daily_high_equity,
+                        snapshot_type="pre_trade",
+                    )
+                    db.add(_pre_snap)
+                    db.flush()
+                except Exception as exc:
+                    logger.warning("Failed to save pre_trade snapshot: %s", exc)
+
             # ── Phase 4: Sequential decision ──
             _set_progress(65)
             logger.info("Phase 4: Trader -> Risk -> Execution for %s/%s", pair, timeframe)
@@ -1576,6 +1614,28 @@ class AgentScopeRegistry:
                     _trader_decision_is_hold = meta.get("decision", "HOLD") == "HOLD"
                 elif name == "risk-manager":
                     base_vars["risk_result"] = d.get("text", "")[:500]
+                elif name == "execution-manager":
+                    # Save post_trade snapshot after execution
+                    if _portfolio_state and _risk_out:
+                        risk_meta = _risk_out.get("metadata", {})
+                        if risk_meta.get("accepted") and not _portfolio_state.degraded:
+                            try:
+                                from app.db.models.portfolio_snapshot import PortfolioSnapshot as _PSnap
+                                _post_snap = _PSnap(
+                                    account_id=_portfolio_account_id or "unknown",
+                                    balance=_portfolio_state.balance,
+                                    equity=_portfolio_state.equity,
+                                    free_margin=_portfolio_state.free_margin,
+                                    used_margin=_portfolio_state.used_margin,
+                                    open_position_count=_portfolio_state.open_position_count,
+                                    open_risk_total_pct=_portfolio_state.open_risk_total_pct,
+                                    daily_realized_pnl=_portfolio_state.daily_realized_pnl,
+                                    daily_high_equity=_portfolio_state.daily_high_equity,
+                                    snapshot_type="post_trade",
+                                )
+                                db.add(_post_snap)
+                            except Exception as exc:
+                                logger.warning("Failed to save post_trade snapshot: %s", exc)
                 d["prompt_meta"] = self._build_prompt_meta(db, name, model_name, llm_enabled.get(name, False), variables=base_vars, _prompt_cache=_prompt_cache)
                 analysis_outputs[name] = d
                 self._record_step(db, run, name,
@@ -1586,6 +1646,43 @@ class AgentScopeRegistry:
                     _trader_out = d
                 elif name == "risk-manager":
                     _risk_out = d
+
+            # ── Build portfolio context for traces ──
+            _portfolio_context: dict = {}
+            if _portfolio_state:
+                from app.services.risk.limits import get_risk_limits as _get_rl
+                _mode = getattr(run, "mode", "simulation")
+                _limits = _get_rl(_mode)
+                _p_eq = _portfolio_state.equity if _portfolio_state.equity > 0 else 1.0
+                _portfolio_context = {
+                    "balance": _portfolio_state.balance,
+                    "equity": _portfolio_state.equity,
+                    "free_margin_pct": round((_portfolio_state.free_margin / _p_eq) * 100, 1),
+                    "open_risk_pct": _portfolio_state.open_risk_total_pct,
+                    "daily_drawdown_pct": _portfolio_state.daily_drawdown_pct,
+                    "weekly_drawdown_pct": _portfolio_state.weekly_drawdown_pct,
+                    "risk_budget_remaining_pct": round(
+                        _limits.max_open_risk_pct - _portfolio_state.open_risk_total_pct, 1,
+                    ),
+                    "open_positions": _portfolio_state.open_position_count,
+                    "max_positions": _limits.max_positions,
+                    "degraded": _portfolio_state.degraded,
+                    "degraded_reasons": _portfolio_state.degraded_reasons,
+                }
+
+                # Tier 3: stress test summary (advisory)
+                try:
+                    from app.services.risk.stress_test import run_stress_test as _run_st
+                    _st_report = _run_st(
+                        _portfolio_state.open_positions, _p_eq, _portfolio_state.used_margin,
+                    )
+                    _portfolio_context["stress_test"] = {
+                        "worst_case_pnl_pct": _st_report.worst_case_pnl_pct,
+                        "scenarios_survived": f"{_st_report.scenarios_surviving}/{_st_report.scenarios_total}",
+                        "recommendation": _st_report.recommendation,
+                    }
+                except Exception as _st_exc:
+                    logger.debug("Stress test for traces failed: %s", _st_exc)
 
             # ── Build decision in frontend-compatible format ──
             elapsed = time.time() - start_time
@@ -1654,6 +1751,8 @@ class AgentScopeRegistry:
                 "execution_summary": exec_out.get("text", "")[:500],
                 # Merge remaining trader metadata (entry, stop_loss, take_profit, reason, etc.)
                 **{k: v for k, v in trader_meta.items() if k not in ("decision", "confidence", "combined_score", "execution_allowed")},
+                # Portfolio context
+                "portfolio": _portfolio_context,
             }
 
             # Preserve initial trace metadata (e.g. triggered_by, strategy info)
@@ -1671,6 +1770,7 @@ class AgentScopeRegistry:
                 "analysis_outputs": {
                     k: {"text": v.get("text", "")[:300]} for k, v in analysis_outputs.items()
                 },
+                "portfolio_state": _portfolio_context,
             }
 
             # ── Build agentic_runtime for frontend panels ──
