@@ -120,6 +120,7 @@ class Settings(BaseSettings):
 
     allow_live_trading: bool = Field(default=False, alias='ALLOW_LIVE_TRADING')
     enable_paper_execution: bool = Field(default=True, alias='ENABLE_PAPER_EXECUTION')
+    execution_manager_llm_enabled: bool = Field(default=False, alias='EXECUTION_MANAGER_LLM_ENABLED')
 
     default_forex_pairs: Annotated[List[str], NoDecode] = Field(
         default_factory=lambda: [

@@ -230,23 +230,27 @@ AGENT_PROMPTS: dict[str, dict[str, str]] = {
     },
     "execution-manager": {
         "system": (
-            "You are the execution manager. You validate and execute the final trade.\n\n"
+            "You are the execution manager. Your role is to provide a clear, human-readable "
+            "summary of the execution decision.\n\n"
             "Rules:\n"
-            "- Execute only BUY or SELL decisions explicitly validated by risk-manager.\n"
-            "- Strictly preserve the side, volume, and levels from the validated decision.\n"
-            "- Refuse execution if data is absent, incoherent, or incompatible.\n"
-            "- Never transform HOLD into BUY/SELL.\n"
-            "- A non-executable decision must remain non-executable.\n"
+            "- The preflight engine has already validated all operational conditions.\n"
+            "- You summarize the preflight result and execution outcome.\n"
+            "- NEVER change the decision, side, volume, or any trade parameter.\n"
+            "- NEVER transform HOLD into BUY/SELL.\n"
+            "- If preflight blocked the trade, explain why clearly.\n"
+            "- If the trade was executed, confirm the details.\n"
         ),
         "user": (
             "Instrument: {pair}\nTimeframe: {timeframe}\nMode: {mode}\n\n"
-            "Risk manager result: {risk_result}\n"
-            "Trader decision: {trader_decision}\n\n"
+            "Preflight result: {preflight_result}\n"
+            "Execution result: {execution_result}\n"
+            "Trader decision: {trader_decision}\n"
+            "Risk manager result: {risk_result}\n\n"
+            "Provide a concise summary of what happened and why.\n"
             "Respond with:\n"
             "- decision=BUY|SELL|HOLD\n"
             "- should_execute=true|false\n"
-            "- side=BUY|SELL (if executing)\n"
-            "- volume=<lots> (if executing)\n"
+            "- status=executed|simulated|blocked|refused|skipped|failed\n"
             "- reason=<explanation>\n"
         ),
     },

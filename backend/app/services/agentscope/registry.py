@@ -1571,30 +1571,93 @@ class AgentScopeRegistry:
                 _set_progress(_phase4_progress.get(name, 65))
                 t0 = time.time()
 
-                # Skip LLM for risk-manager and execution-manager when trader decided HOLD
-                if _trader_decision_is_hold and name in ("risk-manager", "execution-manager"):
-                    if name == "risk-manager":
-                        hold_text = "accepted=false, suggested_volume=0, reasons=[\"HOLD decision\"]"
-                        hold_meta = {
-                            "accepted": False,
-                            "suggested_volume": 0.0,
-                            "reasons": ["HOLD decision"],
-                            "degraded": False,
-                        }
-                    else:
-                        hold_text = "decision=HOLD, should_execute=false, volume=0, reason=\"HOLD — no trade to execute\""
-                        hold_meta = {
-                            "decision": "HOLD",
-                            "should_execute": False,
-                            "side": None,
-                            "volume": 0.0,
-                            "reason": "HOLD — no trade to execute",
-                            "degraded": False,
-                        }
+                # Skip LLM for risk-manager when trader decided HOLD
+                if _trader_decision_is_hold and name == "risk-manager":
+                    hold_text = "accepted=false, suggested_volume=0, reasons=[\"HOLD decision\"]"
+                    hold_meta = {
+                        "accepted": False,
+                        "suggested_volume": 0.0,
+                        "reasons": ["HOLD decision"],
+                        "degraded": False,
+                    }
                     current_msg = Msg(name, hold_text, "assistant", metadata=hold_meta)
                     step_ms = (time.time() - t0) * 1000
                     d = _msg_to_dict(current_msg)
                     d["llm_enabled"] = False
+                elif name == "execution-manager":
+                    # ── Preflight engine (deterministic) ──
+                    from app.services.execution.preflight import ExecutionPreflightEngine
+                    _preflight = ExecutionPreflightEngine()
+                    _pf_result = _preflight.validate(
+                        trader_output=_trader_out or {},
+                        risk_output=_risk_out or {},
+                        snapshot=snapshot,
+                        pair=pair,
+                        mode=getattr(run, "mode", "simulation"),
+                    )
+
+                    # Execute if preflight passed and not simulation
+                    _exec_result: dict | None = None
+                    if _pf_result.can_execute and _pf_result.mode != "simulation":
+                        try:
+                            from app.services.execution.executor import ExecutionService
+                            _exec_svc = ExecutionService()
+                            _exec_result = await _exec_svc.execute(
+                                run_id=run.id,
+                                mode=_pf_result.mode,
+                                symbol=_pf_result.symbol,
+                                side=_pf_result.side,
+                                volume=_pf_result.volume,
+                                stop_loss=_pf_result.stop_loss,
+                                take_profit=_pf_result.take_profit,
+                                metaapi_account_ref=metaapi_account_ref,
+                            )
+                        except Exception as _exec_exc:
+                            logger.warning("Execution failed: %s", _exec_exc)
+                            from app.services.execution.preflight import ExecutionStatus
+                            _pf_result.status = ExecutionStatus.FAILED
+                            _pf_result.reason = f"Execution error: {_exec_exc}"
+
+                    # Optional LLM summary
+                    from app.core.config import get_settings as _get_s
+                    _use_llm = _get_s().execution_manager_llm_enabled
+                    if _use_llm and not _trader_decision_is_hold:
+                        base_vars["preflight_result"] = str({
+                            "status": _pf_result.status.value,
+                            "can_execute": _pf_result.can_execute,
+                            "reason": _pf_result.reason,
+                            "checks_passed": _pf_result.checks_passed,
+                            "checks_failed": _pf_result.checks_failed,
+                        })
+                        base_vars["execution_result"] = str(_exec_result or "N/A")
+                        current_msg = await _call_agent(
+                            name, current_msg,
+                            trader_out=_trader_out, risk_out=_risk_out,
+                        )
+                        step_ms = (time.time() - t0) * 1000
+                        d = _msg_to_dict(current_msg, tool_invocations=agent_tool_invocations.get(name, {}))
+                        d["llm_enabled"] = True
+                    else:
+                        # Deterministic summary
+                        _exec_status = _pf_result.status.value
+                        _exec_text = f"status={_exec_status}, reason={_pf_result.reason}"
+                        _exec_meta = {
+                            "decision": _pf_result.side or "HOLD",
+                            "should_execute": _pf_result.can_execute,
+                            "side": _pf_result.side,
+                            "volume": _pf_result.volume,
+                            "status": _exec_status,
+                            "reason": _pf_result.reason,
+                            "preflight": {
+                                "checks_passed": _pf_result.checks_passed,
+                                "checks_failed": _pf_result.checks_failed,
+                            },
+                            "degraded": False,
+                        }
+                        current_msg = Msg(name, _exec_text, "assistant", metadata=_exec_meta)
+                        step_ms = (time.time() - t0) * 1000
+                        d = _msg_to_dict(current_msg)
+                        d["llm_enabled"] = False
                 else:
                     current_msg = await _call_agent(
                         name, current_msg,
