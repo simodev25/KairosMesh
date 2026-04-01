@@ -154,7 +154,7 @@ function normalizeBooleanSetting(value: unknown, fallback = false): boolean {
 function defaultModelForProvider(provider: LlmProvider): string {
   if (provider === 'openai') return 'gpt-4o-mini';
   if (provider === 'mistral') return 'mistral-small-latest';
-  return 'llama3.1';
+  return 'deepseek-v3.2';
 }
 
 function parseSymbolInput(value: string): string[] {
@@ -357,7 +357,7 @@ export function ConnectorsPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigTabId>('models');
 
-  const [defaultLlmModel, setDefaultLlmModel] = useState('llama3.1');
+  const [defaultLlmModel, setDefaultLlmModel] = useState('deepseek-v3.2');
   const [llmProvider, setLlmProvider] = useState<LlmProvider>('ollama');
   const [decisionMode, setDecisionMode] = useState<DecisionMode>('conservative');
   const [agentModels, setAgentModels] = useState<Record<string, string>>(
