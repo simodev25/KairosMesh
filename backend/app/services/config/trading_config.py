@@ -272,6 +272,31 @@ def get_param_catalog() -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def get_active_config_version(db: Any = None) -> int:
+    """Return the latest trading config version number, or 0 if none."""
+    if db is None:
+        try:
+            from app.db.session import SessionLocal
+            db = SessionLocal()
+            try:
+                return _query_max_version(db)
+            finally:
+                db.close()
+        except Exception:
+            return 0
+    return _query_max_version(db)
+
+
+def _query_max_version(db: Any) -> int:
+    try:
+        from app.db.models.trading_config_version import TradingConfigVersion
+        from sqlalchemy import func
+        result = db.query(func.max(TradingConfigVersion.version)).scalar()
+        return result or 0
+    except Exception:
+        return 0
+
+
 def get_current_values(decision_mode: str, execution_mode: str) -> dict[str, dict[str, Any]]:
     """Return current effective values for all configurable parameters."""
     gating = get_effective_gating_policy(decision_mode)

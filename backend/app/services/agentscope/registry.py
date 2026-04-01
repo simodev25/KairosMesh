@@ -984,10 +984,19 @@ class AgentScopeRegistry:
                 "execution_manager": _bundle_out("execution-manager"),
             }
 
+            # Resolve config version for debug trace
+            _trace_config_version = 0
+            try:
+                from app.services.config.trading_config import get_active_config_version as _get_cv
+                _trace_config_version = _get_cv(None)
+            except Exception:
+                pass
+
             payload = {
                 "schema_version": 2,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "runtime_engine": "agentscope_v1",
+                "config_version": _trace_config_version,
                 "run": {
                     "id": run.id,
                     "pair": pair,
@@ -995,6 +1004,7 @@ class AgentScopeRegistry:
                     "mode": getattr(run, "mode", "simulation"),
                     "status": run.status,
                     "risk_percent": risk_percent,
+                    "config_version": _trace_config_version,
                     "created_at": str(getattr(run, "created_at", "")),
                     "updated_at": str(getattr(run, "updated_at", "")),
                 },
@@ -1065,7 +1075,7 @@ class AgentScopeRegistry:
         pair: str = "", timeframe: str = "", risk_percent: float = 1.0,
         analysis_outputs: dict | None = None,
         trader_out: dict | None = None, risk_out: dict | None = None,
-        news: dict | None = None,
+        news: dict | None = None, decision_mode: str = "balanced",
     ) -> Msg:
         """Run agent tools deterministically without LLM — passes proper args."""
         from app.services.agentscope.toolkit import AGENT_TOOL_MAP
@@ -1083,6 +1093,7 @@ class AgentScopeRegistry:
                     tool_id, ohlc=ohlc, snapshot=snapshot,
                     pair=pair, timeframe=timeframe, risk_percent=risk_percent,
                     trader_out=trader_out, risk_out=risk_out, news=news,
+                    analysis_outputs=analysis_outputs, decision_mode=decision_mode,
                 )
                 result = await client.call_tool(tool_id, kwargs)
                 results[tool_id] = result
@@ -1090,14 +1101,45 @@ class AgentScopeRegistry:
                 results[tool_id] = {"error": str(exc)}
 
         text = json.dumps(results, default=str)
-        return Msg(agent_name, f"[deterministic] {text}", "assistant")
+
+        # Build structured metadata for trader-agent deterministic fallback
+        metadata: dict = {}
+        if agent_name == "trader-agent":
+            gating = results.get("decision_gating", {})
+            sizing = results.get("trade_sizing", {})
+            contradiction = results.get("contradiction_detector", {})
+
+            gates_passed = gating.get("gates_passed", False)
+            # Derive direction from deterministic score
+            from app.services.agentscope.decision_helpers import compute_deterministic_score
+            _det_score = compute_deterministic_score(analysis_outputs or {})
+
+            if gates_passed and abs(_det_score) >= 0.05:
+                decision = "BUY" if _det_score > 0 else "SELL"
+            else:
+                decision = "HOLD"
+
+            metadata = {
+                "decision": decision,
+                "combined_score": round(_det_score, 4),
+                "confidence": gating.get("confidence", 0.0) if isinstance(gating, dict) else 0.0,
+                "execution_allowed": gates_passed and decision != "HOLD",
+                "entry": sizing.get("entry"),
+                "stop_loss": sizing.get("stop_loss"),
+                "take_profit": sizing.get("take_profit"),
+                "reason": f"deterministic: gates={'passed' if gates_passed else 'blocked'}, score={_det_score:.4f}",
+                "degraded": False,
+            }
+
+        return Msg(agent_name, f"[deterministic] {text}", "assistant", metadata=metadata)
 
     @staticmethod
     def _build_tool_kwargs(
         tool_id: str, ohlc: dict, snapshot: dict,
         pair: str = "", timeframe: str = "", risk_percent: float = 1.0,
         trader_out: dict | None = None, risk_out: dict | None = None,
-        news: dict | None = None,
+        news: dict | None = None, analysis_outputs: dict | None = None,
+        decision_mode: str = "balanced",
     ) -> dict:
         """Build appropriate kwargs for each MCP tool in deterministic mode."""
         closes = ohlc.get("closes", [])
@@ -1144,21 +1186,45 @@ class AgentScopeRegistry:
                 "change_pct": snapshot.get("change_pct", 0.0),
             }
         if tool_id == "decision_gating":
+            # Use pre-computed deterministic score + aligned sources
+            from app.services.agentscope.decision_helpers import (
+                compute_deterministic_score,
+                count_aligned_sources,
+            )
+            _outputs = analysis_outputs or {}
+            _det_score = compute_deterministic_score(_outputs)
+            _direction = "bullish" if _det_score > 0 else ("bearish" if _det_score < 0 else "neutral")
+            _aligned = count_aligned_sources(_outputs, _direction)
+            # Confidence: use average of Phase 1 agent confidences
+            _confs = [
+                float((_outputs.get(a, {}).get("metadata", {}) or {}).get("confidence", 0))
+                for a in ("technical-analyst", "news-analyst", "market-context-analyst")
+            ]
+            _avg_conf = sum(_confs) / len(_confs) if _confs else 0.0
             return {
-                "combined_score": 0.0, "confidence": 0.0,
-                "aligned_sources": 0, "mode": "balanced",
+                "combined_score": abs(_det_score),
+                "confidence": round(_avg_conf, 4),
+                "aligned_sources": _aligned,
+                "mode": decision_mode,
             }
         if tool_id == "contradiction_detector":
+            from app.services.agentscope.decision_helpers import derive_trend_momentum
+            _trend, _momentum = derive_trend_momentum(snapshot)
             return {
                 "macd_diff": snapshot.get("macd_diff", 0.0),
                 "atr": snapshot.get("atr", 0.001),
-                "trend": snapshot.get("trend", "neutral"),
+                "trend": _trend,
+                "momentum": _momentum,
             }
         if tool_id == "trade_sizing":
+            # Derive side from deterministic score
+            from app.services.agentscope.decision_helpers import compute_deterministic_score as _cds
+            _det = _cds(analysis_outputs or {})
+            _side = "BUY" if _det > 0 else ("SELL" if _det < 0 else "HOLD")
             return {
                 "price": snapshot.get("last_price", 0.0),
                 "atr": snapshot.get("atr", 0.0),
-                "decision_side": "HOLD",
+                "decision_side": _side,
             }
         if tool_id == "position_size_calculator":
             td = (trader_out or {}).get("metadata", {})
@@ -1346,6 +1412,7 @@ class AgentScopeRegistry:
                     risk_percent=risk_percent, analysis_outputs=analysis_outputs,
                     trader_out=trader_out, risk_out=risk_out,
                     news=market_data.get("news", {}),
+                    decision_mode=base_vars.get("decision_mode", "balanced"),
                 )
 
             # Clear run-scoped indicator cache before starting agents
@@ -1576,6 +1643,7 @@ class AgentScopeRegistry:
             base_vars["debate_confidence"] = str(debate_result.confidence)
             base_vars["debate_reason"] = str(debate_result.reason or "")
             base_vars["mode"] = getattr(run, "mode", "simulation")
+            base_vars["decision_mode"] = model_selector.resolve_decision_mode(db)
             base_vars["deterministic_score"] = str(_det_score)
             base_vars["score_band_min"] = str(_score_band[0])
             base_vars["score_band_max"] = str(_score_band[1])
@@ -1855,6 +1923,14 @@ class AgentScopeRegistry:
                 if trade_combined_score is None:
                     trade_combined_score = gating_inv.get("data", {}).get("combined_score", 0.0)
 
+            # Resolve active config version
+            _config_version = 0
+            try:
+                from app.services.config.trading_config import get_active_config_version
+                _config_version = get_active_config_version(db)
+            except Exception:
+                pass
+
             run.status = "completed"
             run.decision = {
                 # Frontend reads these exact fields
@@ -1881,6 +1957,8 @@ class AgentScopeRegistry:
                 **{k: v for k, v in trader_meta.items() if k not in ("decision", "confidence", "combined_score", "execution_allowed")},
                 # Portfolio context
                 "portfolio": _portfolio_context,
+                # Config version used for this run
+                "config_version": _config_version,
             }
 
             # Preserve initial trace metadata (e.g. triggered_by, strategy info)
@@ -1888,6 +1966,7 @@ class AgentScopeRegistry:
             run.trace = {
                 **initial_trace,
                 "runtime_engine": "agentscope_v1",
+                "config_version": _config_version,
                 "elapsed_seconds": round(elapsed, 1),
                 "market_data_source": snapshot.get("market_data_source", "unknown"),
                 "market_data_bars": len(ohlc.get("closes", [])),
@@ -2005,6 +2084,7 @@ class AgentScopeRegistry:
                     ohlc=ohlc, snapshot=snapshot, pair=pair, timeframe=timeframe,
                     risk_percent=1.0, analysis_outputs=analysis_outputs,
                     news=market_data.get("news", {}),
+                    decision_mode=base_vars.get("decision_mode", "balanced") if 'base_vars' in dir() else "balanced",
                 )
 
             # ── Phase 1: Parallel analysts ──

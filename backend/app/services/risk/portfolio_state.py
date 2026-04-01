@@ -65,14 +65,42 @@ class PortfolioStateService:
     """Aggregates real-time account state from MetaAPI + daily snapshots from DB."""
 
     @staticmethod
+    def _resolve_contract_size(symbol: str) -> float:
+        """Resolve contract size for a symbol using InstrumentClassifier + RiskEngine specs."""
+        try:
+            from app.services.risk.rules import _CONTRACT_SPECS
+            from app.services.market.instrument import InstrumentClassifier
+            descriptor = InstrumentClassifier.classify(symbol)
+            ac = descriptor.asset_class.value.lower()
+            spec = _CONTRACT_SPECS.get(ac, _CONTRACT_SPECS.get("unknown", {}))
+            return float(spec.get("contract_size", 100_000))
+        except Exception:
+            return 100_000  # safe default for forex
+
+    @staticmethod
     def _estimate_position_risk(pos: OpenPosition, equity: float) -> float:
-        """Estimate risk % of a single position based on SL distance or fallback."""
+        """Estimate risk % of a single position based on SL distance or fallback.
+
+        Uses the real contract size per asset class (forex=100k, crypto=1, metal=100, etc.)
+        and pip value to compute the actual monetary risk.
+        """
         if equity <= 0:
             return 0.0
         if pos.stop_loss and pos.stop_loss > 0 and pos.entry_price > 0:
             sl_distance = abs(pos.entry_price - pos.stop_loss)
-            risk_value = sl_distance * pos.volume * 100_000  # simplified for forex
-            return min((risk_value / equity) * 100, 100.0)
+            # Use real pip value from RiskEngine for accurate risk calculation
+            try:
+                from app.services.risk.rules import RiskEngine
+                engine = RiskEngine()
+                pip_size = engine._pip_size(pos.symbol, pos.entry_price)
+                pip_value = engine._pip_value_per_lot(pos.symbol)
+                sl_pips = sl_distance / pip_size if pip_size > 0 else 0
+                risk_value = sl_pips * pip_value * pos.volume
+            except Exception:
+                # Fallback: use contract size directly
+                contract_size = PortfolioStateService._resolve_contract_size(pos.symbol)
+                risk_value = sl_distance * pos.volume * contract_size
+            return min(round((risk_value / equity) * 100, 2), 100.0)
         # Fallback: use 2% per position as conservative estimate
         return 2.0
 

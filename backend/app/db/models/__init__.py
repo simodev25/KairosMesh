@@ -13,6 +13,7 @@ from app.db.models.portfolio_snapshot import PortfolioSnapshot
 from app.db.models.prompt_template import PromptTemplate
 from app.db.models.run import AnalysisRun
 from app.db.models.strategy import Strategy
+from app.db.models.trading_config_version import TradingConfigVersion
 from app.db.models.user import User
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     'PortfolioSnapshot',
     'LlmCallLog',
     'Strategy',
+    'TradingConfigVersion',
 ]
