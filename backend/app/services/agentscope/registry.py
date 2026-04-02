@@ -1343,7 +1343,7 @@ class AgentScopeRegistry:
                 name: str, msg: Msg,
                 trader_out: dict | None = None, risk_out: dict | None = None,
             ) -> Msg:
-                """Call agent via LLM (with retry on 5xx and timeout) or deterministic.
+                """Call agent via LLM when enabled, deterministic only when disabled.
 
                 AgentScope's ReActAgent catches ``asyncio.CancelledError``
                 internally in ``handle_interrupt()`` and returns a Msg with
@@ -1351,8 +1351,7 @@ class AgentScopeRegistry:
                 "I noticed that you have interrupted me".  This means
                 ``asyncio.wait_for`` will NOT raise ``TimeoutError`` — it gets
                 a normal-looking result.  We must therefore check for the
-                ``_is_interrupted`` flag explicitly and fall back to
-                deterministic execution when detected.
+                ``_is_interrupted`` flag explicitly and treat it as a timeout.
                 """
                 if name in agents:
                     schema = AGENT_STRUCTURED_MODELS.get(name)
@@ -1379,18 +1378,24 @@ class AgentScopeRegistry:
                             if isinstance(_meta, dict) and _meta.get("_is_interrupted"):
                                 logger.warning(
                                     "Agent %s was interrupted (likely timeout after %ds), "
-                                    "falling back to deterministic",
+                                    "propagating error because llm_enabled=true",
                                     name, _agent_timeout,
                                 )
                                 # Still extract partial tool invocations if any
                                 agent_tool_invocations[name] = await _extract_tool_invocations(agents[name])
-                                break
+                                raise asyncio.TimeoutError(
+                                    f"Agent {name} interrupted after timeout window"
+                                )
 
                             agent_tool_invocations[name] = await _extract_tool_invocations(agents[name])
                             return result
                         except asyncio.TimeoutError:
-                            logger.warning("Agent %s timed out after %ds, falling back to deterministic", name, _agent_timeout)
-                            break
+                            logger.warning(
+                                "Agent %s timed out after %ds (llm_enabled=true), propagating error",
+                                name,
+                                _agent_timeout,
+                            )
+                            raise
                         except Exception as exc:
                             last_err = exc
                             err_str = str(exc)
@@ -1405,7 +1410,7 @@ class AgentScopeRegistry:
                             # All retries exhausted — propagate the error
                             logger.error("Agent %s failed after 3 retries: %s", name, str(last_err)[:200])
                             raise last_err
-                # Deterministic fallback (LLM disabled, timeout, interrupted, or retry exhaustion)
+                # Deterministic path only when LLM is disabled for this agent.
                 return await self._run_deterministic(
                     name, toolkits.get(name), msg,
                     ohlc=ohlc, snapshot=snapshot, pair=pair, timeframe=timeframe,

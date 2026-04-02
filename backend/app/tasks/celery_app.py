@@ -35,7 +35,7 @@ celery_app.conf.task_acks_late = settings.celery_task_acks_late
 celery_app.conf.task_reject_on_worker_lost = settings.celery_task_reject_on_worker_lost
 celery_app.conf.task_track_started = settings.celery_task_track_started
 celery_app.conf.worker_hijack_root_logger = True
-celery_app.conf.worker_redirect_stdouts_level = 'ERROR'
+celery_app.conf.worker_redirect_stdouts_level = 'INFO'
 
 
 # Ensure task module is imported when worker boots with "-A ...celery_app".
