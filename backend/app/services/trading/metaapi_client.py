@@ -27,6 +27,24 @@ logger = logging.getLogger(__name__)
 
 class MetaApiClient:
     _CACHE_PREFIX = 'metaapi:v1'
+    _SDK_NOISY_LOGGERS = (
+        'ClientApiClient',
+        'ConnectionHealthMonitor',
+        'DomainClient',
+        'HttpClient',
+        'LatencyService',
+        'MemoryHistoryStorage',
+        'MetaApiConnection',
+        'MetaApiConnectionInstance',
+        'MetaApiWebsocketClient',
+        'PacketLogger',
+        'RpcMetaApiConnection',
+        'RpcMetaApiConnectionInstance',
+        'StreamingMetaApiConnectionInstance',
+        'SubscriptionManager',
+        'SynchronizationThrottler',
+        'TerminalState',
+    )
     _SUCCESS_TRADE_STRING_CODES = {
         'ERR_NO_ERROR',
         'TRADE_RETCODE_PLACED',
@@ -34,6 +52,7 @@ class MetaApiClient:
         'TRADE_RETCODE_DONE_PARTIAL',
         'TRADE_RETCODE_NO_CHANGES',
     }
+    _sdk_logging_configured = False
     _SUCCESS_TRADE_NUMERIC_CODES = {0, 10008, 10009, 10010, 10025}
     _FAILURE_MARKERS = ('UNKNOWN', 'ERROR', 'INVALID', 'REJECT', 'DENIED', 'DISABLED', 'TIMEOUT', 'NO_MONEY')
     _MARKET_TIMEFRAME_MAP = {
@@ -552,18 +571,29 @@ class MetaApiClient:
             'Content-Type': 'application/json',
         }
 
+    @classmethod
+    def _configure_sdk_logging(cls, metaapi_cls: Any) -> None:
+        if cls._sdk_logging_configured or metaapi_cls is None:
+            return
+        if not hasattr(metaapi_cls, 'enable_logging'):
+            return
+        try:
+            metaapi_cls.enable_logging()
+        except Exception as exc:
+            logger.debug('metaapi sdk logging bridge setup failed: %s', exc)
+            return
+        # Keep SDK reconnect noise out of worker logs; rely on app-level warnings instead.
+        for logger_name in cls._SDK_NOISY_LOGGERS:
+            logging.getLogger(logger_name).setLevel(logging.CRITICAL)
+        cls._sdk_logging_configured = True
+
     def _get_sdk(self, region: str | None = None):
         region = region or self.settings.metaapi_region
         if not self._metaapi_cls or not self._resolve_token():
             return None
         if region not in self._sdk_by_region:
+            self._configure_sdk_logging(self._metaapi_cls)
             sdk = self._metaapi_cls(self._resolve_token(), {'region': region})
-            # Disable SDK internal console logging to prevent reconnection log spam
-            if hasattr(sdk, 'enable_logging'):
-                try:
-                    sdk.enable_logging(False)
-                except Exception:
-                    pass
             self._sdk_by_region[region] = sdk
         return self._sdk_by_region[region]
 

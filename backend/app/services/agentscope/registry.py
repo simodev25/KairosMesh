@@ -1497,17 +1497,22 @@ class AgentScopeRegistry:
                 f"Analysis results from Phase 1:\n{analysis_summary}\n\n"
                 f"Original context:\n{context_msg.get_text_content()}", "system")
 
-            # Rebuild researcher toolkits with Phase 1 outputs for evidence_query
-            for rname in ("bullish-researcher", "bearish-researcher"):
+            # Rebuild researcher + trader-agent toolkits with Phase 1 outputs.
+            # Researchers need analysis_outputs for evidence_query.
+            # Trader-agent needs analysis_outputs so decision_gating gets
+            # pre-injected aligned_sources and the deterministic score (DM-5).
+            for rname in ("bullish-researcher", "bearish-researcher", "trader-agent"):
                 toolkits[rname] = await build_toolkit(
                     rname, ohlc=ohlc, news=market_data.get("news", {}),
                     analysis_outputs=analysis_outputs,
                     skills=model_selector.resolve_skills(db, rname),
+                    snapshot=snapshot,
                 )
                 if rname in agents:
+                    is_debate = rname in ("bullish-researcher", "bearish-researcher", "trader-agent")
                     agents[rname] = ALL_AGENT_FACTORIES[rname](
                         model=build_model(provider, agent_model_names[rname], base_url, api_key),
-                        formatter=debate_fmt,
+                        formatter=debate_fmt if is_debate else chat_fmt,
                         toolkit=toolkits[rname],
                         sys_prompt=self._get_sys_prompt(rname, db, base_vars),
                     )
