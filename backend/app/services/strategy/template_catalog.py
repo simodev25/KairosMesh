@@ -30,7 +30,7 @@ EXECUTABLE_STRATEGY_TEMPLATES: dict[str, StrategyTemplateSpec] = {
     'bollinger_breakout': StrategyTemplateSpec(
         key='bollinger_breakout',
         description='Bollinger Band breakout',
-        params={'bb_period': 'int (5-50)', 'bb_std': 'float (0.5-4.0)', 'volume_filter': 'bool'},
+        params={'bb_period': 'int (5-50)', 'bb_std': 'float (0.5-4.0)'},
         best_for='breakout setups',
         category='breakout',
     ),

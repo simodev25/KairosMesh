@@ -34,12 +34,10 @@ Available strategy templates and their configurable parameters:
    - rsi_period: int (7-21, default 14)
    - oversold: int (15-35, default 30)
    - overbought: int (65-85, default 70)
-   - atr_multiplier: float (1.0-4.0, default 2.0)
 
 3. bollinger_breakout: Bollinger Band breakout
    - bb_period: int (10-30, default 20)
    - bb_std: float (1.0-3.0, default 2.0)
-   - volume_filter: bool (default true)
 
 4. macd_divergence: MACD signal line crossover
    - fast: int (6-15, default 12)
@@ -231,9 +229,9 @@ async def generate_strategy(
             if template == 'ema_crossover':
                 params = {'ema_fast': 9, 'ema_slow': 21, 'rsi_filter': 30}
             elif template == 'rsi_mean_reversion':
-                params = {'rsi_period': 14, 'oversold': 30, 'overbought': 70, 'atr_multiplier': 2.0}
+                params = {'rsi_period': 14, 'oversold': 30, 'overbought': 70}
             elif template == 'bollinger_breakout':
-                params = {'bb_period': 20, 'bb_std': 2.0, 'volume_filter': True}
+                params = {'bb_period': 20, 'bb_std': 2.0}
             else:
                 params = {'fast': 12, 'slow': 26, 'signal': 9}
             name = f'{template}_{random.randint(100, 999)}'
