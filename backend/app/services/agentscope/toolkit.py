@@ -70,11 +70,14 @@ def _build_docstring(tool_id: str, original_fn) -> str:
     return "\n".join(doc_lines)
 
 
-def _wrap_mcp_tool(tool_id: str, original_fn) -> Any:
+def _wrap_mcp_tool(tool_id: str, original_fn, force_kwargs: dict | None = None) -> Any:
     """Create an async wrapper that preserves the original function's signature.
 
     AgentScope parses function signatures and docstrings to build JSON schemas.
     By copying the real signature, the LLM sees the actual parameter names and types.
+
+    force_kwargs: if provided, these values ALWAYS override LLM input (cannot be
+    overwritten by None from the LLM). Used for trader_decision in risk tools.
     """
     client = get_mcp_client()
     sig = inspect.signature(original_fn)
@@ -85,7 +88,14 @@ def _wrap_mcp_tool(tool_id: str, original_fn) -> Any:
             # Bind positional args to parameter names
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
-            result = await client.call_tool(tool_id, dict(bound.arguments))
+            call_args = dict(bound.arguments)
+            # Force-inject kwargs — ALWAYS override, LLM cannot change these
+            if force_kwargs:
+                for k, v in force_kwargs.items():
+                    if v is not None:
+                        logger.info("force_kwargs: injecting %s (decision=%s)", k, v.get("decision") if isinstance(v, dict) else v)
+                        call_args[k] = v
+            result = await client.call_tool(tool_id, call_args)
             return ToolResponse(
                 content=[TextBlock(type="text", text=json.dumps(result, default=str))],
             )
@@ -165,7 +175,24 @@ async def build_toolkit(
             logger.warning("MCP tool %s not found in trading_server, skipping", tool_id)
             continue
 
-        wrapped = _wrap_mcp_tool(tool_id, original_fn)
+        # Build force_kwargs for tools where LLM must not override with None
+        _force_kwargs: dict | None = None
+        if tool_id == "portfolio_risk_evaluation" and analysis_outputs:
+            trader_out = analysis_outputs.get("trader-agent", {})
+            trader_meta = trader_out.get("metadata", {})
+            if not trader_meta or not trader_meta.get("decision"):
+                trader_meta = {k: v for k, v in trader_out.items()
+                               if k in ("decision", "conviction", "reasoning",
+                                        "key_level", "entry", "stop_loss", "take_profit")}
+            if trader_meta and trader_meta.get("decision"):
+                _force_kwargs = {"trader_decision": trader_meta}
+                logger.info("portfolio_risk_evaluation force_kwargs: decision=%s entry=%s",
+                            trader_meta.get("decision"), trader_meta.get("entry"))
+            else:
+                logger.warning("portfolio_risk_evaluation: no trader_decision found in analysis_outputs (keys=%s)",
+                               list(trader_out.keys()) if trader_out else "empty")
+
+        wrapped = _wrap_mcp_tool(tool_id, original_fn, force_kwargs=_force_kwargs)
 
         # Auto-inject OHLC arrays as preset kwargs when the tool accepts them
         sig = inspect.signature(original_fn)

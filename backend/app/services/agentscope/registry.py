@@ -1501,6 +1501,7 @@ class AgentScopeRegistry:
                             from app.services.execution.executor import ExecutionService
                             _exec_svc = ExecutionService()
                             _exec_result = await _exec_svc.execute(
+                                db=db,
                                 run_id=run.id,
                                 mode=_pf_result.mode,
                                 symbol=_pf_result.symbol,

@@ -22,3 +22,4 @@ coverage/
 .idea/
 .vscode/
 .agents/skills/architecture-designer/references/adr-template.md
+backend/mock_run/*

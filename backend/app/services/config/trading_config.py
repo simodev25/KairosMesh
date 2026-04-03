@@ -154,6 +154,15 @@ SIZING_PARAMS: list[dict[str, Any]] = [
         "max": 10.0,
         "step": 0.1,
     },
+    {
+        "key": "min_sl_distance_pct",
+        "label": "Min SL Distance (%)",
+        "description": "Distance minimum du stop loss en % du prix. En dessous, le trade est refuse (SL trop serre). Baisser pour les petits timeframes (M5/M15). Ex: 0.02 = SL doit etre a au moins 0.02% du prix.",
+        "type": "float",
+        "min": 0.005,
+        "max": 0.5,
+        "step": 0.005,
+    },
 ]
 
 
@@ -244,9 +253,10 @@ def get_effective_sizing() -> dict[str, float]:
     """Resolve trade sizing ATR multipliers: DB overrides > code defaults."""
     from app.services.agentscope.constants import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER
 
-    defaults = {
+    defaults: dict[str, float] = {
         "sl_atr_multiplier": SL_ATR_MULTIPLIER,
         "tp_atr_multiplier": TP_ATR_MULTIPLIER,
+        "min_sl_distance_pct": 0.05,
     }
     runtime = _get_runtime_settings()
     sizing_overrides = runtime.get("sizing", {})
