@@ -22,7 +22,8 @@ from app.schemas.strategy import StrategyOut, StrategyGenerateRequest, StrategyE
 router = APIRouter(prefix='/strategies', tags=['strategies'])
 logger = logging.getLogger(__name__)
 
-VALID_TEMPLATES = ['ema_crossover', 'rsi_mean_reversion', 'bollinger_breakout', 'macd_divergence']
+from app.services.mcp.trading_server import STRATEGY_TEMPLATES
+VALID_TEMPLATES = list(STRATEGY_TEMPLATES.keys())
 
 STRATEGY_SYSTEM_PROMPT = """You are a quantitative trading strategy designer. You create trading strategies based on user descriptions.
 
@@ -196,10 +197,12 @@ async def generate_strategy(
     from app.services.strategy.designer import run_strategy_designer
 
     # Run the agent — it analyzes the market then builds a strategy
+    _pair = payload.pair or 'EURUSD.PRO'
+    _timeframe = (payload.timeframe or 'H1').upper()
     agent_result = await run_strategy_designer(
         db=db,
-        pair='EURUSD.PRO',
-        timeframe='H1',
+        pair=_pair,
+        timeframe=_timeframe,
         user_prompt=payload.prompt,
     )
 
@@ -207,8 +210,8 @@ async def generate_strategy(
     params = agent_result.get('params', {})
     name = agent_result.get('name', '')
     description = agent_result.get('description', '')
-    symbol = agent_result.get('symbol', 'EURUSD.PRO')
-    timeframe_val = agent_result.get('timeframe', 'H1')
+    symbol = agent_result.get('symbol', _pair)
+    timeframe_val = agent_result.get('timeframe', _timeframe)
     prompt_history = agent_result.get('prompt_history', [])
 
     if not template or template not in VALID_TEMPLATES:
@@ -358,8 +361,12 @@ async def edit_strategy(
         history.append({'role': 'assistant', 'content': f'Could not process edit. Current params unchanged: {json.dumps(strategy.params)}'})
 
     strategy.prompt_history = history
-    if strategy.status == 'REJECTED':
+    # Reset to DRAFT when params change — requires re-validation
+    if strategy.status in ('VALIDATED', 'REJECTED'):
         strategy.status = 'DRAFT'
+        strategy.score = None
+        strategy.metrics = {}
+        logger.info('strategy_edit_reset id=%s — params changed, reset to DRAFT for re-validation', strategy.strategy_id)
     db.commit()
     db.refresh(strategy)
     return StrategyOut.model_validate(strategy)

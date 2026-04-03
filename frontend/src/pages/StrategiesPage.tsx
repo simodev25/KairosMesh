@@ -53,6 +53,7 @@ function StrategyCard({
   onPromote,
   onViewChart,
   onDelete,
+  onDetail,
   validatingId,
 }: {
   strategy: Strategy;
@@ -60,6 +61,7 @@ function StrategyCard({
   onPromote: (id: number, target: string) => void;
   onViewChart: (id: number) => void;
   onDelete: (id: number) => void;
+  onDetail: (strategy: Strategy) => void;
   validatingId: number | null;
 }) {
   const m = strategy.metrics;
@@ -165,13 +167,18 @@ function StrategyCard({
         {strategy.status === 'REJECTED' && (
           <span className="text-[9px] font-mono text-red-400">STRATEGY_DISCARDED</span>
         )}
-        {/* VIEW_ON_TRADING_CHART for VALIDATED, PAPER, LIVE */}
+        <button
+          className="btn-ghost text-[9px] flex items-center gap-1 ml-auto"
+          onClick={() => onDetail(strategy)}
+        >
+          DETAIL
+        </button>
         {['VALIDATED', 'PAPER', 'LIVE'].includes(strategy.status) && (
           <button
-            className="btn-ghost text-[9px] flex items-center gap-1 ml-auto"
+            className="btn-ghost text-[9px] flex items-center gap-1"
             onClick={() => onViewChart(strategy.id)}
           >
-            <LineChart className="w-3 h-3" /> VIEW_ON_CHART
+            <LineChart className="w-3 h-3" /> CHART
           </button>
         )}
       </div>
@@ -185,7 +192,10 @@ export function StrategiesPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [validatingId, setValidatingId] = useState<number | null>(null);
+  const [detailStrategy, setDetailStrategy] = useState<Strategy | null>(null);
   const [generatePrompt, setGeneratePrompt] = useState('');
+  const [generatePair, setGeneratePair] = useState('EURUSD.PRO');
+  const [generateTf, setGenerateTf] = useState('H1');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editPrompt, setEditPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -213,7 +223,7 @@ export function StrategiesPage() {
     setIsGenerating(true);
     setError(null);
     try {
-      await api.generateStrategy(token, generatePrompt);
+      await api.generateStrategy(token, generatePrompt, generatePair, generateTf);
       setGeneratePrompt('');
       await loadStrategies();
     } catch (err) {
@@ -286,25 +296,48 @@ export function StrategiesPage() {
         <form onSubmit={generateStrategy} className="p-4 space-y-3">
           <div className="flex flex-wrap gap-1.5">
             {[
-              'Conservative RSI mean reversion for ranging forex with tight stops',
-              'Aggressive EMA trend following for volatile crypto pairs',
-              'Bollinger Band squeeze breakout with volume confirmation',
-              'MACD divergence momentum strategy for indices',
-              'Adaptive crossover strategy balancing speed and reliability',
+              {label: 'EMA Crossover', prompt: 'EMA crossover trend following with RSI filter'},
+              {label: 'Supertrend', prompt: 'Supertrend ATR-based trend following strategy'},
+              {label: 'ADX Trend', prompt: 'ADX directional movement — trade only strong trends'},
+              {label: 'Ichimoku', prompt: 'Ichimoku Cloud strategy with Tenkan/Kijun cross'},
+              {label: 'Parabolic SAR', prompt: 'Parabolic SAR trailing stop reversal strategy'},
+              {label: 'Donchian', prompt: 'Donchian Channel breakout turtle trading'},
+              {label: 'RSI Reversion', prompt: 'Conservative RSI mean reversion for ranging markets'},
+              {label: 'Stochastic', prompt: 'Stochastic K/D crossover reversal strategy'},
+              {label: 'Williams %R', prompt: 'Williams %R overbought/oversold mean reversion'},
+              {label: 'CCI', prompt: 'CCI reversal strategy for cyclical markets'},
+              {label: 'Keltner', prompt: 'Keltner Channel mean reversion bounce strategy'},
+              {label: 'Bollinger', prompt: 'Bollinger Band squeeze breakout with volume confirmation'},
+              {label: 'Squeeze', prompt: 'Bollinger/Keltner squeeze momentum breakout'},
+              {label: 'ATR Trail', prompt: 'ATR trailing stop trend riding strategy'},
+              {label: 'MACD', prompt: 'MACD signal crossover momentum strategy'},
+              {label: 'ROC', prompt: 'Rate of Change momentum acceleration strategy'},
+              {label: 'VWAP', prompt: 'VWAP discount/premium intraday strategy'},
+              {label: 'Triple EMA', prompt: 'Triple EMA alignment trend confirmation'},
+              {label: 'MACD+RSI', prompt: 'MACD direction + RSI timing combo strategy'},
+              {label: 'Pivots', prompt: 'Pivot Points support/resistance intraday strategy'},
             ].map((preset) => (
               <button
-                key={preset}
+                key={preset.label}
                 type="button"
-                onClick={() => setGeneratePrompt(preset)}
+                onClick={() => setGeneratePrompt(preset.prompt)}
                 className={`text-[8px] font-mono px-2 py-1 rounded border transition-colors ${
-                  generatePrompt === preset
+                  generatePrompt === preset.prompt
                     ? 'border-accent/60 bg-accent/10 text-accent'
                     : 'border-border/40 text-text-dim hover:text-accent hover:border-accent/40'
                 }`}
               >
-                {preset}
+                {preset.label}
               </button>
             ))}
+          </div>
+          <div className="flex items-center gap-2 mb-2">
+            <select value={generatePair} onChange={(e) => setGeneratePair(e.target.value)} className="text-[10px] bg-surface-alt border border-border rounded px-2 py-1.5 text-text font-mono" disabled={isGenerating}>
+              {['EURUSD.PRO','GBPUSD.PRO','USDJPY.PRO','USDCHF.PRO','AUDUSD.PRO','USDCAD.PRO','NZDUSD.PRO','EURJPY.PRO','GBPJPY.PRO','EURGBP.PRO','BTCUSD','ETHUSD','SOLUSD','ADAUSD','XRPUSD'].map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <select value={generateTf} onChange={(e) => setGenerateTf(e.target.value)} className="text-[10px] bg-surface-alt border border-border rounded px-2 py-1.5 text-text font-mono" disabled={isGenerating}>
+              {['M5','M15','H1','H4','D1'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
           </div>
           <div className="flex items-center gap-3">
             <Bot className="w-4 h-4 text-accent shrink-0" />
@@ -349,6 +382,7 @@ export function StrategiesPage() {
                 onPromote={promoteStrategy}
                 onViewChart={viewOnChart}
                 onDelete={deleteStrategy}
+                onDetail={setDetailStrategy}
                 validatingId={validatingId}
               />
               {/* LLM Edit zone */}
@@ -408,6 +442,98 @@ export function StrategiesPage() {
         <div className="hw-surface p-8 text-center">
           <Cpu className="w-8 h-8 text-text-dim mx-auto mb-3" />
           <p className="text-[11px] text-text-dim">No strategies yet. Generate one above.</p>
+        </div>
+      )}
+
+      {/* Strategy Detail Modal */}
+      {detailStrategy && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setDetailStrategy(null)}>
+          <div className="hw-surface max-w-2xl w-full max-h-[85vh] overflow-y-auto m-4 p-0" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border/30">
+              <span className="text-[11px] font-bold tracking-[0.12em] text-accent uppercase">
+                STRATEGY_DETAIL // {detailStrategy.strategy_id}
+              </span>
+              <button onClick={() => setDetailStrategy(null)} className="text-text-dim hover:text-text">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Header */}
+              <div>
+                <h3 className="text-[13px] font-bold text-text">{detailStrategy.name}</h3>
+                <p className="text-[9px] text-text-muted italic mt-1">{detailStrategy.description}</p>
+              </div>
+
+              {/* Status + Score */}
+              <div className="flex items-center gap-3">
+                <span className={`text-[8px] font-bold tracking-widest px-2 py-1 rounded border ${STATUS_COLORS[detailStrategy.status] || STATUS_COLORS.DRAFT}`}>{detailStrategy.status}</span>
+                {detailStrategy.score != null && <span className="text-[10px] font-mono text-text">Score: {detailStrategy.score}/100</span>}
+                <span className="text-[9px] font-mono text-text-muted">{detailStrategy.symbol} · {detailStrategy.timeframe}</span>
+              </div>
+
+              {/* Template + Params */}
+              <div className="p-3 rounded bg-surface-alt/30 border border-border/30">
+                <span className="micro-label">Template</span>
+                <div className="text-[11px] font-mono text-accent mt-1">{detailStrategy.template}</div>
+                <span className="micro-label mt-3 block">Parameters</span>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  {Object.entries(detailStrategy.params || {}).map(([k, v]) => (
+                    <div key={k} className="text-[9px] font-mono">
+                      <span className="text-text-dim">{k}:</span> <span className="text-text font-bold">{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Metrics */}
+              {detailStrategy.metrics && Object.keys(detailStrategy.metrics).length > 0 && (
+                <div className="p-3 rounded bg-surface-alt/30 border border-border/30">
+                  <span className="micro-label">Backtest Metrics</span>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    {Object.entries(detailStrategy.metrics).map(([k, v]) => (
+                      <div key={k} className="text-[9px] font-mono">
+                        <span className="text-text-dim">{k}:</span> <span className="text-text font-bold">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Prompt History */}
+              {detailStrategy.prompt_history && detailStrategy.prompt_history.length > 0 && (
+                <div className="p-3 rounded bg-surface-alt/30 border border-border/30">
+                  <span className="micro-label">Prompt History ({detailStrategy.prompt_history.length} messages)</span>
+                  <div className="space-y-2 mt-2 max-h-60 overflow-y-auto">
+                    {detailStrategy.prompt_history.map((msg: { role: string; content: string }, i: number) => (
+                      <div key={i} className={`text-[9px] font-mono p-2 rounded ${msg.role === 'user' ? 'bg-accent/5 border-l-2 border-accent/30' : 'bg-surface-alt/50 border-l-2 border-text-dim/20'}`}>
+                        <span className="text-[7px] font-bold uppercase text-text-dim">{msg.role}</span>
+                        <pre className="text-text-muted mt-1 whitespace-pre-wrap break-words">{msg.content}</pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Monitoring */}
+              <div className="p-3 rounded bg-surface-alt/30 border border-border/30">
+                <span className="micro-label">Monitoring</span>
+                <div className="text-[9px] font-mono mt-1">
+                  <span className="text-text-dim">Active:</span> <span className="text-text font-bold">{detailStrategy.is_monitoring ? 'Yes' : 'No'}</span>
+                  {detailStrategy.is_monitoring && (
+                    <>
+                      <span className="text-text-dim ml-3">Mode:</span> <span className="text-text">{detailStrategy.monitoring_mode}</span>
+                      <span className="text-text-dim ml-3">Risk:</span> <span className="text-text">{detailStrategy.monitoring_risk_percent}%</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Metadata */}
+              <div className="text-[8px] font-mono text-text-dim space-y-0.5">
+                <div>Created: {new Date(detailStrategy.created_at).toLocaleString()}</div>
+                <div>Updated: {new Date(detailStrategy.updated_at).toLocaleString()}</div>
+                <div>ID: {detailStrategy.id} / {detailStrategy.strategy_id}</div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -1374,6 +1374,7 @@ def portfolio_risk_evaluation(
     mode: str = "simulation",
     account_id: str | None = None,
     region: str | None = None,
+    injected_portfolio_state: object | None = None,
 ) -> dict:
     """Evaluate trade risk against live portfolio state and risk limits.
 
@@ -1397,27 +1398,30 @@ def portfolio_risk_evaluation(
             "degraded_reasons": [],
         }
 
-    # Fetch portfolio state
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                state = pool.submit(
-                    asyncio.run,
+    # Use injected portfolio state if available (from pipeline), otherwise fetch
+    if injected_portfolio_state is not None:
+        state = injected_portfolio_state
+    else:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    state = pool.submit(
+                        asyncio.run,
+                        PortfolioStateService.get_current_state(
+                            account_id=account_id, region=region,
+                        ),
+                    ).result(timeout=10)
+            else:
+                state = asyncio.run(
                     PortfolioStateService.get_current_state(
                         account_id=account_id, region=region,
-                    ),
-                ).result(timeout=10)
-        else:
-            state = asyncio.run(
-                PortfolioStateService.get_current_state(
-                    account_id=account_id, region=region,
+                    )
                 )
-            )
-    except Exception as exc:
-        logger.warning("portfolio_risk_evaluation: state fetch failed: %s", exc)
-        state = PortfolioStateService.build_defaults()
+        except Exception as exc:
+            logger.warning("portfolio_risk_evaluation: state fetch failed: %s", exc)
+            state = PortfolioStateService.build_defaults()
 
     limits = get_risk_limits(mode)
 
@@ -1584,25 +1588,134 @@ def portfolio_stress_test(
 # ── Strategy Builder tool ──────────────────────────────────────────
 
 STRATEGY_TEMPLATES = {
+    # ── Trend Following ──
     'ema_crossover': {
-        'description': 'EMA crossover with RSI filter — trend following',
-        'params': {'ema_fast': 'int (5-20)', 'ema_slow': 'int (20-100)', 'rsi_filter': 'int (25-45)'},
+        'description': 'EMA crossover with RSI filter — classic trend following',
+        'params': {'ema_fast': 'int (5-50)', 'ema_slow': 'int (20-200)', 'rsi_filter': 'int (25-45)'},
         'best_for': 'trending markets, medium-term',
+        'category': 'trend',
     },
+    'supertrend': {
+        'description': 'Supertrend indicator — ATR-based trend following with dynamic support/resistance',
+        'params': {'atr_period': 'int (7-21)', 'atr_multiplier': 'float (1.0-5.0)'},
+        'best_for': 'strong trending markets, all timeframes',
+        'category': 'trend',
+    },
+    'adx_trend': {
+        'description': 'ADX + DI directional movement — trades only when trend is strong (ADX > threshold)',
+        'params': {'adx_period': 'int (7-25)', 'adx_threshold': 'int (20-40)', 'di_period': 'int (7-25)'},
+        'best_for': 'trending markets, filters out ranging periods',
+        'category': 'trend',
+    },
+    'ichimoku': {
+        'description': 'Ichimoku Cloud — multi-component trend system with Tenkan/Kijun cross, cloud breakout',
+        'params': {'tenkan': 'int (7-12)', 'kijun': 'int (22-30)', 'senkou_b': 'int (44-60)'},
+        'best_for': 'strong trends, medium to long-term, all asset classes',
+        'category': 'trend',
+    },
+    'parabolic_sar': {
+        'description': 'Parabolic SAR — trailing stop system that flips long/short on each reversal',
+        'params': {'af_start': 'float (0.01-0.03)', 'af_step': 'float (0.01-0.03)', 'af_max': 'float (0.1-0.3)'},
+        'best_for': 'trending markets with clear directional moves',
+        'category': 'trend',
+    },
+    'donchian_breakout': {
+        'description': 'Donchian Channel breakout — buy on new highs, sell on new lows (turtle trading)',
+        'params': {'entry_period': 'int (10-55)', 'exit_period': 'int (5-20)'},
+        'best_for': 'breakout trading, medium to long-term trends',
+        'category': 'trend',
+    },
+
+    # ── Mean Reversion ──
     'rsi_mean_reversion': {
         'description': 'RSI mean reversion — buy oversold, sell overbought',
         'params': {'rsi_period': 'int (7-21)', 'oversold': 'int (15-35)', 'overbought': 'int (65-85)', 'atr_multiplier': 'float (1.0-4.0)'},
         'best_for': 'ranging markets, high volatility pairs',
+        'category': 'mean_reversion',
     },
+    'stochastic_reversal': {
+        'description': 'Stochastic oscillator K/D crossover — buy oversold cross up, sell overbought cross down',
+        'params': {'k_period': 'int (5-21)', 'd_period': 'int (3-7)', 'oversold': 'int (15-30)', 'overbought': 'int (70-85)'},
+        'best_for': 'ranging and choppy markets, short to medium-term',
+        'category': 'mean_reversion',
+    },
+    'williams_r': {
+        'description': 'Williams %R — momentum oscillator measuring overbought/oversold relative to recent range',
+        'params': {'period': 'int (7-21)', 'oversold': 'int (-90, -70)', 'overbought': 'int (-30, -10)'},
+        'best_for': 'ranging markets, mean reversion on pullbacks',
+        'category': 'mean_reversion',
+    },
+    'cci_reversal': {
+        'description': 'Commodity Channel Index — buy when CCI crosses above oversold, sell above overbought',
+        'params': {'cci_period': 'int (10-30)', 'oversold': 'int (-150, -80)', 'overbought': 'int (80, 150)'},
+        'best_for': 'cyclical markets, commodities, forex ranging',
+        'category': 'mean_reversion',
+    },
+    'keltner_reversion': {
+        'description': 'Keltner Channel mean reversion — buy below lower band, sell above upper band',
+        'params': {'ema_period': 'int (10-30)', 'atr_period': 'int (10-20)', 'atr_multiplier': 'float (1.0-3.0)'},
+        'best_for': 'ranging markets with clear boundaries',
+        'category': 'mean_reversion',
+    },
+
+    # ── Breakout / Volatility ──
     'bollinger_breakout': {
-        'description': 'Bollinger Band breakout — squeeze detection',
+        'description': 'Bollinger Band breakout — squeeze detection and breakout entry',
         'params': {'bb_period': 'int (10-30)', 'bb_std': 'float (1.0-3.0)', 'volume_filter': 'bool'},
         'best_for': 'consolidating markets, breakout setups',
+        'category': 'breakout',
     },
+    'squeeze_momentum': {
+        'description': 'Bollinger/Keltner squeeze — detects low volatility compression then trades the breakout direction',
+        'params': {'bb_period': 'int (15-25)', 'bb_std': 'float (1.5-2.5)', 'kc_period': 'int (15-25)', 'kc_multiplier': 'float (1.0-2.0)'},
+        'best_for': 'consolidation breakouts, works on all timeframes',
+        'category': 'breakout',
+    },
+    'atr_trailing_stop': {
+        'description': 'ATR-based trailing stop — enters on trend confirmation, trails stop using ATR distance',
+        'params': {'atr_period': 'int (10-21)', 'atr_multiplier': 'float (1.5-4.0)', 'trend_ema': 'int (20-50)'},
+        'best_for': 'riding strong trends with dynamic risk management',
+        'category': 'breakout',
+    },
+
+    # ── Momentum ──
     'macd_divergence': {
-        'description': 'MACD signal line crossover',
+        'description': 'MACD signal line crossover — momentum shift detection',
         'params': {'fast': 'int (6-15)', 'slow': 'int (18-30)', 'signal': 'int (5-12)'},
         'best_for': 'momentum shifts, medium to long-term',
+        'category': 'momentum',
+    },
+    'roc_momentum': {
+        'description': 'Rate of Change — measures momentum by comparing current price to N bars ago',
+        'params': {'roc_period': 'int (9-21)', 'signal_period': 'int (5-12)', 'threshold': 'float (0.5-3.0)'},
+        'best_for': 'momentum acceleration detection, trend confirmation',
+        'category': 'momentum',
+    },
+    'vwap_strategy': {
+        'description': 'VWAP — buy below VWAP (discount), sell above VWAP (premium) with trend filter',
+        'params': {'trend_ema': 'int (20-50)', 'deviation_pct': 'float (0.1-1.0)'},
+        'best_for': 'intraday trading, M5/M15/H1, high volume instruments',
+        'category': 'momentum',
+    },
+
+    # ── Multi-Indicator / Hybrid ──
+    'triple_ema': {
+        'description': 'Triple EMA (5/13/34) — alignment of 3 EMAs confirms trend, crossovers trigger entries',
+        'params': {'ema_1': 'int (3-8)', 'ema_2': 'int (10-18)', 'ema_3': 'int (25-55)'},
+        'best_for': 'trend following with momentum confirmation, all timeframes',
+        'category': 'hybrid',
+    },
+    'macd_rsi_combo': {
+        'description': 'MACD + RSI combined — MACD for direction, RSI for timing (avoid overbought/oversold entries)',
+        'params': {'macd_fast': 'int (8-14)', 'macd_slow': 'int (20-30)', 'macd_signal': 'int (7-12)', 'rsi_period': 'int (10-18)', 'rsi_oversold': 'int (25-40)', 'rsi_overbought': 'int (60-75)'},
+        'best_for': 'filtered momentum entries, reduces false signals',
+        'category': 'hybrid',
+    },
+    'pivot_points': {
+        'description': 'Pivot Points — classic S/R levels (pivot, S1/S2/S3, R1/R2/R3) for intraday trading',
+        'params': {'pivot_type': 'str (standard|fibonacci|woodie)', 'timeframe_anchor': 'str (D1|W1)'},
+        'best_for': 'intraday support/resistance trading, forex',
+        'category': 'hybrid',
     },
 }
 
@@ -1610,6 +1723,34 @@ STRATEGY_TEMPLATES = {
 def strategy_templates_info() -> dict:
     """List all available strategy templates with their parameters and best use cases."""
     return {"templates": STRATEGY_TEMPLATES}
+
+
+PARAM_RANGES: dict[str, dict[str, tuple]] = {
+    # Trend
+    "ema_crossover": {"ema_fast": (5, 50), "ema_slow": (20, 200), "rsi_filter": (15, 50)},
+    "supertrend": {"atr_period": (5, 30), "atr_multiplier": (0.5, 6.0)},
+    "adx_trend": {"adx_period": (5, 30), "adx_threshold": (15, 50), "di_period": (5, 30)},
+    "ichimoku": {"tenkan": (5, 15), "kijun": (18, 35), "senkou_b": (35, 70)},
+    "parabolic_sar": {"af_start": (0.005, 0.05), "af_step": (0.005, 0.05), "af_max": (0.05, 0.5)},
+    "donchian_breakout": {"entry_period": (5, 60), "exit_period": (3, 25)},
+    # Mean reversion
+    "rsi_mean_reversion": {"rsi_period": (5, 30), "oversold": (10, 40), "overbought": (60, 90), "atr_multiplier": (0.5, 5.0)},
+    "stochastic_reversal": {"k_period": (3, 25), "d_period": (2, 10), "oversold": (10, 35), "overbought": (65, 90)},
+    "williams_r": {"period": (5, 25)},
+    "cci_reversal": {"cci_period": (5, 40)},
+    "keltner_reversion": {"ema_period": (5, 40), "atr_period": (5, 25), "atr_multiplier": (0.5, 4.0)},
+    # Breakout
+    "bollinger_breakout": {"bb_period": (5, 50), "bb_std": (0.5, 4.0)},
+    "squeeze_momentum": {"bb_period": (10, 30), "bb_std": (1.0, 3.0), "kc_period": (10, 30), "kc_multiplier": (0.5, 3.0)},
+    "atr_trailing_stop": {"atr_period": (5, 25), "atr_multiplier": (1.0, 5.0), "trend_ema": (10, 60)},
+    # Momentum
+    "macd_divergence": {"fast": (4, 20), "slow": (15, 50), "signal": (3, 15)},
+    "roc_momentum": {"roc_period": (5, 30), "signal_period": (3, 15), "threshold": (0.1, 5.0)},
+    "vwap_strategy": {"trend_ema": (10, 60), "deviation_pct": (0.05, 2.0)},
+    # Hybrid
+    "triple_ema": {"ema_1": (2, 10), "ema_2": (8, 20), "ema_3": (20, 60)},
+    "macd_rsi_combo": {"macd_fast": (6, 16), "macd_slow": (18, 35), "macd_signal": (5, 14), "rsi_period": (7, 21), "rsi_oversold": (20, 45), "rsi_overbought": (55, 80)},
+}
 
 
 def strategy_builder(
@@ -1629,13 +1770,32 @@ def strategy_builder(
     params = params or {}
     tmpl = STRATEGY_TEMPLATES[template]
 
+    # Validate and clamp params to allowed ranges
+    warnings: list[str] = []
+    validated_params = dict(params)
+    ranges = PARAM_RANGES.get(template, {})
+    for key, (lo, hi) in ranges.items():
+        if key in validated_params:
+            try:
+                val = float(validated_params[key])
+                if val < lo:
+                    warnings.append(f"{key}={val} below min {lo}, clamped")
+                    val = lo
+                elif val > hi:
+                    warnings.append(f"{key}={val} above max {hi}, clamped")
+                    val = hi
+                validated_params[key] = int(val) if isinstance(lo, int) and isinstance(hi, int) else round(val, 2)
+            except (TypeError, ValueError):
+                pass
+
     return {
         "status": "ok",
         "strategy": {
             "template": template,
             "name": name or f"{template}_{id(params) % 1000}",
             "description": description or tmpl['description'],
-            "params": params,
+            "params": validated_params,
             "template_info": tmpl,
         },
+        "warnings": warnings,
     }
