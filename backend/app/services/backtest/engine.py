@@ -14,6 +14,7 @@ from ta.volatility import AverageTrueRange, BollingerBands
 
 from app.core.config import get_settings
 from app.services.market.news_provider import MarketProvider
+from app.services.strategy.signal_engine import get_supported_strategy_templates
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class BacktestResult:
 
 
 class BacktestEngine:
-    SUPPORTED_STRATEGIES = {'ema_rsi', 'ema_crossover', 'rsi_mean_reversion', 'bollinger_breakout', 'macd_divergence'}
+    SUPPORTED_STRATEGIES = {'ema_rsi', *get_supported_strategy_templates()}
     STRATEGY_ALIASES = {
         'ema-rsi': 'ema_rsi',
         'legacy_ema_rsi': 'ema_rsi',

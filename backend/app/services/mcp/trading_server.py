@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 from fastmcp import FastMCP
 
+from app.services.strategy.template_catalog import EXECUTABLE_STRATEGY_TEMPLATES
+
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
@@ -1587,7 +1589,7 @@ def portfolio_stress_test(
 
 # ── Strategy Builder tool ──────────────────────────────────────────
 
-STRATEGY_TEMPLATES = {
+LEGACY_STRATEGY_TEMPLATES = {
     # ── Trend Following ──
     'ema_crossover': {
         'description': 'EMA crossover with RSI filter — classic trend following',
@@ -1717,6 +1719,17 @@ STRATEGY_TEMPLATES = {
         'best_for': 'intraday support/resistance trading, forex',
         'category': 'hybrid',
     },
+}
+
+
+STRATEGY_TEMPLATES = {
+    key: {
+        'description': spec.description,
+        'params': dict(spec.params),
+        'best_for': spec.best_for,
+        'category': spec.category,
+    }
+    for key, spec in EXECUTABLE_STRATEGY_TEMPLATES.items()
 }
 
 
