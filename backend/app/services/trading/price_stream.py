@@ -2,6 +2,8 @@ import asyncio
 import logging
 from typing import Any
 
+from app.services.trading.metaapi_client import MetaApiClient
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -156,6 +158,7 @@ class PriceStreamManager:
             logger.warning('metaapi_cloud_sdk is not installed – price streaming disabled')
             return
         try:
+            MetaApiClient._configure_sdk_logging(MetaApi)
             meta_api = MetaApi(token)
             account = await meta_api.metatrader_account_api.get_account(account_id)
             connection = account.get_streaming_connection()

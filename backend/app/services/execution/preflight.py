@@ -67,15 +67,20 @@ class ExecutionPreflightEngine:
         passed: list[str] = []
         failed: list[str] = []
 
-        trader_meta = trader_output.get("metadata", {})
-        risk_meta = risk_output.get("metadata", {})
+        # Support both nested metadata and flat top-level output
+        trader_meta = trader_output.get("metadata", {}) or {}
+        risk_meta = risk_output.get("metadata", {}) or {}
 
-        decision = str(trader_meta.get("decision", "")).strip().upper()
+        def _get(meta: dict, out: dict, key: str, default=None):
+            return meta.get(key) or out.get(key) or default
+
+        decision = str(_get(trader_meta, trader_output, "decision", "")).strip().upper()
         side = decision if decision in ("BUY", "SELL") else None
-        entry = self._to_float(trader_meta.get("entry"))
-        stop_loss = self._to_float(trader_meta.get("stop_loss"))
-        take_profit = self._to_float(trader_meta.get("take_profit"))
-        volume = self._to_float(risk_meta.get("suggested_volume", 0))
+        entry = self._to_float(_get(trader_meta, trader_output, "entry"))
+        stop_loss = self._to_float(_get(trader_meta, trader_output, "stop_loss"))
+        take_profit = self._to_float(_get(trader_meta, trader_output, "take_profit"))
+        volume = self._to_float(_get(risk_meta, risk_output, "suggested_volume",
+                                     _get(risk_meta, risk_output, "adjusted_volume", 0)))
 
         base = PreflightResult(
             status=ExecutionStatus.BLOCKED,
@@ -109,9 +114,9 @@ class ExecutionPreflightEngine:
         passed.append(f"decision_valid: {decision}")
 
         # ── Check 2: Risk-manager accepted ──
-        accepted = risk_meta.get("accepted", False)
+        accepted = _get(risk_meta, risk_output, "accepted", _get(risk_meta, risk_output, "approved", False))
         if not accepted:
-            reasons = risk_meta.get("reasons", ["unknown"])
+            reasons = _get(risk_meta, risk_output, "reasons", _get(risk_meta, risk_output, "risk_flags", ["unknown"]))
             return PreflightResult(
                 status=ExecutionStatus.REFUSED,
                 can_execute=False,

@@ -901,7 +901,12 @@ def scenario_validation(
     geometry_valid = True
     geometry_issues: list[str] = []
     if stop_loss and entry_price:
-        if sl_distance_pct < 0.05:
+        try:
+            from app.services.config.trading_config import get_effective_sizing
+            _min_sl_pct = get_effective_sizing().get("min_sl_distance_pct", 0.05)
+        except Exception:
+            _min_sl_pct = 0.05
+        if sl_distance_pct < _min_sl_pct:
             geometry_valid = False
             geometry_issues.append("stop_loss_too_tight")
         if sl_distance_pct > 5.0:

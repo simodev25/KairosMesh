@@ -30,11 +30,18 @@ async def test_execute_runs_all_phases(mock_debate, mock_formatter, mock_model, 
     mock_debate.return_value = (
         _make_msg("bullish-researcher", "Bull thesis"),
         _make_msg("bearish-researcher", "Bear thesis"),
-        DebateResult(finished=True, winning_side="bearish", confidence=0.7, reason="Strong bear"),
+        DebateResult(winner="bearish", conviction="strong", key_argument="Momentum confirmed", weakness="News neutral"),
     )
 
     phase4_msg = _make_msg("trader-agent", "SELL decision")
-    mock_agent = AsyncMock(return_value=phase4_msg)
+    phase4_msg.metadata = {"decision": "HOLD", "conviction": 0.3, "reasoning": "No clear edge"}
+
+    def _make_mock_agent(**kwargs):
+        agent = AsyncMock(return_value=phase4_msg)
+        agent.memory = None
+        return agent
+
+    mock_agent = _make_mock_agent()
 
     db = MagicMock()
     run = MagicMock()
@@ -66,7 +73,8 @@ async def test_execute_runs_all_phases(mock_debate, mock_formatter, mock_model, 
                 mock_selector_cls.return_value = mock_selector
                 # Patch ALL_AGENT_FACTORIES
                 with patch("app.services.agentscope.registry.ALL_AGENT_FACTORIES") as mock_factories:
-                    mock_factory_fn = MagicMock(return_value=mock_agent)
+                    # Factory must return a fresh AsyncMock each time (rebuild after Phase 1)
+                    mock_factory_fn = MagicMock(side_effect=lambda **kw: _make_mock_agent(**kw))
                     mock_factories.items.return_value = [
                         (n, mock_factory_fn) for n in [
                             "technical-analyst", "news-analyst", "market-context-analyst",
@@ -80,6 +88,7 @@ async def test_execute_runs_all_phases(mock_debate, mock_formatter, mock_model, 
                         "trader-agent", "risk-manager", "execution-manager",
                     ])
                     mock_factories.get = lambda name, default=None: mock_factory_fn
+                    mock_factories.__getitem__ = lambda self, name: mock_factory_fn
                     result = await registry.execute(
                         db=db, run=run, pair="EURUSD", timeframe="H1", risk_percent=1.0,
                     )
@@ -87,7 +96,7 @@ async def test_execute_runs_all_phases(mock_debate, mock_formatter, mock_model, 
     assert mock_debate.call_count == 1
     assert run.status == "completed"
     assert isinstance(run.decision, dict)
-    assert run.decision.get("debate", {}).get("winning_side") == "bearish"
+    assert run.decision.get("debate", {}).get("winner") == "bearish"
     assert db.add.call_count >= 8
 
 

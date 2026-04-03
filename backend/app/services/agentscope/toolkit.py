@@ -70,11 +70,14 @@ def _build_docstring(tool_id: str, original_fn) -> str:
     return "\n".join(doc_lines)
 
 
-def _wrap_mcp_tool(tool_id: str, original_fn) -> Any:
+def _wrap_mcp_tool(tool_id: str, original_fn, force_kwargs: dict | None = None) -> Any:
     """Create an async wrapper that preserves the original function's signature.
 
     AgentScope parses function signatures and docstrings to build JSON schemas.
     By copying the real signature, the LLM sees the actual parameter names and types.
+
+    force_kwargs: if provided, these values ALWAYS override LLM input (cannot be
+    overwritten by None from the LLM). Used for trader_decision in risk tools.
     """
     client = get_mcp_client()
     sig = inspect.signature(original_fn)
@@ -85,7 +88,14 @@ def _wrap_mcp_tool(tool_id: str, original_fn) -> Any:
             # Bind positional args to parameter names
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
-            result = await client.call_tool(tool_id, dict(bound.arguments))
+            call_args = dict(bound.arguments)
+            # Force-inject kwargs — ALWAYS override, LLM cannot change these
+            if force_kwargs:
+                for k, v in force_kwargs.items():
+                    if v is not None:
+                        logger.info("force_kwargs: injecting %s (decision=%s)", k, v.get("decision") if isinstance(v, dict) else v)
+                        call_args[k] = v
+            result = await client.call_tool(tool_id, call_args)
             return ToolResponse(
                 content=[TextBlock(type="text", text=json.dumps(result, default=str))],
             )
@@ -111,6 +121,7 @@ async def build_toolkit(
     analysis_outputs: dict | None = None,
     skills: list[str] | None = None,
     snapshot: dict | None = None,
+    decision_mode: str | None = None,
 ) -> Toolkit:
     """Build a Toolkit with the MCP tools assigned to the given agent.
 
@@ -132,20 +143,9 @@ async def build_toolkit(
         agent_skill_template="## {name}\n{description}",
     )
 
-    # Try loading skills from SKILL.md file first (AgentScope native)
-    import os
-    # backend/config/skills/{agent_name}/SKILL.md
-    _backend_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    skill_dir = os.path.join(_backend_root, "config", "skills", agent_name)
-    if os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
-        try:
-            toolkit.register_agent_skill(skill_dir)
-            logger.info("Loaded SKILL.md for %s from %s", agent_name, skill_dir)
-        except Exception as exc:
-            logger.warning("Failed to load SKILL.md for %s: %s", agent_name, exc)
-
-    # Also inject DB skills as additional rules (if not already loaded from file)
-    if skills and not toolkit.skills:
+    # Skills priority: DB > SKILL.md file
+    # If DB has skills (even empty list), use them. File is fallback only.
+    if skills is not None:
         for i, skill_text in enumerate(skills):
             skill_name = f"{agent_name}-rule-{i + 1}"
             toolkit.skills[skill_name] = AgentSkill(
@@ -153,6 +153,17 @@ async def build_toolkit(
                 description=skill_text,
                 dir="",
             )
+    else:
+        # Fallback to local SKILL.md when DB has no config for this agent
+        import os
+        _backend_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        skill_dir = os.path.join(_backend_root, "config", "skills", agent_name)
+        if os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
+            try:
+                toolkit.register_agent_skill(skill_dir)
+                logger.info("Loaded SKILL.md for %s from %s", agent_name, skill_dir)
+            except Exception as exc:
+                logger.warning("Failed to load SKILL.md for %s: %s", agent_name, exc)
 
     tool_ids = AGENT_TOOL_MAP.get(agent_name, [])
     ohlc = ohlc or {}
@@ -164,7 +175,24 @@ async def build_toolkit(
             logger.warning("MCP tool %s not found in trading_server, skipping", tool_id)
             continue
 
-        wrapped = _wrap_mcp_tool(tool_id, original_fn)
+        # Build force_kwargs for tools where LLM must not override with None
+        _force_kwargs: dict | None = None
+        if tool_id == "portfolio_risk_evaluation" and analysis_outputs:
+            trader_out = analysis_outputs.get("trader-agent", {})
+            trader_meta = trader_out.get("metadata", {})
+            if not trader_meta or not trader_meta.get("decision"):
+                trader_meta = {k: v for k, v in trader_out.items()
+                               if k in ("decision", "conviction", "reasoning",
+                                        "key_level", "entry", "stop_loss", "take_profit")}
+            if trader_meta and trader_meta.get("decision"):
+                _force_kwargs = {"trader_decision": trader_meta}
+                logger.info("portfolio_risk_evaluation force_kwargs: decision=%s entry=%s",
+                            trader_meta.get("decision"), trader_meta.get("entry"))
+            else:
+                logger.warning("portfolio_risk_evaluation: no trader_decision found in analysis_outputs (keys=%s)",
+                               list(trader_out.keys()) if trader_out else "empty")
+
+        wrapped = _wrap_mcp_tool(tool_id, original_fn, force_kwargs=_force_kwargs)
 
         # Auto-inject OHLC arrays as preset kwargs when the tool accepts them
         sig = inspect.signature(original_fn)
@@ -193,32 +221,31 @@ async def build_toolkit(
             if news.get("macro_events"):
                 preset["macro_items"] = news["macro_events"]
 
-        # Pre-inject authoritative market data into trader-agent tools so the
-        # LLM cannot invent incorrect values (e.g. macd_diff=-0.01 instead of
-        # the real -0.000119).  The LLM still chooses *when* to call these
-        # tools and provides qualitative args (trend, momentum, decision_side),
-        # but the numerical market facts come from the snapshot.
-        # DM-5: Pre-inject aligned_sources for decision_gating
-        if tool_id == "decision_gating" and analysis_outputs:
-            from app.services.agentscope.decision_helpers import (
-                compute_deterministic_score,
-                count_aligned_sources,
-            )
-            _det_score = compute_deterministic_score(analysis_outputs or {})
-            _direction = "bullish" if _det_score > 0 else ("bearish" if _det_score < 0 else "neutral")
-            preset["aligned_sources"] = count_aligned_sources(analysis_outputs or {}, _direction)
+        # Pre-inject decision_mode so the LLM doesn't send wrong mode.
+        if tool_id == "decision_gating" and decision_mode:
+            preset["mode"] = decision_mode
 
+        # Pre-inject factual market DATA into tools (not opinions/scores).
+        # The LLM decides freely, but gets accurate numbers from the snapshot.
         if snapshot and tool_id == "contradiction_detector":
             preset["macd_diff"] = snapshot.get("macd_diff", 0.0)
             preset["atr"] = snapshot.get("atr", 0.001)
-            # DM-6: Derive trend/momentum deterministically from snapshot
-            from app.services.agentscope.decision_helpers import derive_trend_momentum
-            _trend, _momentum = derive_trend_momentum(snapshot)
-            preset["trend"] = _trend
-            preset["momentum"] = _momentum
-        elif snapshot and tool_id == "trade_sizing":
+        if snapshot and tool_id == "trade_sizing":
             preset["price"] = snapshot.get("last_price", 0.0)
             preset["atr"] = snapshot.get("atr", 0.0)
+
+        # Pre-inject trader decision into risk tools so the LLM doesn't
+        # need to pass it manually (it often forgets or sends empty).
+        if tool_id == "portfolio_risk_evaluation" and analysis_outputs:
+            trader_out = analysis_outputs.get("trader-agent", {})
+            # Try metadata first, then top-level (flat output_payload)
+            trader_meta = trader_out.get("metadata", {})
+            if not trader_meta or not trader_meta.get("decision"):
+                trader_meta = {k: v for k, v in trader_out.items()
+                               if k in ("decision", "conviction", "reasoning",
+                                        "key_level", "entry", "stop_loss", "take_profit")}
+            if trader_meta and trader_meta.get("decision"):
+                preset["trader_decision"] = trader_meta
 
         toolkit.register_tool_function(wrapped, preset_kwargs=preset if preset else None)
 

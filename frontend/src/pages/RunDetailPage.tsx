@@ -846,7 +846,73 @@ export function RunDetailPage() {
           {run.progress != null && run.progress > 0 && run.progress < 100 && !TERMINAL_RUN_STATUSES.has(run.status) && (
             <span className="text-[9px] font-mono text-accent">{run.progress}%</span>
           )}
+          {!['completed', 'failed', 'cancelled'].includes(run.status) && (
+            <button
+              type="button"
+              className="btn-ghost btn-small text-red-400 hover:text-red-300 hover:bg-red-500/10 ml-2"
+              onClick={async () => {
+                try {
+                  await api.cancelRun(token || '', run.id);
+                  const data = (await api.getRun(token || '', String(run.id))) as RunDetail;
+                  setRun(data);
+                } catch (err) {
+                  console.error('Cancel failed:', err);
+                }
+              }}
+            >
+              Cancel run
+            </button>
+          )}
         </div>
+
+        {/* Run summary table */}
+        {(() => {
+          const decision = run.decision && typeof run.decision === 'object' ? run.decision as Record<string, unknown> : {};
+          const execution = decision.execution && typeof decision.execution === 'object' ? decision.execution as Record<string, unknown> : {};
+          const debate = decision.debate && typeof decision.debate === 'object' ? decision.debate as Record<string, unknown> : {};
+          const traderDecision = typeof decision.decision === 'string' ? decision.decision : '-';
+          const execStatus = typeof execution.status === 'string' ? execution.status : '-';
+          const conviction = typeof decision.confidence === 'number' ? `${Math.round(Number(decision.confidence) * 100)}%` : (typeof decision.conviction === 'number' ? `${Math.round(Number(decision.conviction) * 100)}%` : '-');
+          const signal = typeof decision.signal === 'string' ? decision.signal : '-';
+          const debateWinner = typeof debate.winner === 'string' ? debate.winner : (typeof debate.winning_side === 'string' ? debate.winning_side : '-');
+          const debateConviction = typeof debate.conviction === 'string' ? debate.conviction : '-';
+          const started = run.started_at ? new Date(run.started_at).toLocaleString() : '-';
+          const elapsed = run.started_at && run.updated_at
+            ? `${Math.round((new Date(run.updated_at).getTime() - new Date(run.started_at).getTime()) / 1000)}s`
+            : '-';
+          return (<>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 mb-4 p-3 rounded bg-surface-alt/30 border border-border/30">
+              <div><span className="micro-label">Instrument</span><div className="text-[11px] font-bold text-text">{run.pair}</div></div>
+              <div><span className="micro-label">Timeframe</span><div className="text-[11px] font-mono text-text">{run.timeframe}</div></div>
+              <div><span className="micro-label">Mode</span><div className="text-[11px] font-mono text-text">{run.mode}</div></div>
+              <div><span className="micro-label">Running time</span><div className="text-[11px] font-mono text-text">{elapsed}</div></div>
+              <div><span className="micro-label">Decision</span><div className={`text-[11px] font-bold ${traderDecision === 'BUY' ? 'text-green-400' : traderDecision === 'SELL' ? 'text-red-400' : 'text-text-muted'}`}>{traderDecision} / {execStatus}</div></div>
+              <div><span className="micro-label">Signal</span><div className={`text-[11px] font-bold ${signal === 'bullish' ? 'text-green-400' : signal === 'bearish' ? 'text-red-400' : 'text-text-muted'}`}>{signal}</div></div>
+              <div><span className="micro-label">Conviction</span><div className="text-[11px] font-mono text-text">{conviction}</div></div>
+              <div><span className="micro-label">Debate</span><div className="text-[11px] font-mono text-text">{debateWinner} ({debateConviction})</div></div>
+              <div><span className="micro-label">Started</span><div className="text-[11px] font-mono text-text-muted">{started}</div></div>
+              <div><span className="micro-label">Created by</span><div className="text-[11px] font-mono text-text-muted">#{run.created_by_id ?? '-'}</div></div>
+            </div>
+            {(decision.reasoning || decision.trader_summary) ? (
+              <div className="mt-1 mb-3 p-2.5 rounded bg-surface-alt/20 border border-border/20">
+                <span className="micro-label">Trader reasoning</span>
+                <p className="text-[10px] text-text-muted mt-1 leading-relaxed">{String(decision.reasoning || decision.trader_summary)}</p>
+              </div>
+            ) : null}
+            {execution.reason && execStatus !== 'skipped' ? (
+              <div className="mt-1 mb-3 p-2.5 rounded bg-red-500/5 border border-red-500/15">
+                <span className="micro-label text-red-400">Execution: {execStatus}</span>
+                <p className="text-[10px] text-red-300/80 mt-1 leading-relaxed">{String(execution.reason)}</p>
+              </div>
+            ) : null}
+            {decision.risk_summary && traderDecision !== 'HOLD' ? (
+              <div className="mt-1 mb-3 p-2.5 rounded bg-surface-alt/20 border border-border/20">
+                <span className="micro-label">Risk manager</span>
+                <p className="text-[10px] text-text-muted mt-1 leading-relaxed">{String(decision.risk_summary)}</p>
+              </div>
+            ) : null}
+          </>);
+        })()}
 
         {/* Pipeline progress — shows agent-by-agent status */}
         <PipelineProgress steps={run.steps} status={run.status} progress={run.progress} />

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -41,6 +42,54 @@ def test_metaapi_client_prefers_runtime_connector_settings_for_credentials(monke
     assert client._resolve_token() == 'runtime-token'
     assert client._resolve_account_id(None) == 'runtime-account'
     assert client._resolve_account_id('manual-account') == 'manual-account'
+
+
+def test_get_sdk_enables_python_logging_and_silences_noisy_metaapi_loggers(monkeypatch) -> None:
+    client = MetaApiClient()
+    monkeypatch.setattr(MetaApiClient, '_sdk_logging_configured', False, raising=False)
+    monkeypatch.setattr(client, '_resolve_token', lambda: 'token')
+
+    class FakeMetaApi:
+        enable_calls = 0
+
+        def __init__(self, token: str, options: dict[str, str]) -> None:
+            self.token = token
+            self.options = options
+
+        @staticmethod
+        def enable_logging() -> None:
+            FakeMetaApi.enable_calls += 1
+
+    class FakeLogger:
+        def __init__(self) -> None:
+            self.level = logging.NOTSET
+
+        def setLevel(self, level: int) -> None:
+            self.level = level
+
+    fake_loggers: dict[str, FakeLogger] = {}
+    original_get_logger = logging.getLogger
+
+    def fake_get_logger(name: str | None = None):
+        if not name:
+            return original_get_logger(name)
+        logger = fake_loggers.get(name)
+        if logger is None:
+            logger = FakeLogger()
+            fake_loggers[name] = logger
+        return logger
+
+    monkeypatch.setattr(client, '_metaapi_cls', FakeMetaApi)
+    monkeypatch.setattr('app.services.trading.metaapi_client.logging.getLogger', fake_get_logger)
+
+    sdk = client._get_sdk(region='london')
+
+    assert isinstance(sdk, FakeMetaApi)
+    assert sdk.token == 'token'
+    assert sdk.options == {'region': 'london'}
+    assert FakeMetaApi.enable_calls == 1
+    for name in MetaApiClient._SDK_NOISY_LOGGERS:
+        assert fake_loggers[name].level == logging.CRITICAL
 
 
 def test_market_symbol_candidates_keep_crypto_without_suffix() -> None:
@@ -486,6 +535,7 @@ def test_get_account_information_uses_redis_cache(monkeypatch) -> None:
 
 def test_get_account_information_sdk_timeout_uses_rest_and_opens_circuit(monkeypatch) -> None:
     client = MetaApiClient()
+    client.settings.metaapi_cache_enabled = False
     client.settings.metaapi_sdk_request_timeout_seconds = 0.01
     client.settings.metaapi_sdk_circuit_breaker_seconds = 30
     monkeypatch.setattr(client, '_resolve_account_id', lambda account_id=None: 'acc-1')
@@ -518,6 +568,7 @@ def test_get_account_information_sdk_timeout_uses_rest_and_opens_circuit(monkeyp
 
 def test_get_account_information_skips_sdk_when_circuit_is_open(monkeypatch) -> None:
     client = MetaApiClient()
+    client.settings.metaapi_cache_enabled = False
     monkeypatch.setattr(client, '_resolve_account_id', lambda account_id=None: 'acc-1')
 
     calls = {'sdk': 0}
