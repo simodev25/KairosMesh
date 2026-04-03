@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -13,11 +14,12 @@ def _task_decorator(*args, **kwargs):  # noqa: ANN001, ARG001
     return _decorator
 
 
-_fake_celery_app_module = ModuleType('app.tasks.celery_app')
-_fake_celery_app_module.celery_app = SimpleNamespace(task=_task_decorator)
-sys.modules.setdefault('app.tasks.celery_app', _fake_celery_app_module)
-
-from app.tasks.strategy_backtest_task import execute
+def _load_strategy_backtest_task(monkeypatch):
+    fake_celery_app_module = ModuleType('app.tasks.celery_app')
+    fake_celery_app_module.celery_app = SimpleNamespace(task=_task_decorator)
+    monkeypatch.setitem(sys.modules, 'app.tasks.celery_app', fake_celery_app_module)
+    sys.modules.pop('app.tasks.strategy_backtest_task', None)
+    return importlib.import_module('app.tasks.strategy_backtest_task')
 
 
 class _FakeDB:
@@ -39,6 +41,9 @@ class _FakeDB:
 
 
 def test_strategy_backtest_task_passes_persisted_params(monkeypatch) -> None:
+    task_module = _load_strategy_backtest_task(monkeypatch)
+    execute = task_module.execute
+
     strategy = SimpleNamespace(
         id=1,
         strategy_id='STRAT-001',
@@ -63,13 +68,9 @@ def test_strategy_backtest_task_passes_persisted_params(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeEngine:
-        def run(self, pair, timeframe, start_date, end_date, strategy, db=None, llm_enabled=False, agent_config=None, run_id=None, strategy_params=None):  # noqa: ANN001
-            captured['pair'] = pair
-            captured['timeframe'] = timeframe
-            captured['start_date'] = start_date
-            captured['end_date'] = end_date
-            captured['strategy'] = strategy
-            captured['strategy_params'] = strategy_params
+        def run(self, *args, **kwargs):  # noqa: ANN001
+            captured['args'] = args
+            captured['kwargs'] = kwargs
             return SimpleNamespace(
                 metrics={
                     'win_rate_pct': 80,
@@ -85,8 +86,11 @@ def test_strategy_backtest_task_passes_persisted_params(monkeypatch) -> None:
 
     execute(strategy_db_id=1)
 
-    assert captured['strategy'] == 'ema_crossover'
-    assert captured['strategy_params'] == {'ema_fast': 7, 'ema_slow': 14, 'rsi_filter': 25}
+    assert captured['args'][0] == 'EURUSD.PRO'
+    assert captured['args'][1] == 'H1'
+    assert len(captured['args']) >= 4
+    assert captured['kwargs']['strategy'] == 'ema_crossover'
+    assert captured['kwargs']['strategy_params'] == {'ema_fast': 7, 'ema_slow': 14, 'rsi_filter': 25}
     assert strategy.status == 'VALIDATED'
     assert db.committed is True
     assert db.closed is True
