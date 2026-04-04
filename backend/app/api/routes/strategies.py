@@ -1,6 +1,9 @@
+import asyncio
 import json
 import logging
 import random
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,6 +16,15 @@ from app.db.models.strategy import Strategy
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.strategy import StrategyOut, StrategyGenerateRequest, StrategyEditRequest, StrategyPromoteRequest, StrategyStartMonitoringRequest
+from app.services.backtest.engine import BacktestEngine
+from app.services.llm.provider_client import LlmClient
+from app.services.strategy.generation_optimizer import (
+    build_market_adaptive_param_candidates,
+    choose_best_generation_candidate,
+    compute_generation_candidate_score,
+    should_optimize_generation,
+)
+from app.services.strategy.lookback_windows import strategy_lookback_days
 from app.services.strategy.template_catalog import (
     EXECUTABLE_STRATEGY_TEMPLATES,
     build_strategy_system_prompt,
@@ -25,8 +37,21 @@ router = APIRouter(prefix='/strategies', tags=['strategies'])
 logger = logging.getLogger(__name__)
 
 VALID_TEMPLATES = list(EXECUTABLE_STRATEGY_TEMPLATES.keys())
+TRACE_DIR = './debug-strategy'
+TRACE_TAG = 'backend/debug-strategy'
+TRACE_FINAL_TAG = 'strategy-generation-final'
 
 STRATEGY_SYSTEM_PROMPT = build_strategy_system_prompt()
+GENERATION_OPTIMIZER_SYSTEM_PROMPT = (
+    "You optimize parameters for an already selected strategy template.\n"
+    "Rules:\n"
+    "- Never change template, symbol, or timeframe.\n"
+    "- Preserve the requested archetype exactly.\n"
+    "- Adapt parameters to increase tradability and robustness for current market conditions.\n"
+    "- Prefer settings that avoid zero-trade outcomes.\n"
+    "- Return JSON only in the form: "
+    '{"candidates":[{"params": {...}, "reason": "..."}, {"params": {...}, "reason": "..."}]}\n'
+)
 
 
 async def _llm_generate(prompt: str) -> dict | None:
@@ -104,10 +129,205 @@ async def _llm_edit(history: list[dict], edit_prompt: str, current_params: dict,
         return None
 
 
+def _evaluate_generation_candidate(
+    *,
+    db: Session,
+    pair: str,
+    timeframe: str,
+    template: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    lookback_days = strategy_lookback_days(pair)
+    end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+    engine = BacktestEngine()
+    result = engine.run(
+        pair,
+        timeframe,
+        start_date,
+        end_date,
+        strategy=template,
+        db=db,
+        strategy_params=params,
+        run_id=None,
+    )
+    metrics = dict(result.metrics or {})
+    return {
+        'metrics': metrics,
+        'backtest_window': {'start_date': start_date, 'end_date': end_date, 'lookback_days': lookback_days},
+        'generation_score': round(compute_generation_candidate_score(metrics), 4),
+    }
+
+
+async def _evaluate_generation_candidate_async(
+    *,
+    db: Session,
+    pair: str,
+    timeframe: str,
+    template: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        _evaluate_generation_candidate,
+        db=db,
+        pair=pair,
+        timeframe=timeframe,
+        template=template,
+        params=params,
+    )
+
+
+async def _llm_generate_param_candidates(
+    *,
+    user_prompt: str,
+    template: str,
+    pair: str,
+    timeframe: str,
+    market_regime: str | None,
+    current_params: dict[str, Any],
+    current_metrics: dict[str, Any],
+) -> list[dict[str, Any]]:
+    template_spec = EXECUTABLE_STRATEGY_TEMPLATES.get(template)
+    if template_spec is None:
+        return []
+
+    client = LlmClient()
+    user_message = (
+        f"User request: {user_prompt}\n"
+        f"Template: {template}\n"
+        f"Symbol: {pair}\n"
+        f"Timeframe: {timeframe}\n"
+        f"Market regime: {market_regime or 'unknown'}\n"
+        f"Current params: {json.dumps(current_params)}\n"
+        f"Current mini-backtest metrics: {json.dumps(current_metrics)}\n"
+        f"Allowed params: {json.dumps(template_spec.params)}\n"
+        "Produce 2 to 3 candidate parameter sets for the SAME template. "
+        "Bias toward getting actual trades while staying coherent with the archetype."
+    )
+    try:
+        response = await asyncio.to_thread(
+            client.chat_json,
+            GENERATION_OPTIMIZER_SYSTEM_PROMPT,
+            user_message,
+            None,
+            None,
+            temperature=0.2,
+            max_tokens=600,
+        )
+    except Exception as exc:
+        logger.warning('LLM generation optimizer failed: %s', str(exc)[:200])
+        return []
+
+    payload = response.get('json') if isinstance(response, dict) else None
+    if not isinstance(payload, dict):
+        return []
+    raw_candidates = payload.get('candidates')
+    if not isinstance(raw_candidates, list):
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    seen_params: set[str] = set()
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+        raw_params = item.get('params')
+        if not isinstance(raw_params, dict):
+            continue
+        sanitized_params, warnings = sanitize_strategy_params_for_template(template, raw_params)
+        params_key = json.dumps(sanitized_params, sort_keys=True)
+        if params_key in seen_params:
+            continue
+        seen_params.add(params_key)
+        candidates.append(
+            {
+                'params': sanitized_params,
+                'reason': str(item.get('reason') or '').strip(),
+                'warnings': warnings,
+            }
+        )
+    return candidates
+
+
 def _next_strategy_id(db: Session) -> str:
     last = db.query(Strategy).order_by(Strategy.id.desc()).first()
     num = (last.id if last else 0) + 1
     return f'STRAT-{num:03d}'
+
+
+def _find_latest_generation_trace(pair: str, timeframe: str, trace_dir: Path) -> Path | None:
+    normalized_pair = str(pair or '').replace('.', '')
+    normalized_timeframe = str(timeframe or '').upper()
+    prefix = f'strategy-{normalized_pair}-{normalized_timeframe}-'
+    candidates: list[tuple[datetime, Path]] = []
+    for path in trace_dir.glob(f'{prefix}*.json'):
+        stem = path.stem
+        ts_part = stem[len(prefix):]
+        try:
+            parsed_ts = datetime.strptime(ts_part, '%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        candidates.append((parsed_ts, path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _finalize_generation_trace(strategy: Strategy) -> dict[str, str | list[str] | None] | None:
+    trace_dir = Path(TRACE_DIR)
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    trace_path = _find_latest_generation_trace(strategy.symbol, strategy.timeframe, trace_dir)
+    if trace_path is None:
+        return None
+
+    try:
+        with trace_path.open('r', encoding='utf-8') as fh:
+            payload = json.load(fh)
+    except Exception as exc:
+        logger.warning('strategy_generation_trace_read_failed id=%s err=%s', strategy.strategy_id, exc)
+        return None
+
+    tags = payload.get('tags')
+    if not isinstance(tags, list):
+        tags = []
+    for tag in (TRACE_TAG, TRACE_FINAL_TAG):
+        if tag not in tags:
+            tags.append(tag)
+
+    metrics = dict(strategy.metrics or {})
+    payload['tags'] = tags
+    payload['strategy_id'] = strategy.strategy_id
+    payload['strategy'] = {
+        'id': int(strategy.id),
+        'strategy_id': strategy.strategy_id,
+        'name': strategy.name,
+        'template': strategy.template,
+        'symbol': strategy.symbol,
+        'timeframe': strategy.timeframe,
+        'params': strategy.params or {},
+        'status': strategy.status,
+    }
+    payload['result'] = {
+        'template': strategy.template,
+        'name': strategy.name,
+        'description': strategy.description,
+        'params': strategy.params or {},
+    }
+    payload['metrics'] = metrics
+    payload['template_selection'] = metrics.get('template_selection')
+    payload['generation_optimization'] = metrics.get('generation_optimization')
+    payload['selection_warnings'] = metrics.get('selection_warnings', [])
+    payload['prompt_history'] = strategy.prompt_history or []
+    payload['finalized_at'] = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with trace_path.open('w', encoding='utf-8') as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2, default=str)
+    except Exception as exc:
+        logger.warning('strategy_generation_trace_write_failed id=%s err=%s', strategy.strategy_id, exc)
+        return None
+
+    return {'path': str(trace_path), 'tags': tags}
 
 
 @router.get('', response_model=list[StrategyOut])
@@ -244,6 +464,112 @@ async def generate_strategy(
     if all_warnings:
         logger.info('strategy_params_sanitized template=%s warnings=%s', template, all_warnings)
 
+    generation_optimization: dict[str, Any] = {
+        'enabled': True,
+        'template_locked': template,
+        'market_regime': market_regime,
+        'candidates': [],
+    }
+    try:
+        base_eval = await _evaluate_generation_candidate_async(
+            db=db,
+            pair=symbol or _pair,
+            timeframe=timeframe_val or _timeframe,
+            template=template,
+            params=params,
+        )
+        base_candidate = {
+            'source': 'base',
+            'params': params,
+            'reason': 'initial generation',
+            **base_eval,
+        }
+        generation_optimization['candidates'].append(base_candidate)
+
+        best_candidate = base_candidate
+        if should_optimize_generation(base_eval['metrics']):
+            heuristic_candidates = build_market_adaptive_param_candidates(
+                template=template,
+                symbol=symbol or _pair,
+                timeframe=timeframe_val or _timeframe,
+                market_regime=market_regime,
+                current_params=params,
+            )
+            llm_candidates = await _llm_generate_param_candidates(
+                user_prompt=payload.prompt,
+                template=template,
+                pair=symbol or _pair,
+                timeframe=timeframe_val or _timeframe,
+                market_regime=market_regime,
+                current_params=params,
+                current_metrics=base_eval['metrics'],
+            )
+            candidate_specs = [
+                *[
+                    (f'llm_candidate_{idx}', candidate)
+                    for idx, candidate in enumerate(llm_candidates, start=1)
+                ],
+                *[
+                    (f'heuristic_candidate_{idx}', candidate)
+                    for idx, candidate in enumerate(heuristic_candidates, start=1)
+                ],
+            ]
+            for source_name, candidate in candidate_specs:
+                if candidate['params'] == params:
+                    continue
+                try:
+                    candidate_eval = await _evaluate_generation_candidate_async(
+                        db=db,
+                        pair=symbol or _pair,
+                        timeframe=timeframe_val or _timeframe,
+                        template=template,
+                        params=candidate['params'],
+                    )
+                except Exception as exc:
+                    generation_optimization['candidates'].append(
+                        {
+                            'source': source_name,
+                            'params': candidate['params'],
+                            'reason': candidate.get('reason', ''),
+                            'warnings': candidate.get('warnings', []),
+                            'error': str(exc)[:200],
+                        }
+                    )
+                    continue
+                generation_optimization['candidates'].append(
+                    {
+                        'source': source_name,
+                        'params': candidate['params'],
+                        'reason': candidate.get('reason', ''),
+                        'warnings': candidate.get('warnings', []),
+                        **candidate_eval,
+                    }
+                )
+            viable_candidates = [item for item in generation_optimization['candidates'] if isinstance(item.get('metrics'), dict)]
+            if viable_candidates:
+                best_candidate = choose_best_generation_candidate(viable_candidates)
+
+        params = dict(best_candidate.get('params') or params)
+        generation_optimization['selected_source'] = best_candidate.get('source')
+        generation_optimization['selected_score'] = best_candidate.get('generation_score')
+        generation_optimization['selected_metrics'] = best_candidate.get('metrics')
+        generation_optimization['optimized'] = best_candidate.get('source') != 'base'
+        if generation_optimization['optimized']:
+            all_warnings.append(f"generation optimized via {best_candidate.get('source')}")
+            prompt_history.append(
+                {
+                    'role': 'system',
+                    'content': json.dumps({'generation_optimization': generation_optimization}, ensure_ascii=False),
+                }
+            )
+    except Exception as exc:
+        logger.warning('strategy_generation_optimization_failed template=%s err=%s', template, str(exc)[:200])
+        generation_optimization = {
+            'enabled': True,
+            'optimized': False,
+            'error': str(exc)[:200],
+        }
+
     strategy = Strategy(
         strategy_id=_next_strategy_id(db),
         name=name or f'{template}_{random.randint(100, 999)}',
@@ -254,13 +580,25 @@ async def generate_strategy(
         symbol=symbol or 'EURUSD.PRO',
         timeframe=timeframe_val or 'H1',
         params=params,
-        metrics={'template_selection': selection, 'selection_warnings': all_warnings},
+        metrics={
+            'template_selection': selection,
+            'selection_warnings': all_warnings,
+            'generation_optimization': generation_optimization,
+        },
         prompt_history=prompt_history,
         created_by_id=user.id,
     )
     db.add(strategy)
     db.commit()
     db.refresh(strategy)
+    generation_trace = _finalize_generation_trace(strategy)
+    if generation_trace is not None:
+        strategy.metrics = {
+            **(strategy.metrics or {}),
+            'generation_trace': generation_trace,
+        }
+        db.commit()
+        db.refresh(strategy)
     logger.info('strategy_generated id=%s name=%s template=%s agent=strategy-designer', strategy.strategy_id, strategy.name, template)
     return StrategyOut.model_validate(strategy)
 
