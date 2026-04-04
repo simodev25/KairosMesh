@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
@@ -193,6 +193,8 @@ export function StrategiesPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [validatingId, setValidatingId] = useState<number | null>(null);
   const [detailStrategy, setDetailStrategy] = useState<Strategy | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const busyRef = useRef(false);
   const [generatePrompt, setGeneratePrompt] = useState('');
   const [generatePair, setGeneratePair] = useState('EURUSD.PRO');
   const [generateTf, setGenerateTf] = useState('H1');
@@ -219,7 +221,8 @@ export function StrategiesPage() {
 
   const generateStrategy = async (e: FormEvent) => {
     e.preventDefault();
-    if (!token || !generatePrompt.trim()) return;
+    if (!token || !generatePrompt.trim() || busyRef.current) return;
+    busyRef.current = true;
     setIsGenerating(true);
     setError(null);
     try {
@@ -230,6 +233,7 @@ export function StrategiesPage() {
       setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
       setIsGenerating(false);
+      busyRef.current = false;
     }
   };
 
@@ -247,12 +251,15 @@ export function StrategiesPage() {
   };
 
   const promoteStrategy = async (id: number, target: string) => {
-    if (!token) return;
+    if (!token || busyRef.current) return;
+    busyRef.current = true;
     try {
       await api.promoteStrategy(token, id, target);
       await loadStrategies();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Promotion failed');
+    } finally {
+      busyRef.current = false;
     }
   };
 
@@ -269,16 +276,22 @@ export function StrategiesPage() {
   };
 
   const viewOnChart = (id: number) => {
-    navigate(`/?strategy=${id}`);
+    const strategy = strategies.find(s => s.id === id);
+    const symbol = strategy?.symbol || 'EURUSD.PRO';
+    const tf = strategy?.timeframe || 'H1';
+    navigate(`/terminal?strategy=${id}&symbol=${encodeURIComponent(symbol)}&timeframe=${tf}`);
   };
 
   const deleteStrategy = async (id: number) => {
-    if (!token) return;
+    if (!token || busyRef.current) return;
+    busyRef.current = true;
     try {
       await api.deleteStrategy(token, id);
       await loadStrategies();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      busyRef.current = false;
     }
   };
 
@@ -294,44 +307,8 @@ export function StrategiesPage() {
           <span className="text-[10px] text-text-dim">AI-Powered Strategy Generator</span>
         </div>
         <form onSubmit={generateStrategy} className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-1.5">
-            {[
-              {label: 'EMA Crossover', prompt: 'EMA crossover trend following with RSI filter'},
-              {label: 'Supertrend', prompt: 'Supertrend ATR-based trend following strategy'},
-              {label: 'ADX Trend', prompt: 'ADX directional movement — trade only strong trends'},
-              {label: 'Ichimoku', prompt: 'Ichimoku Cloud strategy with Tenkan/Kijun cross'},
-              {label: 'Parabolic SAR', prompt: 'Parabolic SAR trailing stop reversal strategy'},
-              {label: 'Donchian', prompt: 'Donchian Channel breakout turtle trading'},
-              {label: 'RSI Reversion', prompt: 'Conservative RSI mean reversion for ranging markets'},
-              {label: 'Stochastic', prompt: 'Stochastic K/D crossover reversal strategy'},
-              {label: 'Williams %R', prompt: 'Williams %R overbought/oversold mean reversion'},
-              {label: 'CCI', prompt: 'CCI reversal strategy for cyclical markets'},
-              {label: 'Keltner', prompt: 'Keltner Channel mean reversion bounce strategy'},
-              {label: 'Bollinger', prompt: 'Bollinger Band squeeze breakout with volume confirmation'},
-              {label: 'Squeeze', prompt: 'Bollinger/Keltner squeeze momentum breakout'},
-              {label: 'ATR Trail', prompt: 'ATR trailing stop trend riding strategy'},
-              {label: 'MACD', prompt: 'MACD signal crossover momentum strategy'},
-              {label: 'ROC', prompt: 'Rate of Change momentum acceleration strategy'},
-              {label: 'VWAP', prompt: 'VWAP discount/premium intraday strategy'},
-              {label: 'Triple EMA', prompt: 'Triple EMA alignment trend confirmation'},
-              {label: 'MACD+RSI', prompt: 'MACD direction + RSI timing combo strategy'},
-              {label: 'Pivots', prompt: 'Pivot Points support/resistance intraday strategy'},
-            ].map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => setGeneratePrompt(preset.prompt)}
-                className={`text-[8px] font-mono px-2 py-1 rounded border transition-colors ${
-                  generatePrompt === preset.prompt
-                    ? 'border-accent/60 bg-accent/10 text-accent'
-                    : 'border-border/40 text-text-dim hover:text-accent hover:border-accent/40'
-                }`}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 mb-2">
+          {/* Main input — prominent */}
+          <div className="flex items-center gap-2">
             <select value={generatePair} onChange={(e) => setGeneratePair(e.target.value)} className="text-[10px] bg-surface-alt border border-border rounded px-2 py-1.5 text-text font-mono" disabled={isGenerating}>
               {['EURUSD.PRO','GBPUSD.PRO','USDJPY.PRO','USDCHF.PRO','AUDUSD.PRO','USDCAD.PRO','NZDUSD.PRO','EURJPY.PRO','GBPJPY.PRO','EURGBP.PRO','BTCUSD','ETHUSD','SOLUSD','ADAUSD','XRPUSD'].map(p => <option key={p} value={p}>{p}</option>)}
             </select>
@@ -345,7 +322,7 @@ export function StrategiesPage() {
               type="text"
               value={generatePrompt}
               onChange={(e) => setGeneratePrompt(e.target.value)}
-              placeholder="Describe the strategy you want to generate..."
+              placeholder="Describe your strategy in natural language — the AI will choose the best approach..."
               className="flex-1 text-[11px] bg-surface-alt border border-border rounded px-3 py-2 text-text placeholder-text-dim font-mono"
               disabled={isGenerating}
             />
@@ -367,6 +344,49 @@ export function StrategiesPage() {
             )}
             </button>
           </div>
+          {/* Inspirations — collapsible */}
+          <details className="mt-1">
+            <summary className="text-[8px] font-mono text-text-dim cursor-pointer hover:text-accent select-none">
+              Need inspiration? Click a template to pre-fill the prompt
+            </summary>
+            <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-border/20">
+              {[
+                {label: 'EMA Crossover', prompt: 'EMA crossover trend following with RSI filter'},
+                {label: 'Supertrend', prompt: 'Supertrend ATR-based trend following strategy'},
+                {label: 'ADX Trend', prompt: 'ADX directional movement — trade only strong trends'},
+                {label: 'Ichimoku', prompt: 'Ichimoku Cloud strategy with Tenkan/Kijun cross'},
+                {label: 'Parabolic SAR', prompt: 'Parabolic SAR trailing stop reversal strategy'},
+                {label: 'Donchian', prompt: 'Donchian Channel breakout turtle trading'},
+                {label: 'RSI Reversion', prompt: 'Conservative RSI mean reversion for ranging markets'},
+                {label: 'Stochastic', prompt: 'Stochastic K/D crossover reversal strategy'},
+                {label: 'Williams %R', prompt: 'Williams %R overbought/oversold mean reversion'},
+                {label: 'CCI', prompt: 'CCI reversal strategy for cyclical markets'},
+                {label: 'Keltner', prompt: 'Keltner Channel mean reversion bounce strategy'},
+                {label: 'Bollinger', prompt: 'Bollinger Band squeeze breakout'},
+                {label: 'Squeeze', prompt: 'Bollinger/Keltner squeeze momentum breakout'},
+                {label: 'ATR Trail', prompt: 'ATR trailing stop trend riding strategy'},
+                {label: 'MACD', prompt: 'MACD signal crossover momentum strategy'},
+                {label: 'ROC', prompt: 'Rate of Change momentum acceleration strategy'},
+                {label: 'VWAP', prompt: 'VWAP discount/premium intraday strategy'},
+                {label: 'Triple EMA', prompt: 'Triple EMA alignment trend confirmation'},
+                {label: 'MACD+RSI', prompt: 'MACD direction + RSI timing combo strategy'},
+                {label: 'Pivots', prompt: 'Pivot Points support/resistance intraday strategy'},
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => setGeneratePrompt(preset.prompt)}
+                  className={`text-[7px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+                    generatePrompt === preset.prompt
+                      ? 'border-accent/60 bg-accent/10 text-accent'
+                      : 'border-border/30 text-text-dim hover:text-accent hover:border-accent/30'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </details>
         </form>
         {error && <p className="alert mx-4 mb-4">{error}</p>}
       </div>

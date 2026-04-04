@@ -288,9 +288,18 @@ def promote_strategy(
         raise HTTPException(status_code=400, detail=f'Cannot promote from {strategy.status} to {payload.target}')
 
     strategy.status = payload.target
+    # Sync monitoring mode with status
+    if payload.target == 'LIVE':
+        strategy.monitoring_mode = 'live'
+        strategy.is_monitoring = True
+        strategy.last_signal_key = None
+    elif payload.target == 'PAPER':
+        strategy.monitoring_mode = 'paper'
+        strategy.is_monitoring = True
+        strategy.last_signal_key = None
     db.commit()
     db.refresh(strategy)
-    logger.info('strategy_promoted id=%s to=%s', strategy.strategy_id, payload.target)
+    logger.info('strategy_promoted id=%s to=%s monitoring_mode=%s', strategy.strategy_id, payload.target, strategy.monitoring_mode)
     return StrategyOut.model_validate(strategy)
 
 
