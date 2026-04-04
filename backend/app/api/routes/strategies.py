@@ -25,6 +25,7 @@ from app.services.strategy.generation_optimizer import (
     should_optimize_generation,
 )
 from app.services.strategy.lookback_windows import strategy_lookback_days
+from app.services.strategy.template_benchmark_defaults import benchmark_params_for_template
 from app.services.strategy.template_catalog import (
     EXECUTABLE_STRATEGY_TEMPLATES,
     build_strategy_system_prompt,
@@ -127,6 +128,31 @@ async def _llm_edit(history: list[dict], edit_prompt: str, current_params: dict,
             return json.loads(clean.strip())
     except Exception:
         return None
+
+
+def _format_template_label(template: str) -> str:
+    words = str(template or '').replace('_', ' ').split()
+    acronyms = {'adx': 'ADX', 'atr': 'ATR', 'bb': 'BB', 'cci': 'CCI', 'ema': 'EMA', 'macd': 'MACD', 'rsi': 'RSI', 'roc': 'ROC', 'sar': 'SAR', 'vwap': 'VWAP'}
+    return ' '.join(acronyms.get(word.lower(), word.capitalize()) for word in words)
+
+
+def _build_strategy_identity(symbol: str, timeframe: str, template: str) -> tuple[str, str]:
+    template_label = _format_template_label(template)
+    template_spec = EXECUTABLE_STRATEGY_TEMPLATES[template]
+    name = f'{symbol} {timeframe} {template_label}'
+    description = f'{template_label} strategy for {symbol} on {timeframe}. {template_spec.description}.'
+    return name, description
+
+
+def _normalize_strategy_params(template: str, params: dict[str, Any] | None) -> tuple[dict[str, Any], list[str]]:
+    defaults = benchmark_params_for_template(template)
+    incoming = dict(params or {})
+    missing_keys = [key for key in defaults if key not in incoming]
+    merged = {**defaults, **incoming}
+    sanitized, warnings = sanitize_strategy_params_for_template(template, merged)
+    if missing_keys:
+        warnings.append(f'filled missing params from deterministic defaults: {", ".join(sorted(missing_keys))}')
+    return sanitized, warnings
 
 
 def _evaluate_generation_candidate(
@@ -431,6 +457,7 @@ async def generate_strategy(
                 {'role': 'assistant', 'content': f'Fallback: {template} with default params'},
             ]
 
+    proposed_template = template
     selection = apply_template_selection_policy(
         user_prompt=payload.prompt,
         proposed_template=template,
@@ -459,10 +486,17 @@ async def generate_strategy(
     if selection_warnings:
         logger.info('strategy_template_selection_warnings template=%s warnings=%s', template, selection_warnings)
 
-    params, warnings = sanitize_strategy_params_for_template(template, params)
+    params, warnings = _normalize_strategy_params(template, params)
     all_warnings = [*selection_warnings, *warnings]
     if all_warnings:
         logger.info('strategy_params_sanitized template=%s warnings=%s', template, all_warnings)
+
+    if proposed_template != template or not name or not description or 'fallback' in description.lower():
+        name, description = _build_strategy_identity(symbol or _pair, timeframe_val or _timeframe, template)
+        if proposed_template != template:
+            all_warnings.append(
+                f'strategy identity realigned from template {proposed_template or "unknown"} to {template}'
+            )
 
     generation_optimization: dict[str, Any] = {
         'enabled': True,

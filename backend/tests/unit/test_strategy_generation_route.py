@@ -349,3 +349,69 @@ async def test_generate_strategy_runs_generation_backtests_off_event_loop_thread
 
     assert result.params == {'ema_fast': 9, 'ema_slow': 21, 'rsi_filter': 30}
     assert result.metrics['generation_optimization']['selected_source'] == 'llm_candidate_1'
+
+
+@pytest.mark.asyncio
+async def test_generate_strategy_realigns_name_description_and_params_after_template_override(monkeypatch) -> None:
+    fake_db = _FakeDB()
+    fake_user = SimpleNamespace(id=1, role=Role.ADMIN)
+
+    async def _fake_run_strategy_designer(**kwargs):  # noqa: ANN003
+        return {
+            'template': None,
+            'params': {},
+            'name': '',
+            'description': '',
+            'symbol': 'BTCUSD',
+            'timeframe': 'H1',
+            'prompt_history': [{'role': 'user', 'content': 'Bollinger Band squeeze breakout strategy'}],
+            'market_regime': 'calm',
+        }
+
+    async def _fake_llm_generate(prompt: str) -> dict | None:
+        return None
+
+    def _fake_random_choice(options):  # noqa: ANN001
+        assert 'macd_divergence' in options
+        return 'macd_divergence'
+
+    monkeypatch.setattr('app.api.routes.strategies._next_strategy_id', lambda db: 'STRAT-999')
+    monkeypatch.setattr('app.api.routes.strategies._llm_generate', _fake_llm_generate)
+    monkeypatch.setattr('app.api.routes.strategies.random.choice', _fake_random_choice)
+    monkeypatch.setattr('app.api.routes.strategies.random.randint', lambda a, b: 624)
+
+    captured: list[dict] = []
+
+    def _fake_evaluate_generation_candidate(**kwargs):  # noqa: ANN003
+        captured.append(kwargs)
+        return {
+            'metrics': {
+                'win_rate_pct': 60.87,
+                'profit_factor': 1.7263,
+                'max_drawdown_pct': 13.4535,
+                'total_return_pct': 9.9363,
+                'total_trades': 23,
+            },
+            'backtest_window': {'start_date': '2026-01-04', 'end_date': '2026-04-04', 'lookback_days': 90},
+            'generation_score': 43.5493,
+        }
+
+    monkeypatch.setattr('app.api.routes.strategies._evaluate_generation_candidate', _fake_evaluate_generation_candidate)
+
+    fake_designer_module = ModuleType('app.services.strategy.designer')
+    fake_designer_module.run_strategy_designer = _fake_run_strategy_designer
+    monkeypatch.setitem(sys.modules, 'app.services.strategy.designer', fake_designer_module)
+
+    result = await generate_strategy(
+        payload=StrategyGenerateRequest(prompt='Bollinger Band squeeze breakout strategy', pair='BTCUSD', timeframe='H1'),
+        db=fake_db,
+        user=fake_user,
+    )
+
+    assert result.template == 'bollinger_breakout'
+    assert result.name != 'macd_divergence_624'
+    assert 'macd_divergence' not in result.name
+    assert 'macd_divergence' not in result.description
+    assert result.params == {'bb_period': 28, 'bb_std': 2.25}
+    assert captured[0]['template'] == 'bollinger_breakout'
+    assert captured[0]['params'] == {'bb_period': 28, 'bb_std': 2.25}
