@@ -21,6 +21,9 @@ interface Strategy {
   metrics: Record<string, unknown>;
   prompt_history: Array<{ role: string; content: string }>;
   last_backtest_id: number | null;
+  is_monitoring: boolean;
+  monitoring_mode: string;
+  monitoring_risk_percent: number;
   created_at: string;
   updated_at: string;
 }
@@ -192,8 +195,8 @@ export function StrategiesPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [validatingId, setValidatingId] = useState<number | null>(null);
+  const [editingBusyId, setEditingBusyId] = useState<number | null>(null);
   const [detailStrategy, setDetailStrategy] = useState<Strategy | null>(null);
-  const [actionBusy, setActionBusy] = useState(false);
   const busyRef = useRef(false);
   const [generatePrompt, setGeneratePrompt] = useState('');
   const [generatePair, setGeneratePair] = useState('EURUSD.PRO');
@@ -264,7 +267,8 @@ export function StrategiesPage() {
   };
 
   const editStrategy = async (id: number) => {
-    if (!token || !editPrompt.trim()) return;
+    if (!token || !editPrompt.trim() || editingBusyId != null) return;
+    setEditingBusyId(id);
     try {
       await api.editStrategy(token, id, editPrompt);
       setEditPrompt('');
@@ -272,6 +276,8 @@ export function StrategiesPage() {
       await loadStrategies();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Edit failed');
+    } finally {
+      setEditingBusyId(null);
     }
   };
 
@@ -422,6 +428,12 @@ export function StrategiesPage() {
                           ))}
                         </div>
                       )}
+                      {editingBusyId === s.id && (
+                        <div className="flex items-center gap-2 text-[8px] font-mono text-accent">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>AI_UPDATING_STRATEGY...</span>
+                        </div>
+                      )}
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
@@ -429,16 +441,17 @@ export function StrategiesPage() {
                           onChange={(e) => setEditPrompt(e.target.value)}
                           placeholder="Adjust parameters..."
                           className="flex-1 text-[9px] bg-surface-alt border border-border rounded px-2 py-1.5 text-text font-mono"
-                          onKeyDown={(e) => { if (e.key === 'Enter') editStrategy(s.id); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && editingBusyId == null) editStrategy(s.id); }}
+                          disabled={editingBusyId != null}
                         />
                         <button
                           className="btn-ghost btn-small"
                           onClick={() => editStrategy(s.id)}
-                          disabled={!editPrompt.trim()}
+                          disabled={!editPrompt.trim() || editingBusyId != null}
                         >
-                          <Send className="w-3 h-3" />
+                          {editingBusyId === s.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                         </button>
-                        <button className="btn-ghost btn-small text-text-dim" onClick={() => setEditingId(null)}>
+                        <button className="btn-ghost btn-small text-text-dim" onClick={() => setEditingId(null)} disabled={editingBusyId != null}>
                           <XCircle className="w-3 h-3" />
                         </button>
                       </div>
@@ -447,8 +460,9 @@ export function StrategiesPage() {
                     <button
                       className="w-full text-[8px] font-mono text-text-dim hover:text-accent py-1 text-center"
                       onClick={() => setEditingId(s.id)}
+                      disabled={editingBusyId != null}
                     >
-                      EDIT_WITH_AI...
+                      {editingBusyId === s.id ? 'AI_UPDATING_STRATEGY...' : 'EDIT_WITH_AI...'}
                     </button>
                   )}
                 </div>

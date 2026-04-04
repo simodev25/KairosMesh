@@ -717,39 +717,64 @@ async def edit_strategy(
     strategy = db.get(Strategy, strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail='Strategy not found')
+    if user is not None and user.role not in {Role.SUPER_ADMIN, Role.ADMIN} and strategy.created_by_id != user.id:
+        raise HTTPException(status_code=404, detail='Strategy not found')
     if strategy.status not in ('DRAFT', 'VALIDATED', 'REJECTED'):
         raise HTTPException(status_code=400, detail=f'Cannot edit strategy in status {strategy.status}')
+
+    original_status = strategy.status
+    original_score = strategy.score
+    original_metrics = dict(strategy.metrics or {})
+    original_name = strategy.name
+    original_description = strategy.description
+    original_params = dict(strategy.params or {})
 
     history = list(strategy.prompt_history or [])
     history.append({'role': 'user', 'content': payload.prompt})
 
     llm_result = await _llm_edit(history, payload.prompt, strategy.params or {}, strategy.template)
 
+    changed = False
     if llm_result:
-        new_template = llm_result.get('template', strategy.template)
-        if new_template in VALID_TEMPLATES:
-            strategy.template = new_template
-        strategy.params, warnings = sanitize_strategy_params_for_template(
+        proposed_template = llm_result.get('template', strategy.template)
+        next_params, warnings = sanitize_strategy_params_for_template(
             strategy.template,
             llm_result.get('params', strategy.params),
         )
         if warnings:
             logger.info('strategy_params_sanitized id=%s template=%s warnings=%s', strategy.strategy_id, strategy.template, warnings)
-        if llm_result.get('name'):
+        if proposed_template and proposed_template != strategy.template:
+            logger.info(
+                'strategy_edit_template_override_blocked id=%s current=%s proposed=%s',
+                strategy.strategy_id,
+                strategy.template,
+                proposed_template,
+            )
+            next_params = original_params
+        if next_params != original_params:
+            strategy.params = next_params
+            changed = True
+        if llm_result.get('name') and proposed_template == strategy.template and llm_result['name'] != original_name:
             strategy.name = llm_result['name']
-        if llm_result.get('description'):
+            changed = True
+        if llm_result.get('description') and proposed_template == strategy.template and llm_result['description'] != original_description:
             strategy.description = llm_result['description']
+            changed = True
         history.append({'role': 'assistant', 'content': json.dumps(llm_result, indent=2)})
     else:
         history.append({'role': 'assistant', 'content': f'Could not process edit. Current params unchanged: {json.dumps(strategy.params)}'})
 
     strategy.prompt_history = history
-    # Reset to DRAFT when params change — requires re-validation
-    if strategy.status in ('VALIDATED', 'REJECTED'):
+    # Reset to DRAFT only when the persisted strategy definition actually changes.
+    if changed:
         strategy.status = 'DRAFT'
-        strategy.score = None
+        strategy.score = 0.0
         strategy.metrics = {}
         logger.info('strategy_edit_reset id=%s — params changed, reset to DRAFT for re-validation', strategy.strategy_id)
+    else:
+        strategy.status = original_status
+        strategy.score = original_score
+        strategy.metrics = original_metrics
     db.commit()
     db.refresh(strategy)
     return StrategyOut.model_validate(strategy)

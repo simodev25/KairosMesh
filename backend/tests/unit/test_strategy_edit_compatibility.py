@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.routes.strategies import StrategyEditRequest, edit_strategy
 from app.db.models.strategy import Strategy
@@ -52,6 +53,10 @@ def _legacy_strategy() -> SimpleNamespace:
     )
 
 
+def _user(*, user_id: int, role: str = 'trader-operator') -> SimpleNamespace:
+    return SimpleNamespace(id=user_id, role=role)
+
+
 @pytest.mark.asyncio
 async def test_edit_strategy_preserves_legacy_params_without_raising(monkeypatch) -> None:
     strategy = _legacy_strategy()
@@ -80,7 +85,7 @@ async def test_edit_strategy_preserves_legacy_params_without_raising(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_edit_strategy_sanitizes_when_legacy_moves_to_executable_template(monkeypatch) -> None:
+async def test_edit_strategy_ignores_template_switch_for_legacy_strategy(monkeypatch) -> None:
     strategy = _legacy_strategy()
     db = _FakeDB(strategy)
 
@@ -101,6 +106,114 @@ async def test_edit_strategy_sanitizes_when_legacy_moves_to_executable_template(
         user=None,
     )
 
-    assert result.template == 'bollinger_breakout'
-    assert result.params == {'bb_period': 20, 'bb_std': 2.0}
-    assert 'volume_filter' not in result.params
+    assert result.template == 'ema_rsi'
+    assert result.params == {'ema_fast': 12, 'ema_slow': 26, 'legacy_mode': True}
+
+
+@pytest.mark.asyncio
+async def test_edit_strategy_does_not_reset_validated_strategy_when_llm_edit_fails(monkeypatch) -> None:
+    strategy = _legacy_strategy()
+    strategy.status = 'VALIDATED'
+    strategy.score = 55.0
+    strategy.metrics = {'profit_factor': 1.8}
+    db = _FakeDB(strategy)
+
+    async def fake_llm_edit(history, edit_prompt, current_params, template):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr('app.api.routes.strategies._llm_edit', fake_llm_edit)
+
+    result = await edit_strategy(
+        strategy_id=1,
+        payload=StrategyEditRequest(prompt='tighten the entry logic'),
+        db=db,
+        user=_user(user_id=42),
+    )
+
+    assert result.status == 'VALIDATED'
+    assert result.score == 55.0
+    assert result.metrics == {'profit_factor': 1.8}
+
+
+@pytest.mark.asyncio
+async def test_edit_strategy_resets_to_draft_when_validated_strategy_changes(monkeypatch) -> None:
+    strategy = _legacy_strategy()
+    strategy.template = 'ema_crossover'
+    strategy.params = {'ema_fast': 12, 'ema_slow': 26, 'rsi_filter': 30}
+    strategy.status = 'VALIDATED'
+    strategy.score = 55.0
+    strategy.metrics = {'profit_factor': 1.8}
+    db = _FakeDB(strategy)
+
+    async def fake_llm_edit(history, edit_prompt, current_params, template):  # noqa: ANN001
+        return {
+            'template': 'ema_crossover',
+            'params': {'ema_fast': 9, 'ema_slow': 21, 'rsi_filter': 30},
+            'name': 'ema-edited',
+            'description': 'edited strategy',
+        }
+
+    monkeypatch.setattr('app.api.routes.strategies._llm_edit', fake_llm_edit)
+
+    result = await edit_strategy(
+        strategy_id=1,
+        payload=StrategyEditRequest(prompt='make it faster'),
+        db=db,
+        user=_user(user_id=42),
+    )
+
+    assert result.status == 'DRAFT'
+    assert result.score == 0.0
+    assert result.metrics == {}
+    assert result.params == {'ema_fast': 9, 'ema_slow': 21, 'rsi_filter': 30}
+
+
+@pytest.mark.asyncio
+async def test_edit_strategy_locks_template_and_preserves_current_params_when_llm_proposes_other_template(monkeypatch) -> None:
+    strategy = _legacy_strategy()
+    strategy.template = 'ema_crossover'
+    strategy.params = {'ema_fast': 12, 'ema_slow': 26, 'rsi_filter': 30}
+    db = _FakeDB(strategy)
+
+    async def fake_llm_edit(history, edit_prompt, current_params, template):  # noqa: ANN001
+        return {
+            'template': 'bollinger_breakout',
+            'params': {'bb_period': 20, 'bb_std': 2.0},
+            'name': 'new-name-should-not-apply',
+            'description': 'new-description-should-not-apply',
+        }
+
+    monkeypatch.setattr('app.api.routes.strategies._llm_edit', fake_llm_edit)
+
+    result = await edit_strategy(
+        strategy_id=1,
+        payload=StrategyEditRequest(prompt='switch this to a breakout strategy'),
+        db=db,
+        user=_user(user_id=42),
+    )
+
+    assert result.template == 'ema_crossover'
+    assert result.params == {'ema_fast': 12, 'ema_slow': 26, 'rsi_filter': 30}
+    assert result.name == 'legacy-ema'
+    assert result.description == 'legacy strategy'
+
+
+@pytest.mark.asyncio
+async def test_edit_strategy_rejects_non_owner_for_non_admin(monkeypatch) -> None:
+    strategy = _legacy_strategy()
+    db = _FakeDB(strategy)
+
+    async def fake_llm_edit(history, edit_prompt, current_params, template):  # noqa: ANN001, ARG001
+        raise AssertionError('LLM should not be called for unauthorized edit')
+
+    monkeypatch.setattr('app.api.routes.strategies._llm_edit', fake_llm_edit)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await edit_strategy(
+            strategy_id=1,
+            payload=StrategyEditRequest(prompt='change params'),
+            db=db,
+            user=_user(user_id=7),
+        )
+
+    assert exc_info.value.status_code == 404
