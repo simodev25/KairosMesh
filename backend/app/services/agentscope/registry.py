@@ -764,9 +764,9 @@ class AgentScopeRegistry:
             _trace_trading_params = {}
             try:
                 from app.services.config.trading_config import get_effective_gating_policy as _tgp, get_effective_sizing as _ts, get_effective_risk_limits as _trl
-                _tg = _tgp(decision_mode)
                 _run_mode = str(getattr(run, "mode", "simulation") or "simulation").strip().lower()
-                _tl = _trl(_run_mode)
+                _tg = _tgp(decision_mode, _run_mode)
+                _tl = _trl(_run_mode, decision_mode)
                 _trace_trading_params = {
                     "decision_mode": decision_mode,
                     "execution_mode": _run_mode,
@@ -789,7 +789,7 @@ class AgentScopeRegistry:
                         "max_currency_notional_exposure_pct_block": _tl.max_currency_notional_exposure_pct_block,
                         "max_currency_open_risk_pct": _tl.max_currency_open_risk_pct,
                     },
-                    "sizing": _ts(),
+                    "sizing": _ts(decision_mode, _run_mode),
                 }
             except Exception:
                 pass
@@ -1108,6 +1108,7 @@ class AgentScopeRegistry:
 
             # Resolve decision mode early so toolkits get it
             _resolved_decision_mode = model_selector.resolve_decision_mode(db)
+            _resolved_execution_mode = str(getattr(run, "mode", "simulation") or "simulation").strip().lower()
 
             # Build toolkits with OHLC preset + DB skills + snapshot for trader tools
             toolkits = {}
@@ -1118,6 +1119,7 @@ class AgentScopeRegistry:
                     skills=agent_skills,
                     snapshot=snapshot,
                     decision_mode=_resolved_decision_mode,
+                    execution_mode=_resolved_execution_mode,
                 )
 
             # Build prompt variables for context injection
@@ -1285,6 +1287,7 @@ class AgentScopeRegistry:
                     skills=model_selector.resolve_skills(db, rname),
                     snapshot=snapshot,
                     decision_mode=_resolved_decision_mode,
+                    execution_mode=_resolved_execution_mode,
                 )
                 if rname in agents:
                     agents[rname] = ALL_AGENT_FACTORIES[rname](
@@ -1670,6 +1673,7 @@ class AgentScopeRegistry:
                             skills=model_selector.resolve_skills(db, "risk-manager"),
                             snapshot=snapshot,
                             decision_mode=_resolved_decision_mode,
+                            execution_mode=_resolved_execution_mode,
                             portfolio_state=_portfolio_state,
                         )
                         if "risk-manager" in agents:
@@ -1888,8 +1892,8 @@ class AgentScopeRegistry:
             _effective_trading_params = {}
             try:
                 from app.services.config.trading_config import get_effective_gating_policy, get_effective_risk_limits, get_effective_sizing
-                _eff_gating = get_effective_gating_policy(_resolved_decision_mode)
                 _run_mode_str = str(getattr(run, "mode", "simulation") or "simulation").strip().lower()
+                _eff_gating = get_effective_gating_policy(_resolved_decision_mode, _run_mode_str)
                 _eff_limits = get_effective_risk_limits(_run_mode_str, _resolved_decision_mode)
                 _effective_trading_params = {
                     "decision_mode": _resolved_decision_mode,
@@ -1913,7 +1917,7 @@ class AgentScopeRegistry:
                         "max_currency_notional_exposure_pct_block": _eff_limits.max_currency_notional_exposure_pct_block,
                         "max_currency_open_risk_pct": _eff_limits.max_currency_open_risk_pct,
                     },
-                    "sizing": get_effective_sizing(_resolved_decision_mode),
+                    "sizing": get_effective_sizing(_resolved_decision_mode, _run_mode_str),
                 }
             except Exception:
                 pass
@@ -2024,6 +2028,7 @@ class AgentScopeRegistry:
                     skills=agent_skills,
                     snapshot=snapshot,
                     decision_mode=base_vars.get("decision_mode", "balanced"),
+                    execution_mode="simulation",
                 )
                 is_debate = name in ("bullish-researcher", "bearish-researcher", "trader-agent")
                 agents[name] = factory(

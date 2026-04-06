@@ -474,21 +474,19 @@ export function ConnectorsPage() {
     e.preventDefault();
     if (!token) return;
 
-    const tradingConn = connectors.find((c) => c.connector_name === 'trading');
-    const existingSettings = (tradingConn?.settings ?? {}) as Record<string, unknown>;
-
     setSavingTrading(true);
     setError(null);
     try {
-      await api.updateConnector(token, 'trading', {
-        enabled: tradingConn?.enabled ?? true,
-        settings: {
-          ...existingSettings,
+      await api.updateTradingConfig(
+        token,
+        {
           gating: tradingEdits.gating ?? {},
           risk_limits: tradingEdits.risk_limits ?? {},
           sizing: tradingEdits.sizing ?? {},
         },
-      });
+        decisionMode,
+        executionMode,
+      );
       await loadAll();
       await loadTradingConfig();
       await loadTradingVersions();

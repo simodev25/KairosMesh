@@ -123,6 +123,7 @@ async def build_toolkit(
     skills: list[str] | None = None,
     snapshot: dict | None = None,
     decision_mode: str | None = None,
+    execution_mode: str | None = None,
 ) -> Toolkit:
     """Build a Toolkit with the MCP tools assigned to the given agent.
 
@@ -231,8 +232,12 @@ async def build_toolkit(
         # Pre-inject decision_mode so the LLM doesn't send wrong mode.
         if tool_id == "decision_gating" and decision_mode:
             preset["mode"] = decision_mode
+            if execution_mode:
+                preset["execution_mode"] = execution_mode
         if tool_id in {"trade_sizing", "scenario_validation"} and decision_mode:
             preset["decision_mode"] = decision_mode
+            if execution_mode:
+                preset["execution_mode"] = execution_mode
 
         # Pre-inject factual market DATA into tools (not opinions/scores).
         # The LLM decides freely, but gets accurate numbers from the snapshot.

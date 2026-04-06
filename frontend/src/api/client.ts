@@ -83,6 +83,24 @@ export const api = {
       {},
       token,
     ),
+  updateTradingConfig: (
+    token: string,
+    payload: {
+      gating?: Record<string, unknown>;
+      risk_limits?: Record<string, unknown>;
+      sizing?: Record<string, unknown>;
+    },
+    decisionMode?: string,
+    executionMode?: string,
+  ) =>
+    request<{ catalog: Record<string, Array<Record<string, unknown>>>; values: Record<string, Record<string, unknown>> }>(
+      `/connectors/trading-config?decision_mode=${decisionMode || 'balanced'}&execution_mode=${executionMode || 'simulation'}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+      token,
+    ),
   testConnector: (token: string, connector: string) =>
     request(`/connectors/${connector}/test`, { method: 'POST' }, token),
   testNewsProvider: (token: string, provider: string, pair?: string) => {

@@ -94,6 +94,69 @@ def test_runtime_overrides_take_precedence_over_decision_mode_presets(monkeypatc
     assert values["sizing"]["sl_atr_multiplier"] == 1.9
 
 
+def test_scoped_runtime_overrides_apply_only_to_matching_profile(monkeypatch) -> None:
+    monkeypatch.setattr(
+        trading_config_module,
+        "_get_runtime_settings",
+        lambda: {
+            "profiles": {
+                "permissive": {
+                    "live": {
+                        "gating": {"min_confidence": 0.25},
+                        "risk_limits": {"max_open_risk_pct": 3.0},
+                        "sizing": {"sl_atr_multiplier": 2.2},
+                    }
+                }
+            }
+        },
+    )
+
+    live_permissive = get_current_values("permissive", "live")
+    simulation_permissive = get_current_values("permissive", "simulation")
+    live_balanced = get_current_values("balanced", "live")
+
+    assert live_permissive["gating"]["min_confidence"] == 0.25
+    assert live_permissive["risk_limits"]["max_open_risk_pct"] == 3.0
+    assert live_permissive["sizing"]["sl_atr_multiplier"] == 2.2
+
+    assert simulation_permissive["risk_limits"]["max_open_risk_pct"] == 8.0
+    assert simulation_permissive["sizing"]["sl_atr_multiplier"] == 1.2
+    assert live_balanced["risk_limits"]["max_open_risk_pct"] == 6.0
+    assert live_balanced["gating"]["min_confidence"] == 0.28
+
+
+def test_scoped_runtime_overrides_take_precedence_over_legacy_globals(monkeypatch) -> None:
+    monkeypatch.setattr(
+        trading_config_module,
+        "_get_runtime_settings",
+        lambda: {
+            "gating": {"min_confidence": 0.31},
+            "risk_limits": {"max_open_risk_pct": 11.5},
+            "sizing": {"sl_atr_multiplier": 1.9},
+            "profiles": {
+                "permissive": {
+                    "live": {
+                        "gating": {"min_confidence": 0.25},
+                        "risk_limits": {"max_open_risk_pct": 3.0},
+                        "sizing": {"sl_atr_multiplier": 2.2},
+                    }
+                }
+            },
+        },
+    )
+
+    live_permissive = get_current_values("permissive", "live")
+    live_balanced = get_current_values("balanced", "live")
+
+    assert live_permissive["gating"]["min_confidence"] == 0.25
+    assert live_permissive["risk_limits"]["max_open_risk_pct"] == 3.0
+    assert live_permissive["sizing"]["sl_atr_multiplier"] == 2.2
+
+    assert live_balanced["gating"]["min_confidence"] == 0.31
+    assert live_balanced["risk_limits"]["max_open_risk_pct"] == 11.5
+    assert live_balanced["sizing"]["sl_atr_multiplier"] == 1.9
+
+
 def test_current_values_structure() -> None:
     values = get_current_values("balanced", "simulation")
     assert "gating" in values

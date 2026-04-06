@@ -884,6 +884,7 @@ def scenario_validation(
     take_profit: float | None = None,
     entry_price: float | None = None,
     decision_mode: str = "balanced",
+    execution_mode: str = "simulation",
 ) -> dict[str, Any]:
     """Validate a trading scenario against invalidation conditions.
 
@@ -909,7 +910,7 @@ def scenario_validation(
     if stop_loss and entry_price:
         try:
             from app.services.config.trading_config import get_effective_sizing
-            _min_sl_pct = get_effective_sizing(decision_mode).get("min_sl_distance_pct", 0.05)
+            _min_sl_pct = get_effective_sizing(decision_mode, execution_mode).get("min_sl_distance_pct", 0.05)
         except Exception:
             _min_sl_pct = 0.05
         if sl_distance_pct < _min_sl_pct:
@@ -1269,11 +1270,12 @@ def decision_gating(
     confidence: float = 0.0,
     aligned_sources: int = 0,
     mode: str = "balanced",
+    execution_mode: str = "simulation",
 ) -> dict:
     """Apply decision gates based on policy mode (with runtime DB overrides)."""
     try:
         from app.services.config.trading_config import get_effective_gating_policy
-        policy = get_effective_gating_policy(mode)
+        policy = get_effective_gating_policy(mode, execution_mode)
     except Exception:
         policy = DECISION_MODES.get(mode, DECISION_MODES["balanced"])
     blocked_by = []
@@ -1313,11 +1315,12 @@ def trade_sizing(
     atr: float = 0.0,
     decision_side: str = "BUY",
     decision_mode: str = "balanced",
+    execution_mode: str = "simulation",
 ) -> dict:
     """Compute entry, stop-loss, and take-profit from ATR (with runtime DB overrides)."""
     try:
         from app.services.config.trading_config import get_effective_sizing
-        sizing = get_effective_sizing(decision_mode)
+        sizing = get_effective_sizing(decision_mode, execution_mode)
         _sl_mult = sizing["sl_atr_multiplier"]
         _tp_mult = sizing["tp_atr_multiplier"]
     except Exception:

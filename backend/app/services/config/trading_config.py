@@ -17,6 +17,7 @@ from app.services.agentscope.constants import (
 from app.services.risk.limits import RISK_LIMITS, RiskLimits
 
 CONNECTOR_NAME = "trading"
+SCOPED_PROFILES_KEY = "profiles"
 
 DECISION_MODE_RISK_PRESETS: dict[str, dict[str, float | int]] = {
     "conservative": {
@@ -232,30 +233,108 @@ def _get_runtime_settings() -> dict[str, Any]:
         return {}
 
 
-def get_effective_gating_policy(mode: str) -> DecisionGatingPolicy:
-    """Resolve DecisionGatingPolicy: DB overrides > code defaults for the given mode."""
-    base = DECISION_MODES.get(mode, DECISION_MODES["balanced"])
+def _normalize_decision_mode_name(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in DECISION_MODES:
+        return normalized
+    return "balanced"
+
+
+def _normalize_execution_mode_name(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in RISK_LIMITS:
+        return normalized
+    return "live"
+
+
+def _get_section_overrides(
+    runtime: dict[str, Any],
+    *,
+    section: str,
+    decision_mode: str,
+    execution_mode: str | None = None,
+) -> dict[str, Any]:
+    profiles = runtime.get(SCOPED_PROFILES_KEY, {})
+    if execution_mode and isinstance(profiles, dict):
+        scoped_by_decision = profiles.get(_normalize_decision_mode_name(decision_mode), {})
+        if isinstance(scoped_by_decision, dict):
+            scoped_profile = scoped_by_decision.get(_normalize_execution_mode_name(execution_mode), {})
+            if isinstance(scoped_profile, dict):
+                scoped_section = scoped_profile.get(section)
+                if isinstance(scoped_section, dict):
+                    return scoped_section
+
+    legacy_section = runtime.get(section, {})
+    if isinstance(legacy_section, dict):
+        return legacy_section
+    return {}
+
+
+def _collect_overrides(raw_values: dict[str, Any], params: list[dict[str, Any]]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    for param in params:
+        key = param["key"]
+        if key not in raw_values:
+            continue
+        try:
+            if param["type"] == "float":
+                overrides[key] = float(raw_values[key])
+            elif param["type"] == "int":
+                overrides[key] = int(raw_values[key])
+            elif param["type"] == "bool":
+                overrides[key] = bool(raw_values[key])
+        except (TypeError, ValueError):
+            pass
+    return overrides
+
+
+def build_scoped_trading_settings(
+    current_settings: dict[str, Any] | None,
+    *,
+    decision_mode: str,
+    execution_mode: str,
+    gating: dict[str, Any] | None = None,
+    risk_limits: dict[str, Any] | None = None,
+    sizing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    next_settings = dict(current_settings or {})
+    profiles = next_settings.get(SCOPED_PROFILES_KEY, {})
+    if not isinstance(profiles, dict):
+        profiles = {}
+
+    resolved_decision_mode = _normalize_decision_mode_name(decision_mode)
+    resolved_execution_mode = _normalize_execution_mode_name(execution_mode)
+
+    scoped_by_decision = profiles.get(resolved_decision_mode, {})
+    if not isinstance(scoped_by_decision, dict):
+        scoped_by_decision = {}
+
+    scoped_profile = scoped_by_decision.get(resolved_execution_mode, {})
+    if not isinstance(scoped_profile, dict):
+        scoped_profile = {}
+
+    scoped_profile["gating"] = dict(gating or {})
+    scoped_profile["risk_limits"] = dict(risk_limits or {})
+    scoped_profile["sizing"] = dict(sizing or {})
+    scoped_by_decision[resolved_execution_mode] = scoped_profile
+    profiles[resolved_decision_mode] = scoped_by_decision
+    next_settings[SCOPED_PROFILES_KEY] = profiles
+    return next_settings
+
+
+def get_effective_gating_policy(mode: str, execution_mode: str | None = None) -> DecisionGatingPolicy:
+    """Resolve DecisionGatingPolicy: scoped DB overrides > legacy DB overrides > code defaults."""
+    resolved_mode = _normalize_decision_mode_name(mode)
+    base = DECISION_MODES.get(resolved_mode, DECISION_MODES["balanced"])
     runtime = _get_runtime_settings()
 
-    gating_overrides = runtime.get("gating", {})
-    if not isinstance(gating_overrides, dict):
-        return base
-
-    # Build override dict from runtime settings
-    overrides: dict[str, Any] = {}
-    for param in GATING_PARAMS:
-        key = param["key"]
-        if key in gating_overrides:
-            try:
-                if param["type"] == "float":
-                    overrides[key] = float(gating_overrides[key])
-                elif param["type"] == "int":
-                    overrides[key] = int(gating_overrides[key])
-                elif param["type"] == "bool":
-                    overrides[key] = bool(gating_overrides[key])
-            except (TypeError, ValueError):
-                pass
-
+    gating_overrides = _get_section_overrides(
+        runtime,
+        section="gating",
+        decision_mode=resolved_mode,
+        execution_mode=execution_mode,
+    )
+    overrides = _collect_overrides(gating_overrides, GATING_PARAMS)
     if not overrides:
         return base
 
@@ -277,28 +356,29 @@ def get_effective_gating_policy(mode: str) -> DecisionGatingPolicy:
 
 
 def get_effective_risk_limits(mode: str, decision_mode: str = "balanced") -> RiskLimits:
-    """Resolve RiskLimits: execution defaults > decision preset > DB overrides."""
-    base = RISK_LIMITS.get(mode, RISK_LIMITS["live"])
-    decision_overrides = DECISION_MODE_RISK_PRESETS.get(decision_mode, DECISION_MODE_RISK_PRESETS["balanced"])
+    """Resolve RiskLimits: execution defaults > decision preset > scoped DB overrides > legacy DB overrides."""
+    resolved_mode = _normalize_execution_mode_name(mode)
+    resolved_decision_mode = _normalize_decision_mode_name(decision_mode)
+    base = RISK_LIMITS.get(resolved_mode, RISK_LIMITS["live"])
+    decision_overrides = DECISION_MODE_RISK_PRESETS.get(
+        resolved_decision_mode,
+        DECISION_MODE_RISK_PRESETS["balanced"],
+    )
     runtime = _get_runtime_settings()
 
-    risk_overrides = runtime.get("risk_limits", {})
+    risk_overrides = _get_section_overrides(
+        runtime,
+        section="risk_limits",
+        decision_mode=resolved_decision_mode,
+        execution_mode=resolved_mode,
+    )
     if not isinstance(risk_overrides, dict):
         base_dict = asdict(base)
         base_dict.update(decision_overrides)
         return RiskLimits(**base_dict)
 
     overrides: dict[str, Any] = dict(decision_overrides)
-    for param in RISK_PARAMS:
-        key = param["key"]
-        if key in risk_overrides:
-            try:
-                if param["type"] == "float":
-                    overrides[key] = float(risk_overrides[key])
-                elif param["type"] == "int":
-                    overrides[key] = int(risk_overrides[key])
-            except (TypeError, ValueError):
-                pass
+    overrides.update(_collect_overrides(risk_overrides, RISK_PARAMS))
 
     base_dict = asdict(base)
     base_dict.update(overrides)
@@ -306,27 +386,34 @@ def get_effective_risk_limits(mode: str, decision_mode: str = "balanced") -> Ris
     return RiskLimits(**base_dict)
 
 
-def get_effective_sizing(decision_mode: str = "balanced") -> dict[str, float]:
-    """Resolve trade sizing ATR multipliers: defaults > decision preset > DB overrides."""
+def get_effective_sizing(decision_mode: str = "balanced", execution_mode: str | None = None) -> dict[str, float]:
+    """Resolve trade sizing: defaults > decision preset > scoped DB overrides > legacy DB overrides."""
     from app.services.agentscope.constants import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER
 
+    resolved_decision_mode = _normalize_decision_mode_name(decision_mode)
     defaults: dict[str, float] = {
         "sl_atr_multiplier": SL_ATR_MULTIPLIER,
         "tp_atr_multiplier": TP_ATR_MULTIPLIER,
         "min_sl_distance_pct": 0.05,
     }
-    defaults.update(DECISION_MODE_SIZING_PRESETS.get(decision_mode, DECISION_MODE_SIZING_PRESETS["balanced"]))
+    defaults.update(
+        DECISION_MODE_SIZING_PRESETS.get(
+            resolved_decision_mode,
+            DECISION_MODE_SIZING_PRESETS["balanced"],
+        )
+    )
     runtime = _get_runtime_settings()
-    sizing_overrides = runtime.get("sizing", {})
+    sizing_overrides = _get_section_overrides(
+        runtime,
+        section="sizing",
+        decision_mode=resolved_decision_mode,
+        execution_mode=execution_mode,
+    )
     if not isinstance(sizing_overrides, dict):
         return defaults
 
-    for key in defaults:
-        if key in sizing_overrides:
-            try:
-                defaults[key] = float(sizing_overrides[key])
-            except (TypeError, ValueError):
-                pass
+    for key, value in _collect_overrides(sizing_overrides, SIZING_PARAMS).items():
+        defaults[key] = float(value)
 
     return defaults
 
@@ -367,9 +454,9 @@ def _query_max_version(db: Any) -> int:
 
 def get_current_values(decision_mode: str, execution_mode: str) -> dict[str, dict[str, Any]]:
     """Return current effective values for all configurable parameters."""
-    gating = get_effective_gating_policy(decision_mode)
+    gating = get_effective_gating_policy(decision_mode, execution_mode)
     limits = get_effective_risk_limits(execution_mode, decision_mode)
-    sizing = get_effective_sizing(decision_mode)
+    sizing = get_effective_sizing(decision_mode, execution_mode)
 
     return {
         "gating": {
