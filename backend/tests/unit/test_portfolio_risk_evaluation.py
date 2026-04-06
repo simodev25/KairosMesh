@@ -82,7 +82,8 @@ def test_portfolio_risk_evaluation_exposes_canonical_and_legacy_currency_metrics
     assert result["incremental_currency_open_risk_pct"]["USD"] == 1.0
 
 
-def test_portfolio_risk_evaluation_uses_trader_decision_mode_when_tool_mode_is_missing(monkeypatch) -> None:
+def test_portfolio_risk_evaluation_reads_decision_mode_from_runtime_config(monkeypatch) -> None:
+    """decision_mode is resolved from runtime config (ollama connector), not trader_decision."""
     base = get_risk_limits("live")
     seen_calls: list[tuple[str, str]] = []
 
@@ -92,12 +93,17 @@ def test_portfolio_risk_evaluation_uses_trader_decision_mode_when_tool_mode_is_m
 
     monkeypatch.setattr("app.services.risk.limits.get_risk_limits", _fake_get_risk_limits)
 
+    # Mock RuntimeConnectorSettings to return permissive decision_mode
+    monkeypatch.setattr(
+        "app.services.connectors.runtime_settings.RuntimeConnectorSettings.settings",
+        lambda connector_name: {"decision_mode": "permissive"} if connector_name == "ollama" else {},
+    )
+
     portfolio_risk_evaluation(
         trader_decision={
             "decision": "BUY",
             "pair": "BTCUSD",
             "mode": "live",
-            "decision_mode": "permissive",
             "entry": 2500.0,
             "stop_loss": 2400.0,
             "take_profit": 2800.0,

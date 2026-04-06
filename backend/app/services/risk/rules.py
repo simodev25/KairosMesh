@@ -39,6 +39,7 @@ class RiskAssessment:
     accepted: bool
     reasons: list[str]
     suggested_volume: float
+    effective_risk_percent: float = 0.0
     pip_size: float = 0.0001
     pip_value_per_lot: float = 10.0
     margin_required: float = 0.0
@@ -214,6 +215,13 @@ class RiskEngine:
             return volume
         return round(math.floor(volume / step) * step, 8)
 
+    @staticmethod
+    def _normalize_risk_limit_behavior(value: str | None) -> str:
+        behavior = str(value or "").strip().lower()
+        if behavior in {"clamp", "reject", "warn_only"}:
+            return behavior
+        return "warn_only"
+
     def evaluate(
         self,
         mode: str,
@@ -234,6 +242,7 @@ class RiskEngine:
                 accepted=True,
                 reasons=['No trade requested (HOLD).'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
@@ -243,6 +252,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid price: {price}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
         if not (isinstance(equity, (int, float)) and math.isfinite(equity) and equity > 0):
@@ -250,6 +260,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid equity: {equity}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
         if not (isinstance(risk_percent, (int, float)) and math.isfinite(risk_percent) and risk_percent > 0):
@@ -257,6 +268,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid risk_percent: {risk_percent}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
@@ -265,6 +277,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=['Stop loss is mandatory.'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
         if not (isinstance(stop_loss, (int, float)) and math.isfinite(stop_loss) and stop_loss > 0):
@@ -272,6 +285,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid stop_loss: {stop_loss}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
@@ -283,7 +297,12 @@ class RiskEngine:
         if stop_distance <= 0:
             reasons.append('Stop loss distance must be > 0.')
 
-        min_sl_pct = 0.0005  # 0.05% minimum distance
+        try:
+            from app.services.config.trading_config import get_effective_sizing
+            _sizing = get_effective_sizing()
+            min_sl_pct = _sizing.get("min_sl_distance_pct", 0.05) / 100.0
+        except Exception:
+            min_sl_pct = 0.0005  # 0.05% minimum distance
         if price > 0 and stop_distance / price < min_sl_pct:
             reasons.append('Stop loss is too tight for current market volatility.')
 
@@ -320,6 +339,7 @@ class RiskEngine:
             accepted=accepted,
             reasons=reasons,
             suggested_volume=round(suggested_volume, 4),
+            effective_risk_percent=risk_percent,
             pip_size=pip_size,
             pip_value_per_lot=pip_value,
             margin_required=round(margin_required, 2),
@@ -407,7 +427,13 @@ class RiskEngine:
 
         if new_stop_loss is not None and new_stop_loss > 0:
             sl_distance = abs(current_price - new_stop_loss)
-            if current_price > 0 and sl_distance / current_price < 0.0005:
+            try:
+                from app.services.config.trading_config import get_effective_sizing
+                _sizing = get_effective_sizing()
+                _min_sl_pct = _sizing.get("min_sl_distance_pct", 0.05) / 100.0
+            except Exception:
+                _min_sl_pct = 0.0005
+            if current_price > 0 and sl_distance / current_price < _min_sl_pct:
                 reasons.append('Proposed stop loss is too tight.')
             # Verify SL is on correct side
             if side == 'BUY' and new_stop_loss >= current_price:
@@ -479,12 +505,43 @@ class RiskEngine:
                 accepted=True,
                 reasons=["No trade requested (HOLD)."],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
         equity = portfolio.equity if portfolio.equity > 0 else 10000.0
         trade_risk_pct = proposed_trade.risk_percent
         free_margin_pct = (portfolio.free_margin / equity) * 100 if equity > 0 else 0.0
+        requested_trade_risk_pct = trade_risk_pct
+        risk_limit_behavior = self._normalize_risk_limit_behavior(
+            limits.max_risk_per_trade_behavior,
+        )
+
+        if limits.enforce_max_risk_per_trade and trade_risk_pct > limits.max_risk_per_trade_pct:
+            if risk_limit_behavior == "reject":
+                _add_breach(
+                    metric="max_risk_per_trade_pct",
+                    value=round(trade_risk_pct, 2),
+                    limit=limits.max_risk_per_trade_pct,
+                    message=(
+                        f"requested trade risk {trade_risk_pct:.1f}% exceeds per-trade limit "
+                        f"{limits.max_risk_per_trade_pct:.1f}%"
+                    ),
+                    blocking=True,
+                    metric_type="stop_based_risk",
+                )
+            elif risk_limit_behavior == "clamp":
+                trade_risk_pct = limits.max_risk_per_trade_pct
+                if limits.log_risk_adjustments:
+                    reasons.append(
+                        f"Risk percent clamped from {requested_trade_risk_pct:.1f}% "
+                        f"to {trade_risk_pct:.1f}%."
+                    )
+            elif limits.log_risk_adjustments:
+                reasons.append(
+                    f"WARN: requested trade risk {requested_trade_risk_pct:.1f}% exceeds configured limit "
+                    f"{limits.max_risk_per_trade_pct:.1f}% but warn_only is active."
+                )
 
         # Check 1: Stress test remains a hard block.
         try:
@@ -689,6 +746,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=reasons,
                 suggested_volume=0.0,
+                effective_risk_percent=trade_risk_pct,
                 asset_class=ac,
                 breached_limits=breached_limits,
                 primary_rejection_reason=primary_rejection_reason,
@@ -698,7 +756,7 @@ class RiskEngine:
         assessment = self.evaluate(
             mode=proposed_trade.mode,
             decision=proposed_trade.decision,
-            risk_percent=proposed_trade.risk_percent,
+            risk_percent=trade_risk_pct,
             price=proposed_trade.entry_price,
             stop_loss=proposed_trade.stop_loss,
             pair=proposed_trade.pair,

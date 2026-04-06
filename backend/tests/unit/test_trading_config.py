@@ -103,7 +103,12 @@ def test_scoped_runtime_overrides_apply_only_to_matching_profile(monkeypatch) ->
                 "permissive": {
                     "live": {
                         "gating": {"min_confidence": 0.25},
-                        "risk_limits": {"max_open_risk_pct": 3.0},
+                        "risk_limits": {
+                            "max_open_risk_pct": 3.0,
+                            "enforce_max_risk_per_trade": True,
+                            "max_risk_per_trade_behavior": "clamp",
+                            "log_risk_adjustments": True,
+                        },
                         "sizing": {"sl_atr_multiplier": 2.2},
                     }
                 }
@@ -117,9 +122,13 @@ def test_scoped_runtime_overrides_apply_only_to_matching_profile(monkeypatch) ->
 
     assert live_permissive["gating"]["min_confidence"] == 0.25
     assert live_permissive["risk_limits"]["max_open_risk_pct"] == 3.0
+    assert live_permissive["risk_limits"]["enforce_max_risk_per_trade"] is True
+    assert live_permissive["risk_limits"]["max_risk_per_trade_behavior"] == "clamp"
+    assert live_permissive["risk_limits"]["log_risk_adjustments"] is True
     assert live_permissive["sizing"]["sl_atr_multiplier"] == 2.2
 
     assert simulation_permissive["risk_limits"]["max_open_risk_pct"] == 8.0
+    assert simulation_permissive["risk_limits"]["enforce_max_risk_per_trade"] is False
     assert simulation_permissive["sizing"]["sl_atr_multiplier"] == 1.2
     assert live_balanced["risk_limits"]["max_open_risk_pct"] == 6.0
     assert live_balanced["gating"]["min_confidence"] == 0.28
@@ -164,7 +173,20 @@ def test_current_values_structure() -> None:
     assert "sizing" in values
     assert "min_combined_score" in values["gating"]
     assert "max_daily_loss_pct" in values["risk_limits"]
+    assert "enforce_max_risk_per_trade" in values["risk_limits"]
+    assert "max_risk_per_trade_behavior" in values["risk_limits"]
+    assert "log_risk_adjustments" in values["risk_limits"]
     assert "sl_atr_multiplier" in values["sizing"]
+
+
+def test_catalog_exposes_risk_limit_behavior_controls() -> None:
+    catalog = get_param_catalog()
+    risk_params = {param["key"]: param for param in catalog["risk_limits"]}
+
+    assert risk_params["enforce_max_risk_per_trade"]["type"] == "bool"
+    assert risk_params["max_risk_per_trade_behavior"]["type"] == "enum"
+    assert risk_params["max_risk_per_trade_behavior"]["options"] == ["clamp", "reject", "warn_only"]
+    assert risk_params["log_risk_adjustments"]["type"] == "bool"
 
 
 def test_unknown_mode_falls_back() -> None:

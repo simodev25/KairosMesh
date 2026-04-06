@@ -14,6 +14,9 @@ class RiskLimits:
     max_positions: int                # Max simultaneous positions
     max_positions_per_symbol: int     # Max positions per symbol
     min_free_margin_pct: float        # Min free margin percentage
+    enforce_max_risk_per_trade: bool = False
+    max_risk_per_trade_behavior: str = "warn_only"
+    log_risk_adjustments: bool = False
     # Tier 2
     max_currency_notional_exposure_pct_warn: float = 40.0
     max_currency_notional_exposure_pct_block: float = 40.0

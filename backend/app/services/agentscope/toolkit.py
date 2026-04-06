@@ -114,6 +114,33 @@ def _wrap_mcp_tool(tool_id: str, original_fn, force_kwargs: dict | None = None) 
 OHLC_PARAMS = frozenset({"closes", "highs", "lows", "opens"})
 
 
+def _build_risk_tool_trader_decision(
+    trader_out: dict[str, Any],
+    *,
+    decision_mode: str | None = None,
+    execution_mode: str | None = None,
+) -> dict[str, Any]:
+    trader_meta = trader_out.get("metadata", {})
+    if not trader_meta or not trader_meta.get("decision"):
+        trader_meta = {
+            k: v for k, v in trader_out.items()
+            if k in (
+                "decision", "conviction", "reasoning", "key_level", "entry", "stop_loss",
+                "take_profit", "pair", "asset_class", "mode", "decision_mode",
+            )
+        }
+
+    if not trader_meta or not trader_meta.get("decision"):
+        return {}
+
+    merged = dict(trader_meta)
+    if execution_mode and not merged.get("mode"):
+        merged["mode"] = execution_mode
+    if decision_mode and not merged.get("decision_mode"):
+        merged["decision_mode"] = decision_mode
+    return merged
+
+
 async def build_toolkit(
     agent_name: str,
     ohlc: dict[str, list[float]] | None = None,
@@ -181,11 +208,11 @@ async def build_toolkit(
         _force_kwargs: dict | None = None
         if tool_id == "portfolio_risk_evaluation" and analysis_outputs:
             trader_out = analysis_outputs.get("trader-agent", {})
-            trader_meta = trader_out.get("metadata", {})
-            if not trader_meta or not trader_meta.get("decision"):
-                trader_meta = {k: v for k, v in trader_out.items()
-                               if k in ("decision", "conviction", "reasoning",
-                                        "key_level", "entry", "stop_loss", "take_profit")}
+            trader_meta = _build_risk_tool_trader_decision(
+                trader_out,
+                decision_mode=decision_mode,
+                execution_mode=execution_mode,
+            )
             if trader_meta and trader_meta.get("decision"):
                 _force_kwargs = {"trader_decision": trader_meta}
                 if portfolio_state is not None:
@@ -252,12 +279,11 @@ async def build_toolkit(
         # need to pass it manually (it often forgets or sends empty).
         if tool_id == "portfolio_risk_evaluation" and analysis_outputs:
             trader_out = analysis_outputs.get("trader-agent", {})
-            # Try metadata first, then top-level (flat output_payload)
-            trader_meta = trader_out.get("metadata", {})
-            if not trader_meta or not trader_meta.get("decision"):
-                trader_meta = {k: v for k, v in trader_out.items()
-                               if k in ("decision", "conviction", "reasoning",
-                                        "key_level", "entry", "stop_loss", "take_profit")}
+            trader_meta = _build_risk_tool_trader_decision(
+                trader_out,
+                decision_mode=decision_mode,
+                execution_mode=execution_mode,
+            )
             if trader_meta and trader_meta.get("decision"):
                 preset["trader_decision"] = trader_meta
 

@@ -779,6 +779,9 @@ class AgentScopeRegistry:
                     },
                     "risk_limits": {
                         "max_risk_per_trade_pct": _tl.max_risk_per_trade_pct,
+                        "enforce_max_risk_per_trade": _tl.enforce_max_risk_per_trade,
+                        "max_risk_per_trade_behavior": _tl.max_risk_per_trade_behavior,
+                        "log_risk_adjustments": _tl.log_risk_adjustments,
                         "max_daily_loss_pct": _tl.max_daily_loss_pct,
                         "max_weekly_loss_pct": _tl.max_weekly_loss_pct,
                         "max_open_risk_pct": _tl.max_open_risk_pct,
@@ -1907,6 +1910,9 @@ class AgentScopeRegistry:
                     },
                     "risk_limits": {
                         "max_risk_per_trade_pct": _eff_limits.max_risk_per_trade_pct,
+                        "enforce_max_risk_per_trade": _eff_limits.enforce_max_risk_per_trade,
+                        "max_risk_per_trade_behavior": _eff_limits.max_risk_per_trade_behavior,
+                        "log_risk_adjustments": _eff_limits.log_risk_adjustments,
                         "max_daily_loss_pct": _eff_limits.max_daily_loss_pct,
                         "max_weekly_loss_pct": _eff_limits.max_weekly_loss_pct,
                         "max_open_risk_pct": _eff_limits.max_open_risk_pct,

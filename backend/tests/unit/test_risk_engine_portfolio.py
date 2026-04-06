@@ -262,3 +262,65 @@ def test_stress_test_critical_causes_rejection(monkeypatch) -> None:
     assert result.accepted is False
     assert result.primary_rejection_reason == "stress_test_worst_case_pct"
     assert any(item["metric"] == "stress_test_worst_case_pct" for item in result.breached_limits)
+
+
+def test_enforced_max_risk_per_trade_clamps_volume_and_budget(monkeypatch) -> None:
+    engine = RiskEngine()
+    portfolio = _make_portfolio(
+        equity=50000.0,
+        free_margin=40000.0,
+        open_risk_total_pct=1.7,
+    )
+    trade = _make_trade(risk_percent=1.0)
+    limits = RiskLimits(
+        **{
+            **LIVE_LIMITS.__dict__,
+            "max_open_risk_pct": 2.4,
+            "max_risk_per_trade_pct": 0.5,
+            "enforce_max_risk_per_trade": True,
+            "max_risk_per_trade_behavior": "clamp",
+            "log_risk_adjustments": True,
+        }
+    )
+
+    def _fake_stress_test(*args, **kwargs):
+        return SimpleNamespace(worst_case_pnl_pct=-5.0, recommendation="ok")
+
+    monkeypatch.setattr("app.services.risk.stress_test.run_stress_test", _fake_stress_test)
+
+    result = engine.evaluate_portfolio(portfolio, limits, trade)
+
+    assert result.accepted is True
+    assert result.primary_rejection_reason is None
+    assert result.effective_risk_percent == 0.5
+    assert result.suggested_volume == 0.49
+    assert any("clamped from 1.0% to 0.5%" in reason for reason in result.reasons)
+
+
+def test_enforced_max_risk_per_trade_can_reject(monkeypatch) -> None:
+    engine = RiskEngine()
+    portfolio = _make_portfolio(
+        equity=50000.0,
+        free_margin=40000.0,
+        open_risk_total_pct=0.0,
+    )
+    trade = _make_trade(risk_percent=1.0)
+    limits = RiskLimits(
+        **{
+            **LIVE_LIMITS.__dict__,
+            "max_risk_per_trade_pct": 0.5,
+            "enforce_max_risk_per_trade": True,
+            "max_risk_per_trade_behavior": "reject",
+        }
+    )
+
+    def _fake_stress_test(*args, **kwargs):
+        return SimpleNamespace(worst_case_pnl_pct=-5.0, recommendation="ok")
+
+    monkeypatch.setattr("app.services.risk.stress_test.run_stress_test", _fake_stress_test)
+
+    result = engine.evaluate_portfolio(portfolio, limits, trade)
+
+    assert result.accepted is False
+    assert result.primary_rejection_reason == "max_risk_per_trade_pct"
+    assert any(item["metric"] == "max_risk_per_trade_pct" for item in result.breached_limits)

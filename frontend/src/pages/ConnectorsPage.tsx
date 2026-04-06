@@ -423,7 +423,16 @@ export function ConnectorsPage() {
   const [savingCache, setSavingCache] = useState(false);
 
   // ── Trading config (decision gating + risk limits + trade sizing) ──
-  type TradingParamCatalog = Record<string, Array<{ key: string; label: string; description: string; type: string; min?: number; max?: number; step?: number }>>;
+  type TradingParamCatalog = Record<string, Array<{
+    key: string;
+    label: string;
+    description: string;
+    type: string;
+    min?: number;
+    max?: number;
+    step?: number;
+    options?: string[];
+  }>>;
   type TradingParamValues = Record<string, Record<string, unknown>>;
   const [tradingCatalog, setTradingCatalog] = useState<TradingParamCatalog>({});
   const [tradingValues, setTradingValues] = useState<TradingParamValues>({});
@@ -749,16 +758,22 @@ export function ConnectorsPage() {
     }
   };
 
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+
   useEffect(() => {
-    void loadAll();
-    void loadTradingConfig();
+    if (!token) return;
+    (async () => {
+      await loadAll();
+      setInitialLoadDone(true);
+    })();
     void loadTradingVersions();
   }, [token]);
 
-  // Reload trading params when decision mode changes
+  // Load trading params AFTER loadAll resolves decisionMode
   useEffect(() => {
+    if (!initialLoadDone) return;
     void loadTradingConfig();
-  }, [decisionMode, executionMode]);
+  }, [initialLoadDone, decisionMode, executionMode]);
 
   const activePromptByAgent = useMemo(() => {
     const map = new Map<string, PromptTemplate>();
@@ -1627,6 +1642,17 @@ export function ConnectorsPage() {
                                 checked={Boolean(currentVal)}
                                 onChange={(e) => updateTradingParam(section, param.key, e.target.checked)}
                               />
+                            ) : param.type === 'enum' ? (
+                              <select
+                                value={typeof currentVal === 'string' ? currentVal : String(currentVal || '')}
+                                onChange={(e) => updateTradingParam(section, param.key, e.target.value)}
+                              >
+                                {(param.options ?? []).map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
                             ) : (
                               <input
                                 type="number"
@@ -1644,7 +1670,7 @@ export function ConnectorsPage() {
                   </div>
                 ))}
                 {Object.keys(tradingCatalog).length > 0 && (
-                  <button className="btn-primary" disabled={savingTrading}>
+                  <button type="submit" className="btn-primary" disabled={savingTrading}>
                     {savingTrading ? 'Saving...' : 'Save trading parameters'}
                   </button>
                 )}
