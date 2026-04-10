@@ -25,3 +25,16 @@ coverage/
 backend/mock_run/*
 backend/config/skills/strategy-designer/SKILL.md
 backend/debug-strategy/*
+
+# Claude Code internal
+.claude/
+skills-lock.json
+
+# TypeScript build artifacts
+*.tsbuildinfo
+
+# Test results
+frontend/test-results/
+
+# Internal docs
+MIGRATION_REPORT_EN.md

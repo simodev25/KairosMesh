@@ -1,5 +1,7 @@
 # Multi-Agent Trading Platform
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A multi-agent AI trading system that orchestrates **8 specialized LLM agents** to produce consensus-driven trading decisions across multiple asset classes. Features real-time execution via MetaAPI and a React monitoring dashboard.
 
 ## Architecture
@@ -205,6 +207,10 @@ docs/
   architecture/            # System architecture & module reference
 ```
 
+## ⚠️ Disclaimer
+
+This software is for educational and research purposes only. It does not constitute financial advice. Past performance is not indicative of future results. Use at your own risk. Never trade with money you cannot afford to lose. The authors accept no responsibility for any financial losses incurred through the use of this software.
+
 ## License
 
-Private — All rights reserved.
+This project is licensed under the [MIT License](LICENSE).
