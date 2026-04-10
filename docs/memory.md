@@ -33,7 +33,7 @@ def _build_agent(name, model, formatter, toolkit, sys_prompt, ...):
 
 `InMemoryMemory` stores the agent's conversation history in process memory: the system prompt, any tool calls the agent makes, and the LLM responses. This buffer exists only within the lifetime of the agent object, which is scoped to a single call to `AgentScopeRegistry.execute()` in `backend/app/services/agentscope/registry.py`.
 
-**Agents do not share memory.** The eight agents (technical-analyst, news-analyst, market-context-analyst, bullish-researcher, bearish-researcher, trader-agent, risk-manager, execution-manager) each have their own isolated `InMemoryMemory` instance. One agent cannot read another agent's conversation buffer.
+**Agents do not share memory.** The eight pipeline agents (technical-analyst, news-analyst, market-context-analyst, bullish-researcher, bearish-researcher, trader-agent, risk-manager, execution-manager) — i.e. the agents registered in `ALL_AGENT_FACTORIES` in `backend/app/services/agentscope/agents.py` — each have their own isolated `InMemoryMemory` instance. One agent cannot read another agent's conversation buffer. (Additional agents such as `strategy-designer`, `order-guardian`, and `schedule-planner-agent` exist in the same file but are not part of the trading pipeline and are not discussed in this document.)
 
 After `execute()` returns, the agent objects go out of scope and their memory is garbage collected. There is no explicit flush, no serialization, and no persistence of the in-memory conversation history.
 
@@ -69,6 +69,7 @@ One record per pipeline execution. Stores:
 - `pair`, `timeframe`, `mode` (simulation vs. live), `status`, `progress`
 - `decision` — JSON blob of the final trading decision
 - `trace` — JSON blob of intermediate pipeline state
+- `error` — error message if the run failed (null on success)
 - `created_at`, `started_at`, `updated_at`
 
 ### `agent_steps` — `backend/app/db/models/agent_step.py`
@@ -77,10 +78,10 @@ One record per agent per run. Stores:
 
 - `agent_name`, `status`
 - `input_payload` — what was passed into the agent
-- `output_payload` — the agent's structured output, tool results, and elapsed time
+- `output_payload` — the agent's structured output and tool results; may also include timing data depending on what the pipeline writes into the JSON blob
 - `error` — populated on failure
 
-Steps are written in a batched commit after all phases complete (`_flush_pending_steps()`).
+Steps are written via a single deferred commit at the end of the run (`_flush_pending_steps()`).
 
 ### `llm_call_logs` — `backend/app/db/models/llm_call_log.py`
 
