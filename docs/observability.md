@@ -218,7 +218,9 @@ The server polls the database on each tick and sends events only when state chan
 | `event` | When new runtime events appear in `run.trace.agentic_runtime.events` | `id`, `updated_at`, `event` (the raw event payload) |
 | `{"error": "Run not found"}` | If `run_id` does not exist | — |
 
-The connection is closed with code `1000` when `status` reaches `completed` or `failed`.
+**Close codes:**
+- When `run_id` does not exist the server sends `{"error": "Run not found"}` and then closes the connection with code `1008` (Policy Violation).
+- When `status` reaches `completed` or `failed` the server closes the connection with code `1000` (Normal Closure).
 
 ### `/ws/trading/orders`
 
@@ -314,7 +316,7 @@ The worker has a helper `backend/app/tasks/worker_tracing.py` that calls `agents
 | Var | Default | Effect |
 |---|---|---|
 | `OPEN_TELEMETRY_ENABLED` | `false` | Activates FastAPI OTLP instrumentation |
-| `AGENTSCOPE_TRACING_URL` | `http://tempo:4318/v1/traces` | OTLP HTTP endpoint used by the worker tracing init helper |
+| `AGENTSCOPE_TRACING_URL` | `http://tempo:4318/v1/traces` | OTLP HTTP endpoint used by the worker tracing init helper. Read via `os.environ.get()` in `backend/app/tasks/worker_tracing.py` (line 16) — **not** part of the Pydantic settings model in `config.py`, so it is not validated by the app settings system. |
 
 ---
 
