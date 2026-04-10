@@ -1,4 +1,4 @@
-# Contributing to Multi-Agent Trading Platform
+# Contributing to Kairos Mesh
 
 Thank you for your interest in contributing!
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing!
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/simodev25/MultiAgentTrading.git
-cd MultiAgentTrading
+git clone https://github.com/simodev25/kairos-mesh.git
+cd kairos-mesh
 
 # Configure backend environment
 cp backend/.env.example backend/.env

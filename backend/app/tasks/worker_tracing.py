@@ -18,7 +18,7 @@ def init_agentscope_tracing_for_current_process() -> None:
         import agentscope
 
         agentscope.init(
-            project="MultiAgentTrading",
+            project="KairosMesh",
             name="trading_worker",
             logging_level="INFO",
             tracing_url=tracing_url,

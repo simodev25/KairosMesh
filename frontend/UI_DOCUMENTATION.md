@@ -1,6 +1,6 @@
 # Frontend UI Documentation
 
-> Multi-Agent Trading Platform — Terminal-style React SPA
+> Kairos Mesh — Terminal-style React SPA
 
 ---
 

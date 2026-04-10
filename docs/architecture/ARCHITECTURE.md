@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document describes the **current** system architecture of the Multi-Agent Trading Platform. It is the top-level reference for understanding how the system is structured, what each layer is responsible for, and how data flows through the pipeline.
+This document describes the **current** system architecture of the Kairos Mesh. It is the top-level reference for understanding how the system is structured, what each layer is responsible for, and how data flows through the pipeline.
 
 ## Scope
 
