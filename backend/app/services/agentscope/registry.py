@@ -1126,7 +1126,13 @@ class AgentScopeRegistry:
                 toolkit=toolkit,
                 sys_prompt=self._get_sys_prompt(name, db),
             )
-            response = await agent(market_msg)
+            # Prepend governance context if provided
+            if governance_msg is not None:
+                combined_content = f"{governance_msg.content}\n\n{market_msg.content}"
+                msg_to_send = Msg(name=market_msg.name, content=combined_content, role=market_msg.role)
+            else:
+                msg_to_send = market_msg
+            response = await agent(msg_to_send)
             raw = response.metadata if hasattr(response, 'metadata') and isinstance(response.metadata, dict) else {}
             try:
                 results[name] = schema_cls(**raw)
