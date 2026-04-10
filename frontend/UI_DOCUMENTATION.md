@@ -429,17 +429,17 @@ Environment variables (`VITE_*` prefix):
 
 ### Timeframes
 
-`M5` (Scalp), `M15` (Intraday), `H1` (Session), `H4` (Swing), `D1` (Tendance)
+`M5` (Scalp), `M15` (Intraday), `H1` (Session), `H4` (Swing), `D1` (Trend)
 
 ### Cron Presets
 
 | Timeframe | Cron | Hint |
 |-----------|------|------|
-| M5 | `*/5 * * * *` | Scalp rapide |
+| M5 | `*/5 * * * *` | Quick scalp |
 | M15 | `*/15 * * * *` | Intraday |
 | H1 | `0 * * * *` | Session |
 | H4 | `0 */4 * * *` | Swing |
-| D1 | `0 0 * * *` | Tendance |
+| D1 | `0 0 * * *` | Trend |
 
 ---
 
