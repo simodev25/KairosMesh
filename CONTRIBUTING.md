@@ -1,87 +1,83 @@
-# Contributing to Kairos Mesh
+# Contributing
 
-Thank you for your interest in contributing!
+## Development setup
 
-## Prerequisites
+See [Getting Started](docs/getting-started.md) for the full setup guide.
 
-- Python 3.12+
-- Node.js 22+
-- Docker & Docker Compose
-
-## Local Setup
-
-### 1. Clone and configure
-
+Quick path:
 ```bash
-git clone https://github.com/simodev25/kairos-mesh.git
-cd kairos-mesh
-
-# Configure backend environment
 cp backend/.env.example backend/.env
-# Edit backend/.env — add your LLM provider key (Ollama, OpenAI, or Mistral)
-```
-
-### 2. Start infrastructure
-
-```bash
 docker compose up postgres redis rabbitmq -d
+make backend-install && make backend-run
+make frontend-install && make frontend-run
 ```
 
-### 3. Run the backend
+## Running tests
 
 ```bash
-make backend-install
-make backend-run
-# API available at http://localhost:8000
-# Docs at http://localhost:8000/docs
-```
-
-### 4. Run the frontend
-
-```bash
-make frontend-install
-make frontend-run
-# UI available at http://localhost:5173
-```
-
-### 5. Run the full stack (Docker)
-
-```bash
-docker compose up --build
-```
-
-## Running Tests
-
-```bash
+# All backend tests
 make backend-test
+
+# Specific test file
+cd backend && python -m pytest tests/unit/test_risk_engine.py -v
+
+# With coverage
+cd backend && python -m pytest --cov=app tests/
 ```
 
-## Configuration Reference
+Tests require PostgreSQL and Redis running (start with `docker compose up postgres redis -d`).
 
-See [`backend/.env.example`](backend/.env.example) for the full list of environment variables.
+## Code organization
 
-Key variables to get started:
+| Area | Directory |
+|------|-----------|
+| Agent pipeline | `backend/app/services/agentscope/` |
+| MCP tools | `backend/app/services/mcp/` |
+| Risk engine | `backend/app/services/risk/` |
+| Execution | `backend/app/services/execution/` |
+| API routes | `backend/app/api/routes/` |
+| Celery tasks | `backend/app/tasks/` |
+| Config | `backend/app/core/config.py` |
+| Frontend pages | `frontend/src/pages/` |
 
-| Variable | Description |
-|----------|-------------|
-| `LLM_PROVIDER` | `ollama`, `openai`, or `mistral` |
-| `OLLAMA_MODEL` | Model name (e.g. `deepseek-r1:7b`) |
-| `ALLOW_LIVE_TRADING` | Keep `false` during development |
+## Adding an agent
 
-## Pull Request Workflow
+1. Define a factory function in `backend/app/services/agentscope/agents.py` following the pattern of existing agents
+2. Register it in `ALL_AGENT_FACTORIES` dict in `agents.py`
+3. Add it to the relevant phase in `AgentScopeRegistry.execute()` in `registry.py`
+4. Define its output schema in `schemas.py`
+5. Add tests in `backend/tests/`
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes with clear, focused commits
-4. Ensure tests pass: `make backend-test`
-5. Open a PR against the `main` branch
-6. Describe what your PR does and why
+## Adding an MCP tool
 
-## Code Style
+1. Add the tool function to the appropriate module in `backend/app/services/mcp/`
+2. Register it in the MCP server initialization
+3. Add the tool name to the relevant agent's `tools` list in `agents.py`
+4. Add tests for the tool in `backend/tests/`
 
-- **Python:** follow existing patterns, no new dependencies without discussion
-- **TypeScript:** follow existing component patterns in `frontend/src/`
+## Pull request guidelines
 
-## Questions?
+- Open an issue before starting large changes
+- Keep PRs focused — one concern per PR
+- Include tests for new behavior
+- Do not change `ALLOW_LIVE_TRADING` defaults in PRs
+- Do not add LLM-based execution decision paths — risk governance must remain deterministic
 
-Open a GitHub Issue for bugs, feature requests, or questions.
+## Commit style
+
+Use conventional commits:
+```
+feat: add new tool for volatility analysis
+fix: correct risk limit calculation for crypto
+docs: update configuration reference
+refactor: extract decision weights to constants
+test: add risk engine edge case tests
+```
+
+## Non-goals
+
+Contributions in these areas will be declined without significant prior discussion:
+- Removing the deterministic risk layer
+- Adding execution paths that bypass preflight
+- Storing live credentials or API keys in repository files
+- LLM-driven live order submission without additional deterministic gates
