@@ -40,7 +40,7 @@ Confidence is a **simple unweighted average** of the three Phase 1 agent `metada
 
 ## Technical scoring weights
 
-Individual technical signals are weighted before producing the technical analyst's final score. These weights are defined in `constants.py` and must sum to 1.0:
+These weights are used by the `technical_scoring` MCP tool to combine individual signal values into a composite score. This is part of the technical analyst's live MCP tool chain, not the debug-only `compute_deterministic_score()` path. They are defined in `constants.py` and must sum to 1.0:
 
 | Signal | Weight |
 |--------|--------|
@@ -84,7 +84,7 @@ When Phase 1 agents disagree, the effective confidence is reduced:
 
 | Level | Conservative | Balanced | Permissive |
 |-------|-------------|---------|------------|
-| Weak | -0.0 | -0.0 | -0.01 |
+| Weak | 0.0 | 0.0 | -0.01 |
 | Moderate | conf × 0.80 (then -0.08) | conf × 0.85 (then -0.06) | conf × 0.90 (then -0.04) |
 | Major | conf × 0.60 (then -0.14) | conf × 0.70 (then -0.11) | conf × 0.75 (then -0.08) |
 
