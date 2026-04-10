@@ -81,7 +81,7 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 | 7 | Risk Manager | Position sizing, portfolio risk validation | Binding (tool overrides LLM) |
 | 8 | Execution Manager | Preflight checks + order submission | Binding (deterministic preflight) |
 
-Agents 4–5 (debate) only run when both have LLM enabled. If skipped, the trader agent decides without debate input.
+Agents 4–5 (debate) only run when all 3 debate agents have LLM enabled. If skipped, the trader agent decides without debate input.
 
 ## Quick start
 
@@ -97,7 +97,8 @@ Access points after startup:
 - Grafana: http://localhost:3000
 - Prometheus: http://localhost:9090
 
-Default credentials: `admin@local.dev` / `admin1234`
+Application default credentials: `admin@local.dev` / `admin1234`
+Grafana default credentials: `admin` / `admin`
 
 See [Getting Started](docs/getting-started.md) for full setup instructions.
 
@@ -121,7 +122,7 @@ All configuration is via environment variables. Copy `backend/.env.example` to `
 | `LLM_PROVIDER` | LLM backend (`ollama`, `openai`, `mistral`) | `ollama` |
 | `DECISION_MODE` | Gating policy (`conservative`, `balanced`, `permissive`) | `balanced` |
 | `ALLOW_LIVE_TRADING` | Enable real broker execution | `false` |
-| `ENABLE_PAPER_EXECUTION` | Enable paper trading via MetaAPI | `true` |
+| `ENABLE_PAPER_EXECUTION` | Enable paper trading via MetaAPI (requires `METAAPI_TOKEN` and `METAAPI_ACCOUNT_ID`) | `true` |
 | `METAAPI_TOKEN` | MetaAPI authentication token | — |
 
 Full reference: [Configuration](docs/configuration.md)
