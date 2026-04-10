@@ -285,7 +285,7 @@ When `llm_enabled=false` for an agent, `_run_deterministic()` activates. In this
 - No LLM call is made
 - A structured output is assembled from tool results
 
-This is a configurable mode, not an error recovery path. On LLM timeout or error, the registry retries up to 3 times and then propagates the error — it does NOT silently switch to deterministic mode.
+This is a configurable mode, not an error recovery path. On 5xx LLM provider errors (`"500"`, `"502"`, `"503"`, `"Internal Server Error"`), the registry retries up to 3 times and then propagates. Other exceptions (timeout, ValidationError, 429, network errors) propagate immediately without retry — it does NOT silently switch to deterministic mode.
 
 Source: `backend/app/services/agentscope/registry.py`.
 
