@@ -10,7 +10,7 @@ Variables are loaded at startup through `pydantic-settings`. Names are case-inse
 
 ---
 
-> ⚠️ **Dangerous variables** that can result in live capital loss or broken authentication are called out inline and collected again in [Section 13](#13-dangerous--operator-only).
+> ⚠️ **Dangerous variables** that can result in live capital loss or broken authentication are called out inline and collected again in [Section 15](#15-dangerous--operator-only).
 
 ---
 
@@ -21,7 +21,7 @@ Variables are loaded at startup through `pydantic-settings`. Names are case-inse
 | `APP_NAME` | `str` | `Kairos Mesh` | Display name used in logs and the OpenAPI title. |
 | `ENV` | `str` | `dev` | Runtime environment label. Set to `production` to enable production-level log severity and stricter checks. |
 | `API_PREFIX` | `str` | `/api/v1` | URL prefix for all REST endpoints. |
-| `SECRET_KEY` | `str` | `change-me` | ⚠️ **Secret.** Signs JWT tokens. If empty or `change-me` at startup the application generates a random key — tokens are invalidated on every restart. Must be set to a stable random string in production. |
+| `SECRET_KEY` | `str` | `` (empty) | ⚠️ **Secret.** Signs JWT tokens. If empty or `change-me` at startup the application generates a random key — tokens are invalidated on every restart. Must be set to a stable random string in production. Note: `.env.example` ships `change-me` as a placeholder — this is not the code default. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `720` | JWT lifetime in minutes (default: 12 hours). |
 | `CORS_ORIGINS` | `List[str]` | `http://localhost:5173` | Comma-separated list (or JSON array) of origins allowed by the CORS middleware. |
 
@@ -70,6 +70,8 @@ Variables are loaded at startup through `pydantic-settings`. Names are case-inse
 | `CELERY_WORKER_PREFETCH_MULTIPLIER` | `int` | `1` | Prefetch factor per worker process. Keep at `1` for long-running tasks. |
 | `CELERY_WORKER_MAX_TASKS_PER_CHILD` | `int` | `100` | Recycle a worker process after this many tasks to reclaim memory. |
 
+> **Note:** Some Celery worker tuning variables (`CELERY_WORKER_CONCURRENCY`, `CELERY_WORKER_PREFETCH_MULTIPLIER`, `CELERY_WORKER_MAX_TASKS_PER_CHILD`, etc.) are passed directly to Celery via Docker Compose environment configuration and are not loaded by the application's Pydantic Settings model.
+
 ### Celery time limits
 
 | Variable | Type | Default | Description |
@@ -111,7 +113,7 @@ Variables are loaded at startup through `pydantic-settings`. Names are case-inse
 |---|---|---|---|
 | `OLLAMA_BASE_URL` | `str` | `https://ollama.com` | Base URL for the Ollama API. |
 | `OLLAMA_API_KEY` | `str` | `` (empty) | API key if your Ollama endpoint requires authentication. |
-| `OLLAMA_MODEL` | `str` | `deepseek-v3.2` | Model tag to use. Override to any model served by your Ollama instance. |
+| `OLLAMA_MODEL` | `str` | `deepseek-v3.2` | Model tag to use. Override to any model served by your Ollama instance. (`.env.example` ships `gpt-oss:120b-cloud` as an example model.) |
 | `OLLAMA_TIMEOUT_SECONDS` | `int` | `30` | HTTP request timeout for Ollama calls. |
 | `OLLAMA_INPUT_COST_PER_1M_TOKENS` | `float` | `0.0` | Cost per 1 M input tokens in USD, used for cost tracking only. |
 | `OLLAMA_OUTPUT_COST_PER_1M_TOKENS` | `float` | `0.0` | Cost per 1 M output tokens in USD, used for cost tracking only. |
@@ -161,9 +163,9 @@ MetaAPI connects Kairos Mesh to MetaTrader 4/5 accounts.
 |---|---|---|---|
 | `METAAPI_CACHE_ENABLED` | `bool` | `true` | Enable the in-process MetaAPI response cache. |
 | `METAAPI_CACHE_CONNECT_TIMEOUT_SECONDS` | `float` | `0.25` | Timeout to acquire a cache connection. |
-| `METAAPI_SDK_CONNECT_TIMEOUT_SECONDS` | `float` | `6.0` | Timeout for initial WebSocket SDK connection (seconds). |
-| `METAAPI_SDK_SYNC_TIMEOUT_SECONDS` | `float` | `6.0` | Timeout for MetaAPI account state sync. |
-| `METAAPI_SDK_REQUEST_TIMEOUT_SECONDS` | `float` | `8.0` | Per-request timeout for SDK calls. |
+| `METAAPI_SDK_CONNECT_TIMEOUT_SECONDS` | `float` | `30.0` | Timeout for initial WebSocket SDK connection (seconds). Note: `.env.example` ships `6` as a tighter example value. |
+| `METAAPI_SDK_SYNC_TIMEOUT_SECONDS` | `float` | `30.0` | Timeout for MetaAPI account state sync. Note: `.env.example` ships `6` as a tighter example value. |
+| `METAAPI_SDK_REQUEST_TIMEOUT_SECONDS` | `float` | `30.0` | Per-request timeout for SDK calls. Note: `.env.example` ships `8` as a tighter example value. |
 | `METAAPI_REST_TIMEOUT_SECONDS` | `float` | `30.0` | HTTP timeout for REST API calls. |
 | `METAAPI_SDK_CIRCUIT_BREAKER_SECONDS` | `float` | `20.0` | Seconds the circuit breaker waits before retrying a failed SDK connection. |
 | `METAAPI_ACCOUNT_INFO_CACHE_TTL_SECONDS` | `int` | `5` | TTL for cached account info. |
@@ -192,7 +194,7 @@ Agent skills can be seeded from a JSON file at startup. The default for `AGENT_S
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `AGENT_SKILLS_BOOTSTRAP_FILE` | `str` | `` (empty — **must be set explicitly**) | Absolute path to a JSON file containing agent skill definitions to load on startup. If empty, bootstrap is skipped. |
+| `AGENT_SKILLS_BOOTSTRAP_FILE` | `str` | `` (empty — **must be set explicitly**) | Absolute path to a JSON file containing agent skill definitions to load on startup. If empty, bootstrap is skipped. Note: `.env.example` ships `/app/config/agent-skills.json` as an example path — this is not the code default. |
 | `AGENT_SKILLS_BOOTSTRAP_MODE` | `str` | `merge` | How to apply the bootstrap file. `merge` adds missing skills without overwriting existing ones; `replace` overwrites all skills with the file contents. |
 | `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE` | `bool` | `true` | If `true`, the bootstrap is applied only when no skills exist in the database, preventing re-application on subsequent restarts. |
 
@@ -220,6 +222,7 @@ News provider configuration is managed primarily through the UI (Connectors > Ne
 | `OPEN_TELEMETRY_ENABLED` | `bool` | `false` | Enable OpenTelemetry tracing export. Requires a configured collector. |
 | `LOG_AGENT_STEPS` | `bool` | `true` | Emit a log entry for each intermediate agent reasoning step. Useful for debugging; disable in high-throughput production to reduce log volume. |
 | `WS_RUN_POLL_SECONDS` | `float` | `2.0` | Polling interval (seconds) for the WebSocket run-status feed. |
+| `WS_TRADING_ORDERS_POLL_SECONDS` | `float` | `2.0` | Polling interval (seconds) for the WebSocket trading-orders feed. |
 
 ---
 
@@ -242,7 +245,33 @@ News provider configuration is managed primarily through the UI (Connectors > Ne
 
 ---
 
-## 12. Debug Traces
+## 12. Orchestrator
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `ORCHESTRATOR_PARALLEL_WORKERS` | `int` | `4` | Number of parallel worker coroutines the orchestrator uses when fanning out analysis tasks. Accepted range: 1–16. |
+
+---
+
+## 13. Market Data Cache
+
+These variables control the in-process Redis cache used for yfinance-sourced market data (snapshots, news, historical OHLCV). Caching reduces repeated yfinance HTTP calls and smooths latency for the analysis pipeline.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `YFINANCE_CACHE_ENABLED` | `bool` | `true` | Enable the in-process yfinance response cache. |
+| `YFINANCE_CACHE_CONNECT_TIMEOUT_SECONDS` | `float` | `0.25` | Timeout to acquire a cache connection. |
+| `YFINANCE_SNAPSHOT_CACHE_MIN_TTL_SECONDS` | `int` | `2` | Minimum TTL for cached price snapshots. |
+| `YFINANCE_SNAPSHOT_CACHE_MAX_TTL_SECONDS` | `int` | `30` | Maximum TTL for cached price snapshots. |
+| `YFINANCE_NEWS_CACHE_TTL_SECONDS` | `int` | `120` | TTL for cached yfinance news results. |
+| `YFINANCE_HISTORICAL_CACHE_TTL_SECONDS` | `int` | `900` | TTL for cached historical OHLCV data. |
+| `YFINANCE_CACHE_FRAME_MAX_ROWS` | `int` | `5000` | Maximum number of rows stored per cached DataFrame. |
+| `YFINANCE_CACHE_LOCK_TTL_SECONDS` | `float` | `3.0` | TTL for distributed cache locks. |
+| `YFINANCE_CACHE_WAIT_TIMEOUT_SECONDS` | `float` | `1.2` | Maximum time to wait for a cache lock before giving up. |
+
+---
+
+## 14. Debug Traces
 
 Debug traces write full JSON snapshots of trade-decision runs to disk. They include agent prompts, price history, and final decisions and are useful for post-mortem analysis and regression testing.
 
@@ -257,7 +286,7 @@ Debug traces write full JSON snapshots of trade-decision runs to disk. They incl
 
 ---
 
-## 13. Dangerous / Operator-only
+## 15. Dangerous / Operator-only
 
 The following variables require elevated care. Misconfiguring them can result in live capital loss or broken authentication.
 
