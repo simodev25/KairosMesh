@@ -10,10 +10,10 @@ cp backend/.env.example backend/.env
 
 Open `backend/.env` and set `LLM_PROVIDER` to your choice (`ollama`, `openai`, or `mistral`) and the corresponding API key or base URL.
 
-- **Ollama (local):** set `OLLAMA_BASE_URL=http://localhost:11434` and ensure Ollama is running with your model pulled
-- **Ollama (cloud):** set `OLLAMA_BASE_URL=https://ollama.com` and set `OLLAMA_API_KEY`
-- **OpenAI:** set `OPENAI_API_KEY`
-- **Mistral:** set `MISTRAL_API_KEY`
+- **Ollama (local):** Set `OLLAMA_BASE_URL=http://localhost:11434`, ensure Ollama is running, and pull your model: `ollama pull <model-name>`
+- **Ollama (remote/custom):** Set `OLLAMA_BASE_URL` to your hosted Ollama instance URL. Set `OLLAMA_API_KEY` if your instance requires it. The `.env.example` default (`https://ollama.com`) is a placeholder — replace it with your actual server address.
+- **OpenAI:** Set `OPENAI_API_KEY`
+- **Mistral:** Set `MISTRAL_API_KEY`
 
 ## 2. Start
 
@@ -76,6 +76,9 @@ In the UI: Terminal → mode **Paper** → Run Analysis.
 
 To enable:
 1. Set `ALLOW_LIVE_TRADING=true` in `backend/.env`
-2. Assign the `TRADER_OPERATOR` role to your user (via admin panel or database)
+2. Ensure your user has the `trader-operator` role. The default `admin@local.dev` user has `super_admin` which includes this permission. For other users, assign via:
+   ```sql
+   UPDATE "user" SET role = 'trader-operator' WHERE email = 'your@email.com';
+   ```
 3. Restart the backend
 4. In the UI: Terminal → mode **Live** → Run Analysis
