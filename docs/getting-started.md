@@ -25,8 +25,8 @@ Open `backend/.env` and set at minimum:
 
 | Variable | What to set | Notes |
 |----------|-------------|-------|
-| `LLM_PROVIDER` | `ollama`, `openai`, or `mistral` | Ollama is the local option (no API key required) |
-| `OLLAMA_MODEL` | e.g. `llama3.1:8b` | Only if using Ollama; model must be pulled first |
+| `LLM_PROVIDER` | `ollama`, `openai`, or `mistral` | Ollama can run locally (`http://localhost:11434`) or via cloud (`https://ollama.com`). Local requires Ollama installed; cloud requires `OLLAMA_API_KEY`. The `.env.example` default points to cloud. |
+| `OLLAMA_MODEL` | e.g. `llama3.1:8b` | Only if using Ollama. For local Ollama: model must be pulled with `ollama pull <model-name>` before use. |
 | `OPENAI_API_KEY` | Your OpenAI key | Only if `LLM_PROVIDER=openai` |
 | `MISTRAL_API_KEY` | Your Mistral key | Only if `LLM_PROVIDER=mistral` |
 | `SECRET_KEY` | Any long random string | Required; change from default for anything non-local |
@@ -50,6 +50,7 @@ This starts the following services:
 | `redis` | 6380 | Redis 7 |
 | `rabbitmq` | 5672 / 15672 | RabbitMQ (15672 = management UI) |
 | `prometheus` | 9090 | Metrics collection |
+| `tempo` | 3200 | Grafana Tempo (distributed tracing) |
 | `grafana` | 3000 | Dashboards |
 
 Wait for `backend` to log `Application startup complete` before using the UI.
@@ -60,7 +61,7 @@ Wait for `backend` to log `Application startup complete` before using the UI.
 |-----|----------|
 | http://localhost:5173 | React dashboard (login page) |
 | http://localhost:8000/docs | FastAPI Swagger UI |
-| http://localhost:8000/health | `{"status": "ok"}` |
+| http://localhost:8000/health | JSON with `"status": "ok"` and service states (`api`, `postgres`, `llm`, `llm_provider`, `ollama`, `metaapi`) |
 | http://localhost:9090 | Prometheus |
 | http://localhost:3000 | Grafana (admin / admin) |
 
@@ -90,10 +91,18 @@ Then in separate terminals:
 ```bash
 # Backend
 make backend-install
+```
+
+> **Note:** After running `make backend-install`, activate the virtual environment before running subsequent commands:
+> ```bash
+> source backend/.venv/bin/activate
+> ```
+
+```bash
 make backend-run        # http://localhost:8000
 
 # Celery worker
-celery -A app.tasks.celery_app.celery_app worker --loglevel=warning -B
+celery -A app.tasks.celery_app.celery_app worker --loglevel=warning -B -Q analysis,scheduler,backtests
 
 # Frontend
 make frontend-install
