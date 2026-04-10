@@ -117,8 +117,8 @@ If the trader decides HOLD:
 ## Structured output validation
 
 All agent outputs are validated against Pydantic schemas. Invalid values:
-- `NaN` or `Inf` in float fields: rejected, step marked failed
-- Out-of-range floats: clamped to schema bounds (e.g., confidence clamped to [0.0, 1.0])
+- `NaN` or `Inf` in float fields: silently substituted with `0.0` via `_safe_float()` in `decision_helpers.py` — the step is not failed
+- Out-of-range floats: clamped to schema bounds via model validators (e.g., confidence clamped to [0.0, 1.0])
 - Missing required fields: step marked failed; run may continue with partial data
 
 ## Signal thresholds (strategy monitor)
