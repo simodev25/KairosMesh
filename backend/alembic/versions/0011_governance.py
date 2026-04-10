@@ -26,7 +26,7 @@ def upgrade() -> None:
     op.create_table(
         'governance_settings',
         sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('enabled', sa.Boolean(), nullable=False, server_default='false'),
+        sa.Column('enabled', sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column('execution_mode', sa.String(20), nullable=False, server_default='confirmation'),
         sa.Column('analysis_depth', sa.String(10), nullable=False, server_default='light'),
         sa.Column('interval_minutes', sa.Integer(), nullable=False, server_default='15'),
