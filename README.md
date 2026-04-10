@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A governed multi-agent trading system that orchestrates 8 specialized LLM agents through a structured research and decision workflow. Paper-trading mode is the default and safe starting point. Live execution requires explicit configuration.
+A governed multi-agent trading system that orchestrates 8 specialized LLM agents through a structured research and decision workflow. Simulation mode (no broker connection) is the default. Paper trading and live execution require explicit configuration.
 
 ---
 
@@ -23,7 +23,7 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 
 ## What it does not do
 
-- It does not trade autonomously or make unsupervised decisions
+- It does not execute unsupervised live orders by default — `ALLOW_LIVE_TRADING=false` is the default. Strategy monitoring auto-runs the full pipeline on signal detection, but any resulting live order still requires explicit enablement.
 - It does not learn from past outcomes — there is no feedback loop from trade results to future runs
 - It does not provide financial advice
 - It is not production-ready for live capital without additional hardening (see [Limitations](docs/limitations.md))
@@ -33,8 +33,8 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 
 | Area | Status |
 |------|--------|
-| Paper trading (MetaAPI paper account) | Implemented, default |
-| Simulation mode (DB only, no broker call) | Implemented |
+| Simulation mode (DB only, no broker call) | Implemented, **default** |
+| Paper trading (MetaAPI paper account) | Implemented; requires MetaAPI credentials and `mode=paper` at run time |
 | Live trading | Implemented but off by default; requires `ALLOW_LIVE_TRADING=true` and `TRADER_OPERATOR` role |
 | 8-agent pipeline | Fully implemented |
 | Debate phase | Conditional — only runs if all 3 debate agents have LLM enabled |
@@ -59,7 +59,7 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 │  └──────┬───────┘                                              │
 │         │                                                      │
 │  ┌──────▼──────────────────────────────────────────────┐       │
-│  │           MCP Tool Layer (25+ tools)                │       │
+│  │           MCP Tool Layer (18 tools)                │       │
 │  │  Indicators · Patterns · News · Risk · Sizing       │       │
 │  └─────────────────────────────────────────────────────┘       │
 └────────────────────────────────────────────────────────────────┘
@@ -133,7 +133,7 @@ backend/app/
   api/routes/          # REST endpoints (runs, strategies, backtests, trading)
   services/
     agentscope/        # 4-phase agent pipeline (registry, debate, schemas, toolkit)
-    mcp/               # MCP tool server (25+ computational tools)
+    mcp/               # MCP tool server (18 computational tools)
     risk/              # Deterministic risk engine
     execution/         # Paper/live order execution
     strategy/          # Strategy designer and monitor
@@ -147,8 +147,8 @@ frontend/src/
   components/          # TradingViewChart, PortfolioKPIs, Layout
 
 infra/
-  docker/              # Prometheus config, Grafana dashboards
-  helm/                # Kubernetes Helm charts
+  docker/              # Docker build helpers
+  helm/                # Kubernetes Helm charts (forex-platform/)
 ```
 
 ## Documentation
