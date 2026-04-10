@@ -1048,6 +1048,225 @@ class AgentScopeRegistry:
             return {}
         return {}
 
+    # ── Governance helpers ───────────────────────────────────────────────────
+
+    def _build_governance_context_msg(self, position: dict) -> Msg:
+        """Build an initial context message injecting open position details for governance runs."""
+        symbol = position.get('symbol', 'UNKNOWN')
+        side = 'LONG' if str(position.get('type', '')).upper() in ('POSITION_TYPE_BUY', 'BUY') else 'SHORT'
+        entry = position.get('openPrice', 0)
+        current = position.get('currentPrice', entry)
+        sl = position.get('stopLoss')
+        tp = position.get('takeProfit')
+        pnl = position.get('unrealizedProfit', 0)
+        volume = position.get('volume', 0)
+        open_time = position.get('time', '')
+
+        pnl_pct = ((current - entry) / entry * 100) if entry else 0
+        if side == 'SHORT':
+            pnl_pct = -pnl_pct
+
+        content = (
+            f"GOVERNANCE_CONTEXT:\n"
+            f"  Position ID: {position.get('id', 'unknown')}\n"
+            f"  Symbol: {symbol}\n"
+            f"  Side: {side}\n"
+            f"  Entry price: {entry}\n"
+            f"  Current price: {current}\n"
+            f"  Current SL: {sl if sl else 'not set'}\n"
+            f"  Current TP: {tp if tp else 'not set'}\n"
+            f"  Volume: {volume}\n"
+            f"  Unrealized PNL: {pnl:+.2f} ({pnl_pct:+.2f}%)\n"
+            f"  Open since: {open_time}\n\n"
+            f"Task: Evaluate whether this existing {side} position on {symbol} should be:\n"
+            f"  - HELD as-is (action: HOLD)\n"
+            f"  - Stop-loss adjusted (action: ADJUST_SL, provide new_sl)\n"
+            f"  - Take-profit adjusted (action: ADJUST_TP, provide new_tp)\n"
+            f"  - Both SL and TP adjusted (action: ADJUST_BOTH, provide new_sl and new_tp)\n"
+            f"  - Closed immediately (action: CLOSE)\n"
+            f"Base your recommendation on current market conditions for {symbol}."
+        )
+        return Msg(name='system', content=content, role='system')
+
+    def _parse_governance_decision(self, raw: dict) -> 'GovernanceDecision':
+        """Parse agent output into a GovernanceDecision, falling back to HOLD on any error."""
+        from app.services.governance.schemas import GovernanceDecision
+        from pydantic import ValidationError
+        try:
+            return GovernanceDecision(**raw)
+        except (ValidationError, TypeError, KeyError) as exc:
+            logger.warning("governance_decision_parse_failed raw=%s error=%s", raw, exc)
+            return GovernanceDecision(
+                action='HOLD',
+                reasoning='Parse error — defaulting to HOLD for safety.',
+                risk_score=0.0,
+                confidence=0.0,
+            )
+
+    async def _run_phase1(self, db, run, pair, timeframe, governance_msg, market_msg,
+                           chat_fmt, llm_enabled, agent_model_names, toolkit) -> dict:
+        """Run Phase 1 agents (technical, news, market-context) and return their results."""
+        results = {}
+        phase1_agents = [
+            ('technical-analyst', TechnicalAnalysisResult),
+            ('news-analyst', NewsAnalysisResult),
+            ('market-context-analyst', MarketContextResult),
+        ]
+
+        provider, default_model_name, base_url, api_key = self._resolve_provider_config(db)
+
+        async def _run_one(name: str, schema_cls) -> None:
+            factory = ALL_AGENT_FACTORIES.get(name)
+            if not factory:
+                return
+            model_name = agent_model_names.get(name, default_model_name)
+            model = build_model(provider, model_name, base_url, api_key)
+            agent = factory(
+                model=model, formatter=chat_fmt,
+                toolkit=toolkit,
+                sys_prompt=self._get_sys_prompt(name, db),
+            )
+            response = await agent(market_msg)
+            raw = response.metadata if hasattr(response, 'metadata') and isinstance(response.metadata, dict) else {}
+            try:
+                results[name] = schema_cls(**raw)
+            except Exception:
+                results[name] = raw
+
+        await asyncio.gather(*[_run_one(n, s) for n, s in phase1_agents])
+        return results
+
+    async def _execute_governance(self, db, run, pair: str, timeframe: str) -> dict:
+        """Governance pipeline: Phase 1 agents + governance decision parsing."""
+        import re as _re
+
+        def _set_progress(pct: int) -> None:
+            try:
+                run.progress = pct
+                db.commit()
+            except Exception:
+                pass
+
+        position_context: dict = run.trace.get('governance_position', {}) if isinstance(run.trace, dict) else {}
+
+        try:
+            _set_progress(5)
+            from app.services.llm.model_selector import AgentModelSelector
+            model_selector = AgentModelSelector()
+            provider, default_model_name, base_url, api_key = self._resolve_provider_config(db)
+            chat_fmt = build_formatter(provider, multi_agent=False, base_url=base_url)
+
+            # Build initial context message with position details
+            context_msg = self._build_governance_context_msg(position_context)
+            market_data = await self._resolve_market_data(db, pair, timeframe, None)
+            market_context_msg = self._build_context_msg(pair, timeframe, market_data)
+
+            llm_enabled = {
+                name: model_selector.is_enabled(db, name)
+                for name in ALL_AGENT_FACTORIES
+            }
+            agent_model_names = {
+                name: model_selector.resolve(db, name)
+                for name in ALL_AGENT_FACTORIES
+            }
+
+            # Build toolkit for Phase 1 agents
+            ohlc = market_data.get("ohlc", {})
+            snapshot = market_data.get("snapshot", {})
+            _resolved_decision_mode = model_selector.resolve_decision_mode(db)
+            _resolved_execution_mode = str(getattr(run, "mode", "simulation") or "simulation").strip().lower()
+
+            phase1_toolkit = await build_toolkit(
+                "technical-analyst", ohlc=ohlc, news=market_data.get("news", {}),
+                snapshot=snapshot,
+                decision_mode=_resolved_decision_mode,
+                execution_mode=_resolved_execution_mode,
+            )
+
+            _set_progress(20)
+
+            # Run Phase 1 agents
+            phase1_results = await self._run_phase1(
+                db, run, pair, timeframe, context_msg, market_context_msg,
+                chat_fmt, llm_enabled, agent_model_names, phase1_toolkit,
+            )
+
+            _set_progress(70)
+
+            # Build governance prompt from Phase 1 summaries
+            phase1_summary = json.dumps({
+                k: (v.model_dump() if hasattr(v, 'model_dump') else v)
+                for k, v in phase1_results.items()
+            }, default=str)
+
+            governance_prompt_content = (
+                f"{context_msg.content}\n\n"
+                f"MARKET_ANALYSIS_SUMMARY:\n{phase1_summary}\n\n"
+                f"Based on the above analysis, output a governance decision as JSON with fields: "
+                f"action (HOLD/ADJUST_SL/ADJUST_TP/ADJUST_BOTH/CLOSE), "
+                f"new_sl (float or null), new_tp (float or null), "
+                f"reasoning (string), risk_score (0.0-1.0), confidence (0.0-1.0)."
+            )
+
+            governance_prompt = Msg(name='user', content=governance_prompt_content, role='user')
+
+            # Use trader-agent for governance decision
+            trader_factory = ALL_AGENT_FACTORIES.get('trader-agent')
+            if not trader_factory:
+                raise RuntimeError('trader-agent factory not found')
+
+            model_name = agent_model_names.get('trader-agent', default_model_name)
+            model = build_model(provider, model_name, base_url, api_key)
+            trader_toolkit = await build_toolkit(
+                "trader-agent", ohlc=ohlc, news=market_data.get("news", {}),
+                snapshot=snapshot,
+                decision_mode=_resolved_decision_mode,
+                execution_mode=_resolved_execution_mode,
+            )
+            trader = trader_factory(
+                model=model,
+                formatter=chat_fmt,
+                toolkit=trader_toolkit,
+                sys_prompt=self._get_sys_prompt('trader-agent', db),
+            )
+
+            response = await trader(governance_prompt)
+            raw_decision = {}
+            if hasattr(response, 'metadata') and isinstance(response.metadata, dict):
+                raw_decision = response.metadata
+            elif hasattr(response, 'content'):
+                try:
+                    content_str = str(response.content)
+                    json_match = _re.search(r'\{.*\}', content_str, _re.DOTALL)
+                    if json_match:
+                        raw_decision = json.loads(json_match.group())
+                except Exception:
+                    pass
+
+            decision = self._parse_governance_decision(raw_decision)
+
+            _set_progress(90)
+
+            # Persist decision into run
+            run.decision = decision.model_dump()
+            run.status = 'completed'
+            run.progress = 100
+            db.commit()
+
+            logger.info(
+                'governance_run_completed run_id=%d position_id=%s action=%s risk_score=%.2f',
+                run.id, run.governance_position_id, decision.action, decision.risk_score,
+            )
+
+            return decision.model_dump()
+
+        except Exception as exc:
+            logger.error('governance_run_failed run_id=%d error=%s', run.id, exc, exc_info=True)
+            run.status = 'failed'
+            run.error = str(exc)
+            db.commit()
+            raise
+
     async def execute(self, db, run, pair: str, timeframe: str, risk_percent: float,
                       metaapi_account_ref: str | None = None):
         start_time = time.time()
@@ -1074,6 +1293,11 @@ class AgentScopeRegistry:
             run.progress = 0
             db.commit()
             db.refresh(run)
+
+            # ── Governance branch ────────────────────────────────────────────
+            if getattr(run, 'run_type', 'analysis') == 'governance':
+                return await self._execute_governance(db, run, pair, timeframe)
+            # ── End governance branch ────────────────────────────────────────
 
             from app.services.llm.model_selector import AgentModelSelector
             model_selector = AgentModelSelector()
