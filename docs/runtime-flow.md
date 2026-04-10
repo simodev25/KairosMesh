@@ -74,7 +74,7 @@ Three agents run concurrently via `asyncio.gather()`:
 
 Each agent calls its MCP tool set and produces a structured `Msg` with `metadata` (score, confidence, direction, reasoning).
 
-On agent timeout or error: the step is marked `failed`; the run continues with partial outputs. The registry does **not** fall back to deterministic mode on LLM error — it retries up to `AGENTSCOPE_RETRY_COUNT` times and then propagates the error.
+On agent timeout or error: the step is marked `failed`; the run continues with partial outputs. The registry does **not** fall back to deterministic mode on LLM error — it retries up to 3 times (the `AGENTSCOPE_RETRY_COUNT` config setting exists but is not currently wired to this retry loop) and then propagates the error.
 
 Phase 1 outputs are concatenated into `analysis_summary` and injected into Phase 2+3 prompts.
 
@@ -82,7 +82,7 @@ Phase 1 outputs are concatenated into `analysis_summary` and injected into Phase
 
 **Condition**: Only runs if all three debate agents (`bullish-researcher`, `bearish-researcher`, `trader-agent`) have `llm_enabled=true` in the DB config.
 
-**If condition is false**: returns `DebateResult(winner="no_edge", conviction="weak")` immediately. The trader agent decides based on Phase 1 analysis only.
+**If condition is false**: the bullish and bearish researcher agents still run in deterministic mode (tool calls, no LLM). There is no multi-turn debate exchange. Returns `DebateResult(winner="no_edge", conviction="weak")`. The trader agent receives Phase 1 analysis without debate input.
 
 **If condition is true**:
 
@@ -140,6 +140,8 @@ If tool returns `accepted=true` but LLM summary disagrees → **tool wins**.
 
 Runs `ExecutionPreflightEngine.validate()` — fully deterministic.
 
+An optional LLM narrative summary can be generated if `EXECUTION_MANAGER_LLM_ENABLED=true` (default: `false`). The LLM summary is informational only — it does not affect the execution decision. The preflight and order submission are always deterministic.
+
 If preflight passes: `ExecutionService.execute()` is called.
 
 | Mode | Behavior |
@@ -164,14 +166,15 @@ If preflight passes: `ExecutionService.execute()` is called.
 
 Subscribe at `ws://localhost:8000/ws/runs/{run_id}`:
 
-| Progress | Stage |
-|----------|-------|
-| 5% | Run started |
-| 10% | Phase 1 complete |
-| 35% | Debate complete |
-| 65% | Trader decision ready |
-| 80% | Risk assessment complete |
-| 90% | Execution complete |
+| Progress | Meaning |
+|----------|---------|
+| 0% | Run accepted by worker, starting |
+| 10% | Phase 1 (analysts) starting |
+| 35% | Phase 1 complete, debate starting (or skip if LLM disabled) |
+| 65% | Phase 2+3 complete, Phase 4 starting |
+| 70% | Trader agent complete |
+| 80% | Risk manager complete |
+| 90% | Execution manager complete |
 | 100% | Run finalized |
 
 ## Timeout and error handling

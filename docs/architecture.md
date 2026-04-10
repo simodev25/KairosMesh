@@ -72,7 +72,7 @@ Two components:
 
 ### Strategy Engine (`services/strategy/`)
 
-LLM-powered strategy generation using 4 templates (EMA crossover, RSI mean reversion, Bollinger breakout, MACD divergence). Strategies are validated against historical data via the backtest engine before promotion to paper or live.
+LLM-powered strategy generation using 20 templates including EMA crossover, RSI mean reversion, Bollinger breakout, MACD divergence, Supertrend, Ichimoku, VWAP, and others. Templates are validated against historical data before promotion to paper or live.
 
 ### Strategy Monitor (`tasks/strategy_monitor_task.py`)
 
