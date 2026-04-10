@@ -42,14 +42,14 @@ Read these before writing the corresponding docs. Do not guess values — check 
 
 The current README overclaims ("real-time execution", "autonomous") without qualification. Rewrite it as an honest first-contact document.
 
-- [ ] **Step 1: Read current README and identify what to keep vs rewrite**
+- [x] **Step 1: Read current README and identify what to keep vs rewrite**
 
   Read `README.md`. Note:
   - Keep: logo, license badge, tech stack table, project structure, disclaimer
   - Fix: description line (add "paper-trading by default"), pipeline table (add note about debate being conditional), features list (remove "Safety" bullet marketing tone), architecture ASCII diagram (accurate, keep)
   - Add: "Current scope" section, docs navigation map, link to `docs/limitations.md`
 
-- [ ] **Step 2: Write the new README.md**
+- [x] **Step 2: Write the new README.md**
 
   Replace `README.md` with this content (preserve the logo SVG reference and MIT badge):
 
@@ -253,14 +253,14 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   [MIT](LICENSE)
   ```
 
-- [ ] **Step 3: Verify key claims against source**
+- [x] **Step 3: Verify key claims against source**
 
   Check:
   - `ALLOW_LIVE_TRADING=false` default → `backend/.env.example` line ~136: `ALLOW_LIVE_TRADING=false` ✓
   - Debate conditional on `llm_enabled` → `backend/app/services/agentscope/registry.py` (search for `debate` and `llm_enabled`)
   - 8 agents confirmed → `backend/app/services/agentscope/agents.py` (count agent definitions)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add README.md
@@ -274,7 +274,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/getting-started.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read:
   - `docker-compose.yml` (service names, ports, volumes)
@@ -282,7 +282,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - `Makefile` (available targets)
   - `backend/Dockerfile` (Python version)
 
-- [ ] **Step 2: Write `docs/getting-started.md`**
+- [x] **Step 2: Write `docs/getting-started.md`**
 
   ```markdown
   # Getting Started
@@ -415,11 +415,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Paper vs Live](paper-vs-live.md) — what to check before connecting a broker account
   ```
 
-- [ ] **Step 3: Verify port numbers against docker-compose.yml**
+- [x] **Step 3: Verify port numbers against docker-compose.yml**
 
   Confirm all ports listed in the table match `docker-compose.yml` service definitions.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/getting-started.md
@@ -433,7 +433,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/quickstart.md`
 
-- [ ] **Step 1: Write `docs/quickstart.md`**
+- [x] **Step 1: Write `docs/quickstart.md`**
 
   ```markdown
   # Quickstart
@@ -482,7 +482,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   Full pipeline detail: [Runtime Flow](runtime-flow.md)
   ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
   ```bash
   git add docs/quickstart.md
@@ -496,11 +496,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/architecture.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/main.py` (lifespan, middleware, routes), `docker-compose.yml` (service topology), `backend/app/services/agentscope/registry.py` (first ~100 lines for class structure).
 
-- [ ] **Step 2: Write `docs/architecture.md`**
+- [x] **Step 2: Write `docs/architecture.md`**
 
   ```markdown
   # Architecture
@@ -623,11 +623,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Execution](execution.md) — order flow and broker integration
   ```
 
-- [ ] **Step 3: Verify trust boundary table against source**
+- [x] **Step 3: Verify trust boundary table against source**
 
   Confirm `ALLOW_LIVE_TRADING=false` in `backend/.env.example` and `TRADER_OPERATOR` role reference in `backend/app/api/routes/runs.py`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/architecture.md
@@ -641,11 +641,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/runtime-flow.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/api/routes/runs.py` (entry point, async/sync paths), `backend/app/services/agentscope/registry.py` (execute() method, phase structure, progress markers, WebSocket broadcasts).
 
-- [ ] **Step 2: Write `docs/runtime-flow.md`**
+- [x] **Step 2: Write `docs/runtime-flow.md`**
 
   ```markdown
   # Runtime Flow
@@ -858,7 +858,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Execution](execution.md) — order submission and idempotency
   ```
 
-- [ ] **Step 3: Verify timing constants and defaults**
+- [x] **Step 3: Verify timing constants and defaults**
 
   Check `backend/app/core/config.py` for:
   - `AGENTSCOPE_AGENT_TIMEOUT_SECONDS` default = 60
@@ -866,7 +866,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - `DEBATE_MIN_ROUNDS` default = 1
   - `CELERY_ANALYSIS_TIME_LIMIT_SECONDS` default = 360
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/runtime-flow.md
@@ -880,11 +880,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/agents.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/services/agentscope/agents.py` (agent factory definitions, tool lists, max_iters), `backend/app/services/agentscope/schemas.py` (output schema shapes).
 
-- [ ] **Step 2: Write `docs/agents.md`**
+- [x] **Step 2: Write `docs/agents.md`**
 
   ```markdown
   # Agents
@@ -1198,11 +1198,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Runtime Flow](runtime-flow.md) — phase timing and conditions
   ```
 
-- [ ] **Step 3: Verify agent tool lists and max_iters**
+- [x] **Step 3: Verify agent tool lists and max_iters**
 
   Check `backend/app/services/agentscope/agents.py` for each agent's `max_iters` value and tool list.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/agents.md
@@ -1216,11 +1216,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/decision-pipeline.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/services/agentscope/constants.py` (decision mode thresholds, scoring weights), `backend/app/services/agentscope/schemas.py` (structured output contracts).
 
-- [ ] **Step 2: Write `docs/decision-pipeline.md`**
+- [x] **Step 2: Write `docs/decision-pipeline.md`**
 
   ```markdown
   # Decision Pipeline
@@ -1374,12 +1374,12 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Runtime Flow](runtime-flow.md) — phase timing
   ```
 
-- [ ] **Step 3: Verify threshold values**
+- [x] **Step 3: Verify threshold values**
 
   Confirm all threshold values match `backend/app/services/agentscope/constants.py`.
   Confirm ATR multipliers (`SL_ATR_MULTIPLIER=1.5`, `TP_ATR_MULTIPLIER=2.5`) and fallback percentages.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/decision-pipeline.md
@@ -1393,11 +1393,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/risk-and-governance.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/services/risk/rules.py` (risk checks, contract specs), `backend/app/services/risk/limits.py` (per-mode limits).
 
-- [ ] **Step 2: Write `docs/risk-and-governance.md`**
+- [x] **Step 2: Write `docs/risk-and-governance.md`**
 
   ```markdown
   # Risk and Governance
@@ -1510,11 +1510,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Limitations](limitations.md) — known gaps in risk coverage
   ```
 
-- [ ] **Step 3: Verify limit values**
+- [x] **Step 3: Verify limit values**
 
   Check `backend/app/services/risk/limits.py` for the per-mode values in the table. Confirm they match exactly.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/risk-and-governance.md
@@ -1528,11 +1528,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/execution.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/services/execution/executor.py`, `backend/app/services/execution/preflight.py`. Note idempotency key construction, mode-specific paths, MetaAPI call patterns.
 
-- [ ] **Step 2: Write `docs/execution.md`**
+- [x] **Step 2: Write `docs/execution.md`**
 
   ```markdown
   # Execution
@@ -1662,11 +1662,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Configuration](configuration.md) — MetaAPI settings
   ```
 
-- [ ] **Step 3: Verify idempotency key format**
+- [x] **Step 3: Verify idempotency key format**
 
   Confirm idempotency key construction against `backend/app/services/execution/executor.py`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/execution.md
@@ -1680,7 +1680,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/memory.md`
 
-- [ ] **Step 1: Write `docs/memory.md`**
+- [x] **Step 1: Write `docs/memory.md`**
 
   ```markdown
   # Memory
@@ -1759,11 +1759,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Limitations](limitations.md) — incomplete memory feedback loop
   ```
 
-- [ ] **Step 2: Verify MEMORI_ vars**
+- [x] **Step 2: Verify MEMORI_ vars**
 
   Search `backend/app/` for any usage of `MEMORI_` prefix: `grep -r "MEMORI_" backend/app/ --include="*.py"`. Confirm it is absent from application code (only in `.env.example`).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   ```bash
   git add docs/memory.md
@@ -1777,11 +1777,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/configuration.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/.env.example` (all variables), `backend/app/core/config.py` (defaults, types, aliases).
 
-- [ ] **Step 2: Write `docs/configuration.md`**
+- [x] **Step 2: Write `docs/configuration.md`**
 
   ```markdown
   # Configuration
@@ -1949,11 +1949,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   | `CELERY_WORKER_CONCURRENCY` | Parallel run throughput |
   ```
 
-- [ ] **Step 3: Verify defaults**
+- [x] **Step 3: Verify defaults**
 
   Cross-check all default values against `backend/app/core/config.py` Field definitions.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/configuration.md
@@ -1967,11 +1967,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/observability.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/observability/metrics.py`, `backend/app/main.py` (lifespan, middleware, telemetry setup).
 
-- [ ] **Step 2: Write `docs/observability.md`**
+- [x] **Step 2: Write `docs/observability.md`**
 
   ```markdown
   # Observability
@@ -2095,11 +2095,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Architecture](architecture.md) — data model
   ```
 
-- [ ] **Step 3: Verify metric names**
+- [x] **Step 3: Verify metric names**
 
   Confirm metric names in `backend/app/observability/metrics.py` match what is documented.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/observability.md
@@ -2113,11 +2113,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/paper-vs-live.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `backend/app/services/risk/limits.py` (per-mode limits), `backend/app/services/execution/executor.py` (mode-specific paths).
 
-- [ ] **Step 2: Write `docs/paper-vs-live.md`**
+- [x] **Step 2: Write `docs/paper-vs-live.md`**
 
   ```markdown
   # Paper Trading vs Live Trading
@@ -2202,11 +2202,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - [Configuration](configuration.md) — `ALLOW_LIVE_TRADING`, `ENABLE_PAPER_EXECUTION`, `METAAPI_*`
   ```
 
-- [ ] **Step 3: Verify risk limits**
+- [x] **Step 3: Verify risk limits**
 
   Confirm simulation/paper/live daily/weekly loss limits against `backend/app/services/risk/limits.py`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/paper-vs-live.md
@@ -2220,11 +2220,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `docs/limitations.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `docs/architecture/LIMITATIONS.md` (existing — use as source, improve and expand). Cross-reference against the codebase audit findings.
 
-- [ ] **Step 2: Write `docs/limitations.md`**
+- [x] **Step 2: Write `docs/limitations.md`**
 
   ```markdown
   # Limitations
@@ -2351,11 +2351,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   | `forex.db` | Repository root | Legacy SQLite database — not used by the application |
   ```
 
-- [ ] **Step 3: Cross-reference with codebase audit**
+- [x] **Step 3: Cross-reference with codebase audit**
 
   Verify the `MEMORI_*` / `ORCHESTRATOR_AUTONOMY_ENABLED` notes against actual code. Confirm `forex.db` at repo root, `ENABLE_METAAPI_REAL_TRADES_DASHBOARD=false` in `.env.example`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/limitations.md
@@ -2369,11 +2369,11 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `CONTRIBUTING.md`
 
-- [ ] **Step 1: Read source files**
+- [x] **Step 1: Read source files**
 
   Read `Makefile` (available targets), `backend/tests/` structure, `docker-compose.yml` (dev setup).
 
-- [ ] **Step 2: Write `CONTRIBUTING.md`**
+- [x] **Step 2: Write `CONTRIBUTING.md`**
 
   ```markdown
   # Contributing
@@ -2461,7 +2461,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   - LLM-driven live order submission without additional deterministic gates
   ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   ```bash
   git add CONTRIBUTING.md
@@ -2475,7 +2475,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 **Files:**
 - Create: `SECURITY.md`
 
-- [ ] **Step 1: Write `SECURITY.md`**
+- [x] **Step 1: Write `SECURITY.md`**
 
   ```markdown
   # Security
@@ -2533,7 +2533,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
   This project does not yet have a formal versioning or LTS policy. Security fixes are applied to the main branch.
   ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
   ```bash
   git add SECURITY.md
@@ -2549,7 +2549,7 @@ The current README overclaims ("real-time execution", "autonomous") without qual
 
 All content has been absorbed into the new flat `docs/` layout in tasks 4–14.
 
-- [ ] **Step 1: Verify all content is absorbed**
+- [x] **Step 1: Verify all content is absorbed**
 
   Before deleting, confirm each file in `docs/architecture/` has its key content covered in the new docs:
   - `ARCHITECTURE.md` → `docs/architecture.md` ✓
@@ -2568,13 +2568,13 @@ All content has been absorbed into the new flat `docs/` layout in tasks 4–14.
   - `STRATEGIES_WORKFLOW.md` → not reproduced in this refactor (strategy workflow is a follow-up)
   - `custom-strategy-engine-v2.md` → not reproduced (implementation detail, not user doc)
 
-- [ ] **Step 2: Delete the directory**
+- [x] **Step 2: Delete the directory**
 
   ```bash
   git rm -r docs/architecture/
   ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   ```bash
   git commit -m "docs: remove docs/architecture/ — content absorbed into flat docs/ layout"
@@ -2584,7 +2584,7 @@ All content has been absorbed into the new flat `docs/` layout in tasks 4–14.
 
 ## Task 18: Final cross-check pass
 
-- [ ] **Step 1: Verify all links in README.md resolve**
+- [x] **Step 1: Verify all links in README.md resolve**
 
   Check every `docs/` link in `README.md` points to a file that now exists:
   ```bash
@@ -2596,35 +2596,35 @@ All content has been absorbed into the new flat `docs/` layout in tasks 4–14.
   done
   ```
 
-- [ ] **Step 2: Verify `ALLOW_LIVE_TRADING=false` is the actual default**
+- [x] **Step 2: Verify `ALLOW_LIVE_TRADING=false` is the actual default**
 
   ```bash
   grep "ALLOW_LIVE_TRADING" backend/.env.example
   ```
   Expected: `ALLOW_LIVE_TRADING=false`
 
-- [ ] **Step 3: Verify debate conditional logic**
+- [x] **Step 3: Verify debate conditional logic**
 
   ```bash
   grep -n "llm_enabled\|debate\|no_edge" backend/app/services/agentscope/registry.py | head -20
   ```
   Confirm debate is skipped when `llm_enabled=false` for debate agents.
 
-- [ ] **Step 4: Verify decision mode threshold values**
+- [x] **Step 4: Verify decision mode threshold values**
 
   ```bash
   grep -A 5 "CONSERVATIVE\|BALANCED\|PERMISSIVE" backend/app/services/agentscope/constants.py
   ```
   Confirm values match the tables in `docs/decision-pipeline.md`.
 
-- [ ] **Step 5: Check for any remaining `docs/architecture/` references**
+- [x] **Step 5: Check for any remaining `docs/architecture/` references**
 
   ```bash
   grep -r "docs/architecture/" . --include="*.md" | grep -v ".git"
   ```
   Should return no matches (except the spec file).
 
-- [ ] **Step 6: Final commit**
+- [x] **Step 6: Final commit**
 
   ```bash
   git add -A
