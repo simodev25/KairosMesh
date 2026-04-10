@@ -29,7 +29,7 @@ RiskEngine.evaluate() — deterministic Python
 { accepted: bool, suggested_volume: float, primary_rejection_reason: str | null }
 ```
 
-The `portfolio_risk_evaluation` tool is called with `force_kwargs`: the registry injects all inputs (portfolio state, risk limits, trade parameters) before the tool runs. The risk-manager LLM receives the tool result as a fact — it cannot influence the tool's inputs.
+The `portfolio_risk_evaluation` tool is called with `force_kwargs`: `backend/app/services/agentscope/toolkit.py` (called by the registry) injects all inputs (portfolio state, risk limits, trade parameters) before the tool runs. The risk-manager LLM receives the tool result as a fact — it cannot influence the tool's inputs.
 
 ## LLM override behavior
 
@@ -42,7 +42,7 @@ The `portfolio_risk_evaluation` tool is called with `force_kwargs`: the registry
 
 Attribution:
 - **Tool accepts, LLM would reject**: `backend/app/services/agentscope/registry.py` explicitly overrides the LLM and uses the tool result.
-- **Tool rejects, LLM would approve**: the downstream execution gate reads the `accepted` field from the tool output and blocks execution regardless of LLM reasoning; the registry is not involved in this path.
+- **Tool rejects, LLM would approve**: the tool-override branch is not triggered; the execution gate simply reads the tool's `accepted=false` as authoritative. No override action fires — the gate consumes the field directly.
 
 ## Per-mode risk limits
 
