@@ -9,9 +9,10 @@ Market data + News
     ↓
 Phase 1: Parallel analysis (technical, news, market-context)
     ↓
-Weighted score and confidence aggregation
+Confidence aggregation (simple average) + aligned-source count
     ↓
-Phase 2+3: Debate (if LLM enabled for all 3 debate agents)
+Phase 2+3: Debate (if llm_enabled=true for all 3 debate agents)
+            └─ if skipped: DebateResult(winner="no_edge", conviction="weak")
     ↓
 Phase 4: Trader decision → risk validation → preflight → execution
 ```
@@ -20,17 +21,18 @@ Phase 4: Trader decision → risk validation → preflight → execution
 
 Each Phase 1 agent produces a `score` (typically -1.0 to +1.0) and `confidence` (0.0 to 1.0).
 
-**Weighting**:
-- Technical analyst: weight 0.50
-- News analyst: weight 0.25
-- Market context analyst: weight 0.25
+**Confidence aggregation** (live decision loop):
 
-```
-combined_confidence = (tech_conf * 0.50) + (news_conf * 0.25) + (context_conf * 0.25)
-combined_score      = (tech_score * 0.50) + (news_score * 0.25) + (context_score * 0.25)
+```python
+# backend/app/services/agentscope/registry.py:995
+_avg_conf = sum(_confs) / len(_confs) if _confs else 0.0
 ```
 
-Note: the actual deterministic score is confidence-weighted within each agent before the per-agent weights are applied (`effective_weight = agent_weight * confidence`), so the formulas above are a simplified view. The weights (0.50 / 0.25 / 0.25) are defined in `decision_helpers.py` as `SCORE_WEIGHTS`.
+Confidence is a **simple unweighted average** of the three Phase 1 agent confidence values. No per-agent weighting is applied in the live path.
+
+**Score synthesis**: In LLM mode, the trader agent receives all three Phase 1 analyses as context and synthesizes its own directional assessment. There is no deterministic weighted formula applied to scores in the live decision loop.
+
+> **Note**: `decision_helpers.py` defines `SCORE_WEIGHTS = {"technical-analyst": 0.50, "news-analyst": 0.25, "market-context-analyst": 0.25}` and a `compute_deterministic_score()` function. These are **trace/debug only** — labeled "TRACE ONLY — not used in the decision loop" in the source. They are not invoked during a live run.
 
 **Aligned sources count**: number of Phase 1 agents whose direction (bullish/bearish/neutral) matches the aggregate direction. Used in gating threshold checks.
 
@@ -49,6 +51,14 @@ Individual technical signals are weighted before producing the technical analyst
 | Divergence | 0.07 |
 | Multi-timeframe | 0.14 |
 | Support/resistance level | 0.06 |
+
+## Debate phase (Phase 2+3)
+
+The debate phase runs only when **all three debate agents** (`bullish-researcher`, `bearish-researcher`, and `trader-agent` as moderator) have `llm_enabled=true`. If any one has `llm_enabled=false`, the entire debate phase is skipped.
+
+**When skipped**: the pipeline returns `DebateResult(winner="no_edge", conviction="weak")` and the trader agent proceeds to Phase 4 using only Phase 1 analysis. The bullish and bearish researchers still run their `_run_deterministic()` path to produce theses, but the debate MsgHub exchange is not executed.
+
+**When debate runs**: the bullish and bearish researchers exchange arguments via `MsgHub`; the trader-agent moderates and produces a `DebateResult` with `winner` (bullish/bearish/no_edge) and `conviction` (strong/moderate/weak). The conviction level is used by the trader in Phase 4.
 
 ## Decision gating policy
 
