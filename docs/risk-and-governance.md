@@ -12,6 +12,8 @@ A trade must pass all of these in sequence before any order is submitted:
 4. `ALLOW_LIVE_TRADING=true` (live mode only)
 5. User has `trader-operator` role (live mode only)
 
+`ALLOW_LIVE_TRADING` defaults to `false` (see `backend/.env.example` and `backend/app/core/config.py`), so live execution is disabled unless explicitly opted in.
+
 Failure at any step blocks execution with no appeal path.
 
 ## How risk evaluation works
@@ -38,7 +40,9 @@ The `portfolio_risk_evaluation` tool is called with `force_kwargs`: the registry
 | Tool: accepted=false, LLM summary: approve | **Tool wins** — trade blocked |
 | Tool: accepted=false, LLM summary: reject | Trade blocked |
 
-This override logic is enforced in `backend/app/services/agentscope/registry.py`.
+Attribution:
+- **Tool accepts, LLM would reject**: `backend/app/services/agentscope/registry.py` explicitly overrides the LLM and uses the tool result.
+- **Tool rejects, LLM would approve**: the downstream execution gate reads the `accepted` field from the tool output and blocks execution regardless of LLM reasoning; the registry is not involved in this path.
 
 ## Per-mode risk limits
 
@@ -50,6 +54,8 @@ This override logic is enforced in `backend/app/services/agentscope/registry.py`
 | `max_positions` | 10 | 5 | 3 |
 | `max_positions_per_symbol` | 3 | 2 | 1 |
 | `min_free_margin_pct` | 20% | 30% | 50% |
+
+Source: `backend/app/services/risk/limits.py`
 
 ## Risk checks applied
 
