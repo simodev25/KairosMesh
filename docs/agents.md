@@ -11,11 +11,11 @@ Kairos Mesh runs 8 agents across a 4-phase pipeline. This document describes eac
 | 3 | market-context-analyst | 1 (parallel) | Configurable per-agent | Advisory |
 | 4 | bullish-researcher | 2 (debate) | Configurable; debate skipped if any disabled | Advisory |
 | 5 | bearish-researcher | 2 (debate) | Configurable; debate skipped if any disabled | Advisory |
-| 6 | trader-agent | 3+4 | Configurable per-agent | Decision-bearing |
+| 6 | trader-agent | 4 (moderates Phase 2+3 debate, decides in Phase 4) | Configurable per-agent | Decision-bearing |
 | 7 | risk-manager | 4 | Hybrid (tool result is authoritative) | Binding |
 | 8 | execution-manager | 4 | Optional (`EXECUTION_MANAGER_LLM_ENABLED`, default: false) | Binding |
 
-Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) and stored in the DB. When `llm_enabled=false`, the agent runs in deterministic mode: tools are called directly, no LLM inference.
+Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) and stored in the DB. The `AGENT_SKILLS_BOOTSTRAP_FILE` (`backend/config/agent-skills.json`) is the mechanism for configuring per-agent `llm_enabled` initial values — the bootstrap file sets the starting state, which the UI/DB can subsequently override. When `llm_enabled=false`, the agent runs in deterministic mode: tools are called directly, no LLM inference.
 
 ---
 
@@ -38,7 +38,8 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 | `pattern_detector` | Candlestick pattern recognition |
 | `support_resistance_detector` | Key support and resistance levels |
 | `multi_timeframe_context` | Higher timeframe alignment check |
-| `technical_scoring` | Quantitative scoring breakdown |
+
+Note: `technical_scoring` is a deterministic Python helper function called internally — it is not wired as an MCP tool.
 
 **Output schema** (`TechnicalAnalysisResult`):
 - `structural_bias`: `"bullish"` | `"bearish"` | `"neutral"`
@@ -75,8 +76,8 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 | `macro_event_feed` | Upcoming macro events (NFP, FOMC, ECB, etc.) |
 | `sentiment_parser` | Parse headline-level sentiment direction |
 | `symbol_relevance_filter` | Filter news and macro items by instrument relevance |
-| `news_evidence_scoring` | Score the weight of evidence in news items |
-| `news_validation` | Validate news relevance and factual basis |
+
+Note: `news_evidence_scoring` and `news_validation` are internal Python helper functions — not wired as MCP tools.
 
 **Output schema** (`NewsAnalysisResult`):
 - `sentiment`: `"bullish"` | `"bearish"` | `"neutral"` (for the instrument, not a currency)
@@ -148,7 +149,7 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 
 **Output advisory?**: Advisory
 
-**Constraints / Notes**: Must call `evidence_query()` first, then `thesis_support_extractor()`. Invalidation conditions must describe future events — not conditions already present. If any debate agent (bullish-researcher, bearish-researcher, trader-agent) has `llm_enabled=false`, the debate is skipped entirely and both researchers run in parallel deterministic mode, with `debate_result` set to `winner=no_edge`.
+**Constraints / Notes**: Must call `evidence_query()` first, then `thesis_support_extractor()`. Invalidation conditions must describe future events — not conditions already present. If any debate agent (bullish-researcher, bearish-researcher, trader-agent) has `llm_enabled=false`, the debate is skipped entirely and both researchers run in parallel deterministic mode, with `debate_result` set to `DebateResult(winner="no_edge", conviction="weak")`.
 
 ---
 
@@ -185,7 +186,7 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 
 **Role**: Makes the final trade decision (BUY, SELL, or HOLD) by weighing all prior analysis and the debate verdict.
 
-**Phase**: 3+4 — acts as debate moderator in Phase 2/3, then produces the binding decision in Phase 4.
+**Phase**: 4 (moderates Phase 2+3 debate, decides in Phase 4)
 
 **Inputs** (context injected at run start):
 - Instrument pair, asset class, timeframe
@@ -198,9 +199,8 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 | Tool | Purpose |
 |------|---------|
 | `scenario_validation` | Validates proposed trade scenario against analysis |
-| `decision_gating` | Applies decision-mode rules to gate the trade |
-| `contradiction_detector` | Detects contradictions between analysis inputs and the decision (MACD diff and ATR pre-injected) |
-| `trade_sizing` | Computes entry, stop-loss, take-profit from key level and ATR (price and ATR pre-injected) |
+
+Note: `decision_gating`, `contradiction_detector`, and `trade_sizing` are internal Python helper functions — not wired as MCP tools.
 
 **Output schema** (`TraderDecisionDraft`):
 - `decision`: `"BUY"` | `"SELL"` | `"HOLD"`
@@ -231,8 +231,8 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 | Tool | Purpose |
 |------|---------|
 | `position_size_calculator` | Computes allowed position size from risk parameters |
-| `portfolio_risk_evaluation` | Evaluates trade against live portfolio limits (trader decision pre-injected via force_kwargs) |
-| `portfolio_stress_test` | Stress-tests the portfolio under adverse scenario |
+
+Note: `portfolio_risk_evaluation` and `portfolio_stress_test` are internal Python helper functions — not wired as MCP tools.
 
 **Output schema** (`RiskAssessmentResult`):
 - `approved`: bool
@@ -243,7 +243,7 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 
 **Output advisory?**: Binding
 
-**Constraints / Notes**: Hard limits (daily loss, weekly loss, position count, free margin, max currency exposure) are non-negotiable. Soft factors (Friday, correlation, drawdown) are judgment calls. For HOLD decisions, immediately returns `approved=false, adjusted_volume=0` without calling tools. The `portfolio_risk_evaluation` tool receives `trader_decision` automatically via `force_kwargs` — the LLM cannot override or omit it.
+**Constraints / Notes**: Hard limits (daily loss, weekly loss, position count, free margin, max currency exposure) are non-negotiable. Soft factors (Friday, correlation, drawdown) are judgment calls. For HOLD decisions, immediately returns `approved=false, adjusted_volume=0` without calling tools. The `portfolio_risk_evaluation` tool result is authoritative — if it conflicts with the LLM's reasoning, the tool result wins. The risk engine is deterministic Python code, not an LLM judgment. The `portfolio_risk_evaluation` function receives `trader_decision` automatically via `force_kwargs` — the LLM cannot override or omit it. Source: `backend/app/services/agentscope/registry.py`.
 
 ---
 
@@ -285,13 +285,15 @@ When `llm_enabled=false` for an agent, `_run_deterministic()` activates. In this
 
 This is a configurable mode, not an error recovery path. On LLM timeout or error, the registry retries up to 3 times and then propagates the error — it does NOT silently switch to deterministic mode.
 
-**Debate skip rule**: The debate (Phase 2/3) requires all three participating agents (`bullish-researcher`, `bearish-researcher`, `trader-agent`) to have `llm_enabled=true`. If any one of them is disabled, the debate is skipped entirely. Both researchers run in parallel deterministic mode and `debate_result` is set to `winner=no_edge, conviction=weak`.
+Source: `backend/app/services/agentscope/registry.py`.
+
+**Debate skip rule**: The debate (Phase 2/3) requires all three participating agents (`bullish-researcher`, `bearish-researcher`, `trader-agent`) to have `llm_enabled=true`. If any one of them is disabled, the debate is skipped entirely. Both researchers run in parallel deterministic mode and `debate_result` is set to `DebateResult(winner="no_edge", conviction="weak")`. Source: `backend/app/services/agentscope/registry.py`.
 
 ---
 
 ## Agent skills bootstrap
 
-At startup, an optional `agent-skills.json` file is loaded (path: `AGENT_SKILLS_BOOTSTRAP_FILE`) and its behavioral guidelines are injected into agent system prompts. These are soft guidelines — LLMs may deviate from them.
+At startup, an optional `agent-skills.json` file is loaded (path: `AGENT_SKILLS_BOOTSTRAP_FILE`, default location: `backend/config/agent-skills.json`). This file is the primary mechanism for configuring per-agent `llm_enabled` initial values — it sets the starting enabled/disabled state for each agent before the UI or DB can override it. In addition to `llm_enabled`, behavioral guidelines from this file are injected into agent system prompts as soft guidelines — LLMs may deviate from them.
 
 Mode controlled by `AGENT_SKILLS_BOOTSTRAP_MODE` (`merge` or `replace`) and `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE` (default: `true`).
 
