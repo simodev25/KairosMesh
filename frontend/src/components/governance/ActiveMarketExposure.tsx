@@ -49,8 +49,12 @@ export function ActiveMarketExposure({ positions, autoGuardian, onAutoGuardianTo
   }
 
   async function handleReevaluateOne(positionId: string) {
-    await reevaluatePosition(positionId);
-    onRefresh();
+    try {
+      await reevaluatePosition(positionId);
+      onRefresh();
+    } catch {
+      // error is swallowed — position may already have an active run (409)
+    }
   }
 
   return (

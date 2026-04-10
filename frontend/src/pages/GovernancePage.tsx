@@ -6,12 +6,14 @@ import { GovernanceSettingsPanel } from '../components/governance/GovernanceSett
 import { useGovernancePositions } from '../hooks/useGovernancePositions';
 import { useGovernanceStream } from '../hooks/useGovernanceStream';
 import { useGovernanceSettings } from '../hooks/useGovernanceSettings';
+import { usePortfolioStream } from '../hooks/usePortfolioStream';
 import { SectionSkeleton } from '../components/LoadingIndicators';
 
 export function GovernancePage() {
   const { positions, loading: posLoading, refresh: refreshPositions } = useGovernancePositions();
   const { items: streamItems, loading: streamLoading, refresh: refreshStream } = useGovernanceStream();
   const { settings, saving, update: updateSettings } = useGovernanceSettings();
+  const { state: portfolioState, limits: portfolioLimits } = usePortfolioStream();
 
   const autoGuardian = settings?.enabled ?? false;
 
@@ -34,7 +36,7 @@ export function GovernancePage() {
       {posLoading ? (
         <SectionSkeleton />
       ) : (
-        <GovernanceKPIs positions={positions} />
+        <GovernanceKPIs positions={positions} portfolioState={portfolioState} />
       )}
 
       {/* Positions table */}
@@ -53,7 +55,7 @@ export function GovernancePage() {
       <div className="flex gap-4 min-h-0">
         {/* Left: risk validation + settings */}
         <div className="flex flex-col gap-4 w-72 shrink-0">
-          <GuardianRiskValidation />
+          <GuardianRiskValidation portfolioState={portfolioState} limits={portfolioLimits} />
           {settings && (
             <GovernanceSettingsPanel
               settings={settings}
