@@ -1,4 +1,5 @@
 from app.db.models.agent_runtime_event import AgentRuntimeEvent
+from app.db.models.governance_settings import GovernanceSettings
 from app.db.models.agent_step import AgentStep
 from app.db.models.agent_runtime_message import AgentRuntimeMessage
 from app.db.models.agent_runtime_session import AgentRuntimeSession
@@ -34,4 +35,5 @@ __all__ = [
     'LlmCallLog',
     'Strategy',
     'TradingConfigVersion',
+    'GovernanceSettings',
 ]
