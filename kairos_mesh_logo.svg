@@ -1,0 +1,74 @@
+<svg width="100%" viewBox="0 0 680 380" role="img" xmlns="http://www.w3.org/2000/svg"><defs><mask id="imagine-text-gaps-fberre" maskUnits="userSpaceOnUse"><rect x="0" y="0" width="680" height="380" fill="white"/><rect x="181.484375" y="102.546875" width="321.03125" height="96.515625" fill="black" rx="2"/><rect x="322.265625" y="194.203125" width="131.46875" height="39.015625" fill="black" rx="2"/><rect x="284.390625" y="245.078125" width="207.21875" height="17.765625" fill="black" rx="2"/></mask></defs>
+<title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Kairos Mesh — logo</title>
+<desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Logo Kairos Mesh : un réseau de nœuds interconnectés formant un K stylisé, avec le wordmark et le tagline</desc>
+
+
+<!-- ══════════════════════════════════════════
+     ICÔNE — mesh de 7 nœuds formant un K
+     Nœuds :
+       A (172, 110)  — haut gauche (spine)
+       B (172, 190)  — milieu gauche (spine)  ← nœud chaud (pivot du K)
+       C (172, 270)  — bas gauche (spine)
+       D (232, 150)  — haut diagonale
+       E (292, 110)  — tip haut droite
+       F (232, 230)  — bas diagonale
+       G (292, 270)  — tip bas droite
+     ══════════════════════════════════════════ -->
+
+<!-- Arêtes secondaires (grille mesh) -->
+<g stroke-width="1" fill="none" opacity="0.5" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
+  <line x1="172" y1="110" x2="232" y2="150" mask="url(#imagine-text-gaps-fberre)" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="172" y1="110" x2="172" y2="190" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="172" y1="270" x2="232" y2="230" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="172" y1="270" x2="172" y2="190" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="232" y1="150" x2="232" y2="230" mask="url(#imagine-text-gaps-fberre)" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="232" y1="150" x2="292" y2="110" mask="url(#imagine-text-gaps-fberre)" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="232" y1="230" x2="292" y2="270" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="292" y1="110" x2="292" y2="270" mask="url(#imagine-text-gaps-fberre)" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="172" y1="110" x2="292" y2="110" mask="url(#imagine-text-gaps-fberre)" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="172" y1="270" x2="292" y2="270" style="fill:none;stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+</g>
+
+<!-- Arêtes chaudes — forment le K -->
+<g stroke-width="2.5" fill="none" stroke-linecap="round" style="fill:none;stroke:rgb(239, 159, 39);color:rgb(255, 255, 255);stroke-width:2.5px;stroke-linecap:round;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
+  <line x1="172" y1="110" x2="172" y2="270" style="fill:none;stroke:rgb(239, 159, 39);color:rgb(255, 255, 255);stroke-width:2.5px;stroke-linecap:round;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="172" y1="190" x2="292" y2="110" mask="url(#imagine-text-gaps-fberre)" style="fill:none;stroke:rgb(239, 159, 39);color:rgb(255, 255, 255);stroke-width:2.5px;stroke-linecap:round;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="172" y1="190" x2="292" y2="270" mask="url(#imagine-text-gaps-fberre)" style="fill:none;stroke:rgb(239, 159, 39);color:rgb(255, 255, 255);stroke-width:2.5px;stroke-linecap:round;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+</g>
+
+<!-- Nœuds — dessinés après les arêtes (au-dessus) -->
+<!-- A — haut spine -->
+<circle cx="172" cy="110" r="10" stroke-width="1.5" style="fill:rgb(38, 33, 92);stroke:rgb(175, 169, 236);color:rgb(255, 255, 255);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="172" cy="110" r="4" style="fill:rgb(175, 169, 236);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<!-- C — bas spine -->
+<circle cx="172" cy="270" r="10" stroke-width="1.5" style="fill:rgb(38, 33, 92);stroke:rgb(175, 169, 236);color:rgb(255, 255, 255);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="172" cy="270" r="4" style="fill:rgb(175, 169, 236);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<!-- D — jonction haut -->
+<circle cx="232" cy="150" r="9" stroke-width="1.5" style="fill:rgb(38, 33, 92);stroke:rgb(175, 169, 236);color:rgb(255, 255, 255);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="232" cy="150" r="3.5" style="fill:rgb(175, 169, 236);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<!-- F — jonction bas -->
+<circle cx="232" cy="230" r="9" stroke-width="1.5" style="fill:rgb(38, 33, 92);stroke:rgb(175, 169, 236);color:rgb(255, 255, 255);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="232" cy="230" r="3.5" style="fill:rgb(175, 169, 236);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<!-- E — tip haut -->
+<circle cx="292" cy="110" r="9" stroke-width="1.5" style="fill:rgb(38, 33, 92);stroke:rgb(175, 169, 236);color:rgb(255, 255, 255);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="292" cy="110" r="3.5" style="fill:rgb(175, 169, 236);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<!-- G — tip bas -->
+<circle cx="292" cy="270" r="9" stroke-width="1.5" style="fill:rgb(38, 33, 92);stroke:rgb(175, 169, 236);color:rgb(255, 255, 255);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="292" cy="270" r="3.5" style="fill:rgb(175, 169, 236);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<!-- B — pivot (nœud chaud) -->
+<circle cx="172" cy="190" r="13" stroke-width="2" style="fill:rgb(65, 36, 2);stroke:rgb(239, 159, 39);color:rgb(255, 255, 255);stroke-width:2px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="172" cy="190" r="5" style="fill:rgb(239, 159, 39);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<!-- ══════════════════════════════════════════
+     WORDMARK
+     ══════════════════════════════════════════ -->
+
+<text x="342" y="178" font-family="var(--font-sans, sans-serif)" font-size="74" font-weight="500" letter-spacing="6" text-anchor="middle" style="fill:rgb(238, 237, 254);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, sans-serif;font-size:74px;font-weight:500;text-anchor:middle;dominant-baseline:auto">KAIROS</text>
+
+<text x="388" y="224" font-family="var(--font-sans, sans-serif)" font-size="28" font-weight="400" letter-spacing="14" text-anchor="middle" style="fill:rgb(250, 199, 117);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, sans-serif;font-size:28px;font-weight:400;text-anchor:middle;dominant-baseline:auto">MESH</text>
+
+<line x1="276" y1="238" x2="500" y2="238" stroke-width="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(83, 74, 183);color:rgb(255, 255, 255);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<text x="388" y="258" font-family="var(--font-sans, sans-serif)" font-size="11" font-weight="400" letter-spacing="4" text-anchor="middle" style="fill:rgb(127, 119, 221);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, sans-serif;font-size:11px;font-weight:400;text-anchor:middle;dominant-baseline:auto">AI TRADING PLATFORM</text>
+
+</svg>

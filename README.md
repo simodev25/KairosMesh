@@ -1,5 +1,9 @@
 # Kairos Mesh
 
+<p align="center">
+  <img src="kairos_mesh_logo.svg" alt="Kairos Mesh" width="420">
+</p>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A multi-agent AI trading system that orchestrates **8 specialized LLM agents** to produce consensus-driven trading decisions across multiple asset classes. Features real-time execution via MetaAPI and a React monitoring dashboard.

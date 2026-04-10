@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
+
 const navItems = [
   { to: '/', label: 'PORTFOLIO', icon: ShieldCheck, node: '01' },
   { to: '/terminal', label: 'TERMINAL', icon: Terminal, node: '02' },
@@ -38,16 +39,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <div className="px-3 py-4 border-b border-border">
           <div className="flex items-center gap-3 justify-between">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-accent/15 border border-accent/25 flex items-center justify-center shrink-0">
-                <Cpu className="w-4 h-4 text-accent" />
-              </div>
-              {!collapsed && (
-                <div className="min-w-0">
-                  <span className="text-[11px] font-bold tracking-[0.14em] text-accent uppercase">
-                    AGENT_TERMINAL
-                  </span>
-                  <span className="text-[9px] text-text-dim tracking-widest ml-1.5">v4.2</span>
+              {collapsed ? (
+                <div className="w-8 h-8 rounded-lg bg-accent/15 border border-accent/25 flex items-center justify-center shrink-0">
+                  <Cpu className="w-4 h-4 text-accent" />
                 </div>
+              ) : (
+                <img
+                  src="/kairos_mesh_logo.svg"
+                  alt="Kairos Mesh"
+                  className="h-7 w-auto"
+                />
               )}
             </div>
             <button
@@ -201,7 +202,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </span>
           </div>
           <span className="text-[8px] text-text-dim tracking-[0.14em] uppercase">
-            TAURIC_MARKETS // MULTI_AGENT_PLATFORM // v2.0.0
+            KAIROS_MESH // v2.0.0
           </span>
         </footer>
       </div>

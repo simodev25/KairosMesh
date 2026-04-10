@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { Cpu, Lock } from 'lucide-react';
+import { Lock } from 'lucide-react';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -31,17 +31,14 @@ export function LoginPage() {
       <div className="hw-surface w-full max-w-sm p-8">
         {/* Brand */}
         <div className="flex flex-col items-center gap-4 mb-8">
-          <div className="w-12 h-12 rounded-xl bg-accent/15 border border-accent/25 flex items-center justify-center">
-            <Cpu className="w-6 h-6 text-accent" />
-          </div>
-          <div className="text-center">
-            <span className="text-[13px] font-bold tracking-[0.14em] text-accent uppercase block">
-              AGENT_TERMINAL
-            </span>
-            <span className="text-[9px] text-text-dim tracking-[0.14em] uppercase block mt-1">
-              AUTHENTICATION_REQUIRED
-            </span>
-          </div>
+          <img
+            src="/kairos_mesh_logo.svg"
+            alt="Kairos Mesh"
+            className="w-48 h-auto"
+          />
+          <span className="text-[9px] text-text-dim tracking-[0.14em] uppercase block">
+            AUTHENTICATION_REQUIRED
+          </span>
         </div>
 
         {/* Form */}
