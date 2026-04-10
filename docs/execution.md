@@ -97,9 +97,9 @@ preflight checks
       │
       └── all checks passed
               │
-              ├── mode=simulation ────────→ ExecutionOrder(status=simulated, executed=false)
-              │
               ├── idempotency key match ──→ replay prior response (no new row, no broker call)
+              │
+              ├── mode=simulation ────────→ ExecutionOrder(status=simulated, executed=false)
               │
               ├── mode=paper
               │       │
@@ -155,7 +155,7 @@ Kairos Mesh connects to MT4/MT5 brokers through the MetaAPI cloud service. The `
 | `METAAPI_BASE_URL` | `https://mt-client-api-v1.london.agiliumtrade.ai` | REST API base URL. |
 | `METAAPI_MARKET_BASE_URL` | `https://mt-market-data-client-api-v1.london.agiliumtrade.ai` | Market data endpoint. |
 | `METAAPI_USE_SDK_FOR_MARKET_DATA` | `false` | Whether to use the MetaAPI SDK instead of REST for market data. |
-| `METAAPI_SDK_CONNECT_TIMEOUT_SECONDS` | `6` | SDK connection timeout. |
+| `METAAPI_SDK_CONNECT_TIMEOUT_SECONDS` | `30` | SDK connection timeout. |
 | `METAAPI_REST_TIMEOUT_SECONDS` | `30` | REST call timeout. |
 | `METAAPI_SDK_CIRCUIT_BREAKER_SECONDS` | `20` | Circuit breaker hold-off after SDK failure. |
 | `ENABLE_PAPER_EXECUTION` | `true` | Enable paper-mode order submission to MetaAPI. |
