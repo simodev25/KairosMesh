@@ -19,17 +19,6 @@ except Exception:  # pragma: no cover
     _celery_app = None  # type: ignore[assignment]
 
 
-def _make_task(func):
-    """Wrap *func* as a Celery task when Celery is available, else return it as-is."""
-    if _CELERY_AVAILABLE and _celery_app is not None:
-        return _celery_app.task(
-            name=f'app.tasks.governance_monitor_task.{func.__name__}',
-            soft_time_limit=func.__kwdefaults__.get('soft_time_limit', 120) if func.__kwdefaults__ else 120,
-            time_limit=func.__kwdefaults__.get('time_limit', 180) if func.__kwdefaults__ else 180,
-        )(func)
-    return func  # pragma: no cover
-
-
 def _check_all_impl() -> None:
     """Check all open positions and create governance runs for those without one."""
     from app.db.session import SessionLocal
