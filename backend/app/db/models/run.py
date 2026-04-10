@@ -18,6 +18,8 @@ class AnalysisRun(Base):
     decision: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     trace: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run_type: Mapped[str] = mapped_column(String(20), nullable=False, default='analysis', server_default='analysis')
+    governance_position_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     created_by_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
