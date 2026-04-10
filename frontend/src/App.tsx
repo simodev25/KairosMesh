@@ -13,6 +13,9 @@ const ConnectorsPage = lazy(() => import('./pages/ConnectorsPage').then((module)
 const StrategiesPage = lazy(() => import('./pages/StrategiesPage').then((module) => ({ default: module.StrategiesPage })));
 const PortfolioPage = lazy(() => import('./pages/PortfolioPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })));
+const GovernancePage = lazy(() =>
+  import('./pages/GovernancePage').then((module) => ({ default: module.GovernancePage }))
+);
 
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -91,6 +94,10 @@ function AppRoutes() {
       <Route
         path="/orders"
         element={withLayout(<OrdersPage />)}
+      />
+      <Route
+        path="/governance"
+        element={withLayout(<GovernancePage />)}
       />
       <Route
         path="/connectors"
