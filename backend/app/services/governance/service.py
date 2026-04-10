@@ -81,6 +81,8 @@ class GovernanceService:
             db.refresh(run)
 
             run_governance_task.delay(run.id)
+            run.status = 'queued'
+            db.commit()
             created_run_ids.append(run.id)
             logger.info(
                 'governance_monitor run_created run_id=%d position_id=%s symbol=%s',
