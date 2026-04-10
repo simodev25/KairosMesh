@@ -2,6 +2,8 @@
 
 Kairos Mesh runs 8 agents across a 4-phase pipeline. This document describes each agent's role, inputs, outputs, and the tools it calls.
 
+Note: this document covers only the 8 decision-pipeline agents. Additional agents exist in the system for strategy management and scheduling (e.g., `schedule-planner-agent`, `order-guardian`, `strategy-designer`) and are configured in `backend/config/agent-skills.json`, but are not part of the per-candle decision pipeline described here.
+
 ## Agent inventory
 
 | # | Name | Phase | LLM-driven | Output type |
@@ -15,7 +17,7 @@ Kairos Mesh runs 8 agents across a 4-phase pipeline. This document describes eac
 | 7 | risk-manager | 4 | Hybrid (tool result is authoritative) | Binding |
 | 8 | execution-manager | 4 | Optional (`EXECUTION_MANAGER_LLM_ENABLED`, default: false) | Binding |
 
-Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) and stored in the DB. The `AGENT_SKILLS_BOOTSTRAP_FILE` (`backend/config/agent-skills.json`) is the mechanism for configuring per-agent `llm_enabled` initial values — the bootstrap file sets the starting state, which the UI/DB can subsequently override. When `llm_enabled=false`, the agent runs in deterministic mode: tools are called directly, no LLM inference.
+Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) and stored in the DB. The `AGENT_SKILLS_BOOTSTRAP_FILE` env var is the mechanism for configuring per-agent `llm_enabled` initial values — the bootstrap file sets the starting state, which the UI/DB can subsequently override. There is no built-in default path; operators must set `AGENT_SKILLS_BOOTSTRAP_FILE` explicitly (e.g., to `backend/config/agent-skills.json`). When `llm_enabled=false`, the agent runs in deterministic mode: tools are called directly, no LLM inference.
 
 ---
 
@@ -38,8 +40,7 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 | `pattern_detector` | Candlestick pattern recognition |
 | `support_resistance_detector` | Key support and resistance levels |
 | `multi_timeframe_context` | Higher timeframe alignment check |
-
-Note: `technical_scoring` is a deterministic Python helper function called internally — it is not wired as an MCP tool.
+| `technical_scoring` | Deterministic scoring of technical signals |
 
 **Output schema** (`TechnicalAnalysisResult`):
 - `structural_bias`: `"bullish"` | `"bearish"` | `"neutral"`
@@ -76,8 +77,8 @@ Note: `technical_scoring` is a deterministic Python helper function called inter
 | `macro_event_feed` | Upcoming macro events (NFP, FOMC, ECB, etc.) |
 | `sentiment_parser` | Parse headline-level sentiment direction |
 | `symbol_relevance_filter` | Filter news and macro items by instrument relevance |
-
-Note: `news_evidence_scoring` and `news_validation` are internal Python helper functions — not wired as MCP tools.
+| `news_evidence_scoring` | Scores the strength and quality of news evidence |
+| `news_validation` | Validates news signal coherence and coverage |
 
 **Output schema** (`NewsAnalysisResult`):
 - `sentiment`: `"bullish"` | `"bearish"` | `"neutral"` (for the instrument, not a currency)
@@ -198,9 +199,10 @@ Note: `news_evidence_scoring` and `news_validation` are internal Python helper f
 **MCP tools** (max_iters: 5):
 | Tool | Purpose |
 |------|---------|
-| `scenario_validation` | Validates proposed trade scenario against analysis |
-
-Note: `decision_gating`, `contradiction_detector`, and `trade_sizing` are internal Python helper functions — not wired as MCP tools.
+| `scenario_validation` | Validates proposed trade scenario against analysis; `decision_mode` and `execution_mode` are pre-injected via preset_kwargs |
+| `decision_gating` | Checks whether conditions meet threshold for a BUY/SELL; `mode` and `execution_mode` are pre-injected via preset_kwargs |
+| `contradiction_detector` | Detects conflicts between decision and market signals; `macd_diff` and `atr` are pre-injected from the market snapshot so the LLM cannot invent incorrect values |
+| `trade_sizing` | Computes entry, SL, and TP levels; `price`, `atr`, `decision_mode`, and `execution_mode` are pre-injected via preset_kwargs |
 
 **Output schema** (`TraderDecisionDraft`):
 - `decision`: `"BUY"` | `"SELL"` | `"HOLD"`
@@ -212,7 +214,7 @@ Note: `decision_gating`, `contradiction_detector`, and `trade_sizing` are intern
 
 **Output advisory?**: Decision-bearing
 
-**Constraints / Notes**: Tools are advisory — trader decides freely. `decision_gating` and `contradiction_detector` provide perspective, not veto. `trade_sizing` is called when BUY/SELL to compute exact entry/SL/TP. MACD diff, ATR, and price are pre-injected into relevant tools from the market snapshot so the LLM cannot invent incorrect values.
+**Constraints / Notes**: Tools are advisory — trader decides freely. `decision_gating` and `contradiction_detector` provide perspective, not veto. `trade_sizing` is called when BUY/SELL to compute exact entry/SL/TP. MACD diff, ATR, and price are pre-injected into relevant tools from the market snapshot so the LLM cannot invent incorrect values. Source for preset/force_kwargs injection: `backend/app/services/agentscope/toolkit.py`.
 
 ---
 
@@ -231,19 +233,19 @@ Note: `decision_gating`, `contradiction_detector`, and `trade_sizing` are intern
 | Tool | Purpose |
 |------|---------|
 | `position_size_calculator` | Computes allowed position size from risk parameters |
-
-Note: `portfolio_risk_evaluation` and `portfolio_stress_test` are internal Python helper functions — not wired as MCP tools.
+| `portfolio_risk_evaluation` | Authoritative risk gate — evaluates the full portfolio risk for the proposed trade; `trader_decision` and `injected_portfolio_state` are force-injected via `force_kwargs` (LLM cannot override or omit them) |
+| `portfolio_stress_test` | Simulates portfolio stress scenarios against the proposed trade |
 
 **Output schema** (`RiskAssessmentResult`):
 - `approved`: bool
 - `adjusted_volume`: float ≥ 0.0 (lots; never exceeds trade_sizing volume)
-- `reasoning`: explanation string
+- `reasoning`: explanation string (optional, default empty string, min_length 0)
 - `risk_flags`: list of risk concern strings
 - `degraded`: bool
 
 **Output advisory?**: Binding
 
-**Constraints / Notes**: Hard limits (daily loss, weekly loss, position count, free margin, max currency exposure) are non-negotiable. Soft factors (Friday, correlation, drawdown) are judgment calls. For HOLD decisions, immediately returns `approved=false, adjusted_volume=0` without calling tools. The `portfolio_risk_evaluation` tool result is authoritative — if it conflicts with the LLM's reasoning, the tool result wins. The risk engine is deterministic Python code, not an LLM judgment. The `portfolio_risk_evaluation` function receives `trader_decision` automatically via `force_kwargs` — the LLM cannot override or omit it. Source: `backend/app/services/agentscope/registry.py`.
+**Constraints / Notes**: Hard limits (daily loss, weekly loss, position count, free margin, max currency exposure) are non-negotiable. Soft factors (Friday, correlation, drawdown) are judgment calls. For HOLD decisions, immediately returns `approved=false, adjusted_volume=0` without calling tools. The `portfolio_risk_evaluation` tool result is authoritative — if it conflicts with the LLM's reasoning, the tool result wins. The risk engine is deterministic Python code, not an LLM judgment. The `portfolio_risk_evaluation` function receives `trader_decision` automatically via `force_kwargs` — the LLM cannot override or omit it. Source for force_kwargs injection: `backend/app/services/agentscope/toolkit.py`.
 
 ---
 
@@ -293,7 +295,7 @@ Source: `backend/app/services/agentscope/registry.py`.
 
 ## Agent skills bootstrap
 
-At startup, an optional `agent-skills.json` file is loaded (path: `AGENT_SKILLS_BOOTSTRAP_FILE`, default location: `backend/config/agent-skills.json`). This file is the primary mechanism for configuring per-agent `llm_enabled` initial values — it sets the starting enabled/disabled state for each agent before the UI or DB can override it. In addition to `llm_enabled`, behavioral guidelines from this file are injected into agent system prompts as soft guidelines — LLMs may deviate from them.
+At startup, an optional `agent-skills.json` file is loaded from the path specified by `AGENT_SKILLS_BOOTSTRAP_FILE`. This env var has no built-in default — operators must set it explicitly (e.g., `AGENT_SKILLS_BOOTSTRAP_FILE=backend/config/agent-skills.json`). If unset, no bootstrap file is loaded. This file is the primary mechanism for configuring per-agent `llm_enabled` initial values — it sets the starting enabled/disabled state for each agent before the UI or DB can override it. In addition to `llm_enabled`, behavioral guidelines from this file are injected into agent system prompts as soft guidelines — LLMs may deviate from them.
 
 Mode controlled by `AGENT_SKILLS_BOOTSTRAP_MODE` (`merge` or `replace`) and `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE` (default: `true`).
 
