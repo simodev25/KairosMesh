@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A governed multi-agent trading system that orchestrates 8 specialized LLM agents through a structured research and decision workflow. Simulation mode (no broker connection) is the default. Paper trading and live execution require explicit configuration.
+A governed multi-agent trading system that orchestrates 8 specialized LLM agents through a structured research and decision workflow. Paper-trading mode is the default and safe starting point. Live execution requires explicit configuration.
 
 ---
 
@@ -23,7 +23,7 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 
 ## What it does not do
 
-- It does not execute unsupervised live orders by default — `ALLOW_LIVE_TRADING=false` is the default. Strategy monitoring auto-runs the full pipeline on signal detection, but any resulting live order still requires explicit enablement.
+- It does not trade autonomously or make unsupervised decisions
 - It does not learn from past outcomes — there is no feedback loop from trade results to future runs
 - It does not provide financial advice
 - It is not production-ready for live capital without additional hardening (see [Limitations](docs/limitations.md))
@@ -33,8 +33,8 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 
 | Area | Status |
 |------|--------|
-| Simulation mode (DB only, no broker call) | Implemented, **default** |
-| Paper trading (MetaAPI paper account) | Implemented; requires MetaAPI credentials and `mode=paper` at run time |
+| Paper trading (MetaAPI paper account) | Implemented, default |
+| Simulation mode (DB only, no broker call) | Implemented |
 | Live trading | Implemented but off by default; requires `ALLOW_LIVE_TRADING=true` and `TRADER_OPERATOR` role |
 | 8-agent pipeline | Fully implemented |
 | Debate phase | Conditional — only runs if all 3 debate agents have LLM enabled |
@@ -59,7 +59,7 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 │  └──────┬───────┘                                              │
 │         │                                                      │
 │  ┌──────▼──────────────────────────────────────────────┐       │
-│  │           MCP Tool Layer (18 tools)                │       │
+│  │           MCP Tool Layer (18 tools)                 │       │
 │  │  Indicators · Patterns · News · Risk · Sizing       │       │
 │  └─────────────────────────────────────────────────────┘       │
 └────────────────────────────────────────────────────────────────┘
@@ -70,8 +70,8 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 
 ## Agent pipeline
 
-| # | Agent | Role | Output |
-|---|-------|------|--------|
+| # | Agent | Role | Output advisory? |
+|---|-------|------|-----------------|
 | 1 | Technical Analyst | RSI, MACD, EMA, ATR, patterns, divergence, S/R | Advisory |
 | 2 | News Analyst | Sentiment scoring, relevance filtering | Advisory |
 | 3 | Market Context | Regime detection, session, macro | Advisory |
@@ -81,7 +81,7 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 | 7 | Risk Manager | Position sizing, portfolio risk validation | Binding (tool overrides LLM) |
 | 8 | Execution Manager | Preflight checks + order submission | Binding (deterministic preflight) |
 
-Agents 4–5 (debate) only run when all three debate agents have LLM enabled. If skipped, the trader agent decides based on Phase 1 analysis alone.
+Agents 4–5 (debate) only run when both have LLM enabled. If skipped, the trader agent decides without debate input.
 
 ## Quick start
 
@@ -147,8 +147,8 @@ frontend/src/
   components/          # TradingViewChart, PortfolioKPIs, Layout
 
 infra/
-  docker/              # Docker build helpers
-  helm/                # Kubernetes Helm charts (forex-platform/)
+  docker/              # Prometheus config, Grafana dashboards
+  helm/                # Kubernetes Helm charts
 ```
 
 ## Documentation
