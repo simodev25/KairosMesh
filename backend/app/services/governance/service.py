@@ -92,7 +92,29 @@ class GovernanceService:
         return created_run_ids
 
     async def approve_action(self, db: Session, *, run_id: int, actor: str) -> dict:
-        """Execute the governance decision for a completed run."""
+        """Execute the governance decision for a completed run.
+
+        Risk-engine validation note
+        ---------------------------
+        The RiskEngine (``app.services.risk.rules``) validates *new* trade
+        proposals via ``evaluate_portfolio()``, which requires a ``ProposedTrade``
+        (with entry_price, stop_loss, risk_percent) and a full ``PortfolioState``.
+        Governance actions differ fundamentally:
+
+        * **CLOSE** always *reduces* portfolio risk, so further validation would
+          be redundant.
+        * **ADJUST_SL / ADJUST_TP / ADJUST_BOTH** modify existing positions
+          rather than opening new ones; the current ``RiskEngine`` API does not
+          support evaluating SL/TP changes in isolation.
+        * Governance runs already operate in **confirmation mode** — a human
+          must explicitly approve before execution, providing oversight that
+          substitutes for an automated gate.
+
+        TODO: Extend ``RiskEngine`` with a ``validate_governance_action()``
+        method that can evaluate SL/TP adjustments against portfolio limits
+        (e.g., verify the new SL does not exceed ``max_risk_per_trade_pct``).
+        Until then, human confirmation is the safety barrier.
+        """
         run = db.query(AnalysisRun).filter(
             AnalysisRun.id == run_id,
             AnalysisRun.run_type == 'governance',
@@ -106,6 +128,10 @@ class GovernanceService:
 
         client = MetaApiClient()
         result: dict = {}
+
+        # TODO: When RiskEngine gains validate_governance_action(), call it here
+        # before executing ADJUST_SL/ADJUST_TP/ADJUST_BOTH.  CLOSE is exempt
+        # because it strictly reduces risk.  See docstring above for rationale.
 
         if action == 'HOLD':
             result = {'executed': False, 'reason': 'Action is HOLD — nothing to execute'}

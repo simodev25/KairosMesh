@@ -1143,7 +1143,13 @@ class AgentScopeRegistry:
         return results
 
     async def _execute_governance(self, db, run, pair: str, timeframe: str) -> dict:
-        """Governance pipeline: Phase 1 agents + governance decision parsing."""
+        """Governance pipeline: Phase 1 agents + optional Phase 2 debate + governance decision.
+
+        When ``analysis_depth`` (stored in ``run.trace['analysis_depth']``) is
+        ``'full'``, the pipeline also runs the Phase 2 debate agents
+        (bullish-researcher, bearish-researcher) and feeds their theses into
+        the governance prompt so the trader-agent has richer context.
+        """
         import re as _re
 
         def _set_progress(pct: int) -> None:
@@ -1154,6 +1160,7 @@ class AgentScopeRegistry:
                 pass
 
         position_context: dict = run.trace.get('governance_position', {}) if isinstance(run.trace, dict) else {}
+        analysis_depth: str = (run.trace.get('analysis_depth', 'light') if isinstance(run.trace, dict) else 'light')
 
         try:
             _set_progress(5)
@@ -1161,6 +1168,7 @@ class AgentScopeRegistry:
             model_selector = AgentModelSelector()
             provider, default_model_name, base_url, api_key = self._resolve_provider_config(db)
             chat_fmt = build_formatter(provider, multi_agent=False, base_url=base_url)
+            debate_fmt = build_formatter(provider, multi_agent=True, base_url=base_url)
 
             # Build initial context message with position details
             context_msg = self._build_governance_context_msg(position_context)
@@ -1197,17 +1205,141 @@ class AgentScopeRegistry:
                 chat_fmt, llm_enabled, agent_model_names, phase1_toolkit,
             )
 
-            _set_progress(70)
+            _set_progress(50)
 
-            # Build governance prompt from Phase 1 summaries
+            # Build Phase 1 summary
             phase1_summary = json.dumps({
                 k: (v.model_dump() if hasattr(v, 'model_dump') else v)
                 for k, v in phase1_results.items()
             }, default=str)
 
+            # ── Phase 2: Debate agents (only when depth == 'full') ──────────
+            debate_summary = ""
+            if analysis_depth == 'full':
+                logger.info(
+                    'governance_full_depth run_id=%d — running Phase 2 debate agents',
+                    run.id,
+                )
+                try:
+                    # Build research context from Phase 1 results (mirrors execute())
+                    analysis_summary = "\n\n".join(
+                        f"[{k}]\n{json.dumps(v.model_dump() if hasattr(v, 'model_dump') else v, default=str)}"
+                        for k, v in phase1_results.items()
+                    )
+                    research_msg = Msg(
+                        "system",
+                        f"Analysis results from Phase 1:\n{analysis_summary}\n\n"
+                        f"Original context:\n{market_context_msg.get_text_content()}",
+                        "system",
+                    )
+
+                    # Build toolkits for researchers with Phase 1 outputs
+                    phase1_outputs_dict = {
+                        k: (_msg_to_dict(Msg(k, json.dumps(v.model_dump() if hasattr(v, 'model_dump') else v, default=str), 'assistant'))
+                            if not isinstance(v, dict) else v)
+                        for k, v in phase1_results.items()
+                    }
+
+                    researcher_agents = {}
+                    for rname in ("bullish-researcher", "bearish-researcher"):
+                        factory = ALL_AGENT_FACTORIES.get(rname)
+                        if not factory:
+                            continue
+                        if not llm_enabled.get(rname, False):
+                            logger.info('governance_full_depth skipping %s — LLM disabled', rname)
+                            continue
+                        rtk = await build_toolkit(
+                            rname, ohlc=ohlc, news=market_data.get("news", {}),
+                            analysis_outputs=phase1_outputs_dict,
+                            snapshot=snapshot,
+                            decision_mode=_resolved_decision_mode,
+                            execution_mode=_resolved_execution_mode,
+                        )
+                        model_name_r = agent_model_names.get(rname, default_model_name)
+                        researcher_agents[rname] = factory(
+                            model=build_model(provider, model_name_r, base_url, api_key),
+                            formatter=debate_fmt,
+                            toolkit=rtk,
+                            sys_prompt=self._get_sys_prompt(rname, db),
+                        )
+
+                    if len(researcher_agents) == 2:
+                        # Also need trader-agent as moderator for the debate
+                        trader_debate_factory = ALL_AGENT_FACTORIES.get('trader-agent')
+                        if trader_debate_factory and llm_enabled.get('trader-agent', False):
+                            trader_debate_tk = await build_toolkit(
+                                "trader-agent", ohlc=ohlc, news=market_data.get("news", {}),
+                                snapshot=snapshot,
+                                decision_mode=_resolved_decision_mode,
+                                execution_mode=_resolved_execution_mode,
+                            )
+                            moderator = trader_debate_factory(
+                                model=build_model(provider, agent_model_names.get('trader-agent', default_model_name), base_url, api_key),
+                                formatter=debate_fmt,
+                                toolkit=trader_debate_tk,
+                                sys_prompt=self._get_sys_prompt('trader-agent', db),
+                            )
+                            from app.core.config import get_settings as _gs
+                            _agent_timeout = getattr(_gs(), "agentscope_agent_timeout_seconds", 60)
+                            try:
+                                bullish_msg, bearish_msg, debate_result = await asyncio.wait_for(
+                                    run_debate(
+                                        bullish=researcher_agents["bullish-researcher"],
+                                        bearish=researcher_agents["bearish-researcher"],
+                                        moderator=moderator,
+                                        context_msg=research_msg,
+                                        config=DebateConfig(),
+                                    ),
+                                    timeout=_agent_timeout * 3,
+                                )
+                            except (asyncio.TimeoutError, Exception) as exc:
+                                logger.warning(
+                                    'governance_full_depth debate failed, falling back to independent researchers: %s', exc,
+                                )
+                                bullish_msg = await researcher_agents["bullish-researcher"](research_msg)
+                                bearish_msg = await researcher_agents["bearish-researcher"](research_msg)
+                                debate_result = DebateResult(
+                                    winner="no_edge", conviction="weak",
+                                    key_argument=f"Debate failed: {type(exc).__name__}",
+                                    weakness="",
+                                )
+                        else:
+                            # No moderator available — run researchers independently
+                            bullish_msg = await researcher_agents["bullish-researcher"](research_msg)
+                            bearish_msg = await researcher_agents["bearish-researcher"](research_msg)
+                            debate_result = DebateResult(
+                                winner="no_edge", conviction="weak",
+                                key_argument="Moderator unavailable — independent researcher runs",
+                                weakness="",
+                            )
+
+                        debate_summary = (
+                            f"\n\nDEBATE_ANALYSIS (full depth):\n"
+                            f"Winner: {debate_result.winner} | Conviction: {debate_result.conviction}\n"
+                            f"Key argument: {debate_result.key_argument}\n"
+                            f"Weakness: {debate_result.weakness}\n\n"
+                            f"Bullish thesis:\n{bullish_msg.get_text_content()}\n\n"
+                            f"Bearish thesis:\n{bearish_msg.get_text_content()}"
+                        )
+                        logger.info(
+                            'governance_full_depth debate_complete run_id=%d winner=%s conviction=%s',
+                            run.id, debate_result.winner, debate_result.conviction,
+                        )
+                    else:
+                        logger.warning(
+                            'governance_full_depth skipped — not all researcher agents available (have %d/2)',
+                            len(researcher_agents),
+                        )
+                except Exception as exc:
+                    logger.warning('governance_full_depth Phase 2 failed, proceeding with Phase 1 only: %s', exc)
+
+            _set_progress(70)
+
+            # Build governance prompt from Phase 1 summaries + optional debate
             governance_prompt_content = (
                 f"{context_msg.content}\n\n"
-                f"MARKET_ANALYSIS_SUMMARY:\n{phase1_summary}\n\n"
+                f"MARKET_ANALYSIS_SUMMARY:\n{phase1_summary}"
+                f"{debate_summary}\n\n"
                 f"Based on the above analysis, output a governance decision as JSON with fields: "
                 f"action (HOLD/ADJUST_SL/ADJUST_TP/ADJUST_BOTH/CLOSE), "
                 f"new_sl (float or null), new_tp (float or null), "

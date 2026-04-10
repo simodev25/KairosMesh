@@ -64,7 +64,9 @@ celery_app.conf.beat_schedule = {
     },
     'governance-monitor-check': {
         'task': 'app.tasks.governance_monitor_task.check_all',
-        'schedule': 900.0,  # 15 minutes default
+        'schedule': 900.0,  # 15 minutes — static; GovernanceSettings.interval_minutes is stored
+                            # but cannot dynamically update Beat without django-celery-beat.
+                            # The check_all task reads enabled/depth from settings at runtime.
     },
 }
 
