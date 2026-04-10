@@ -26,7 +26,7 @@ portfolio_risk_evaluation MCP tool
     ↓
 RiskEngine.evaluate() — deterministic Python
     ↓
-{ accepted: bool, suggested_volume: float, rejection_reason: str | null }
+{ accepted: bool, suggested_volume: float, primary_rejection_reason: str | null }
 ```
 
 The `portfolio_risk_evaluation` tool is called with `force_kwargs`: the registry injects all inputs (portfolio state, risk limits, trade parameters) before the tool runs. The risk-manager LLM receives the tool result as a fact — it cannot influence the tool's inputs.
@@ -66,12 +66,12 @@ Source: `backend/app/services/risk/limits.py`
 | Max open positions reached | Yes | |
 | Max positions per symbol reached | Yes | |
 | Insufficient free margin | Yes | |
-| Currency exposure > 75% | Yes | Threshold configurable |
+| Currency notional exposure >= `max_currency_notional_exposure_pct_block` | Yes | simulation: 40%, paper: 25%, live: 15% (from `limits.py`) |
 | NaN or Inf in price inputs | Yes | Validated via `_safe_float()` |
 | Invalid price range | Yes | Entry, SL, TP validated |
 | Volume below asset minimum | Yes | Per asset-class bounds |
 | Volume above asset maximum | Yes | Per asset-class bounds |
-| Spread-to-price ratio > 5% | Yes | Checked in preflight (not risk engine) |
+| Spread-to-price ratio exceeds mode limit | Yes | simulation: 0.05% (5 bps), paper: 0.02% (2 bps), live: 0.01% (1 bp) — checked in preflight (not risk engine) |
 
 ## Asset class contract specs
 
@@ -100,6 +100,6 @@ These are hardcoded defaults in `backend/app/services/risk/rules.py`. They are N
 
 ## Further reading
 
-- [Execution](execution.md) — preflight and order submission
-- [Paper vs Live](paper-vs-live.md) — how limits differ by mode
-- [Limitations](limitations.md) — known gaps
+- [Execution](execution.md) (forthcoming) — preflight and order submission
+- [Paper vs Live](paper-vs-live.md) (forthcoming) — how limits differ by mode
+- [Limitations](limitations.md) (forthcoming) — known gaps
