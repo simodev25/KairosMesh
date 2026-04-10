@@ -883,6 +883,8 @@ def scenario_validation(
     stop_loss: float | None = None,
     take_profit: float | None = None,
     entry_price: float | None = None,
+    decision_mode: str = "balanced",
+    execution_mode: str = "simulation",
 ) -> dict[str, Any]:
     """Validate a trading scenario against invalidation conditions.
 
@@ -908,7 +910,7 @@ def scenario_validation(
     if stop_loss and entry_price:
         try:
             from app.services.config.trading_config import get_effective_sizing
-            _min_sl_pct = get_effective_sizing().get("min_sl_distance_pct", 0.05)
+            _min_sl_pct = get_effective_sizing(decision_mode, execution_mode).get("min_sl_distance_pct", 0.05)
         except Exception:
             _min_sl_pct = 0.05
         if sl_distance_pct < _min_sl_pct:
@@ -1268,11 +1270,12 @@ def decision_gating(
     confidence: float = 0.0,
     aligned_sources: int = 0,
     mode: str = "balanced",
+    execution_mode: str = "simulation",
 ) -> dict:
     """Apply decision gates based on policy mode (with runtime DB overrides)."""
     try:
         from app.services.config.trading_config import get_effective_gating_policy
-        policy = get_effective_gating_policy(mode)
+        policy = get_effective_gating_policy(mode, execution_mode)
     except Exception:
         policy = DECISION_MODES.get(mode, DECISION_MODES["balanced"])
     blocked_by = []
@@ -1311,18 +1314,27 @@ def trade_sizing(
     price: float = 0.0,
     atr: float = 0.0,
     decision_side: str = "BUY",
+    decision_mode: str = "balanced",
+    execution_mode: str = "simulation",
 ) -> dict:
     """Compute entry, stop-loss, and take-profit from ATR (with runtime DB overrides)."""
+    _min_sl_pct = 0.05
     try:
         from app.services.config.trading_config import get_effective_sizing
-        sizing = get_effective_sizing()
+        sizing = get_effective_sizing(decision_mode, execution_mode)
         _sl_mult = sizing["sl_atr_multiplier"]
         _tp_mult = sizing["tp_atr_multiplier"]
+        _min_sl_pct = sizing.get("min_sl_distance_pct", 0.05)
     except Exception:
         _sl_mult = SL_ATR_MULTIPLIER
         _tp_mult = TP_ATR_MULTIPLIER
     sl_dist = atr * _sl_mult if atr > 0 else price * SL_PERCENT_FALLBACK
     tp_dist = atr * _tp_mult if atr > 0 else price * TP_PERCENT_FALLBACK
+    # Enforce min_sl_distance_pct: widen SL if too tight
+    if price > 0:
+        min_sl_dist = price * (_min_sl_pct / 100.0)
+        if sl_dist < min_sl_dist:
+            sl_dist = min_sl_dist
     if decision_side == "BUY":
         return {"entry": round(price, 5), "stop_loss": round(price - sl_dist, 5), "take_profit": round(price + tp_dist, 5)}
     return {"entry": round(price, 5), "stop_loss": round(price + sl_dist, 5), "take_profit": round(price - tp_dist, 5)}
@@ -1391,6 +1403,15 @@ def portfolio_risk_evaluation(
     from app.services.risk.rules import ProposedTrade, RiskEngine
 
     trader_decision = trader_decision or {}
+    resolved_mode = str(trader_decision.get("mode") or mode or "simulation").strip().lower()
+    # Read decision_mode from runtime config (DB), not from trader_decision
+    try:
+        from app.services.connectors.runtime_settings import RuntimeConnectorSettings
+        _ollama_settings = RuntimeConnectorSettings.settings("ollama")
+        resolved_decision_mode = str(_ollama_settings.get("decision_mode") or "balanced").strip().lower()
+    except Exception:
+        resolved_decision_mode = "balanced"
+    resolved_pair = trader_decision.get("pair") or trader_decision.get("symbol")
     decision = trader_decision.get("decision", "HOLD")
 
     if decision == "HOLD":
@@ -1428,21 +1449,22 @@ def portfolio_risk_evaluation(
             logger.warning("portfolio_risk_evaluation: state fetch failed: %s", exc)
             state = PortfolioStateService.build_defaults()
 
-    limits = get_risk_limits(mode)
+    limits = get_risk_limits(resolved_mode, resolved_decision_mode)
 
     proposed = ProposedTrade(
         decision=decision,
-        pair=trader_decision.get("pair"),
+        pair=resolved_pair,
         entry_price=trader_decision.get("entry", 0.0),
         stop_loss=trader_decision.get("stop_loss"),
         take_profit=trader_decision.get("take_profit"),
         risk_percent=risk_percent,
-        mode=mode,
+        mode=resolved_mode,
         asset_class=trader_decision.get("asset_class"),
     )
 
     engine = RiskEngine()
     assessment = engine.evaluate_portfolio(state, limits, proposed)
+    effective_risk_percent = assessment.effective_risk_percent or risk_percent
 
     equity = state.equity if state.equity > 0 else 1.0
     portfolio_summary = {
@@ -1450,6 +1472,7 @@ def portfolio_risk_evaluation(
         "equity": state.equity,
         "free_margin_pct": round((state.free_margin / equity) * 100, 1),
         "open_risk_pct": state.open_risk_total_pct,
+        "portfolio_open_risk_pct": state.open_risk_total_pct,
         "daily_drawdown_pct": state.daily_drawdown_pct,
         "weekly_drawdown_pct": state.weekly_drawdown_pct,
         "risk_budget_remaining_pct": round(
@@ -1457,25 +1480,44 @@ def portfolio_risk_evaluation(
         ),
         "open_positions": state.open_position_count,
         "max_positions": limits.max_positions,
+        "incremental_trade_risk_pct": round(effective_risk_percent, 2),
+        "requested_trade_risk_pct": round(risk_percent, 2),
     }
 
     # Tier 2: currency exposure
     currency_exposure_data: dict = {}
     try:
-        from app.services.risk.currency_exposure import compute_currency_exposure
+        from app.services.risk.currency_exposure import (
+            compute_currency_exposure,
+            serialize_currency_exposure_report,
+        )
         curr_report = compute_currency_exposure(state.open_positions, equity)
-        currency_exposure_data = {
-            ce.currency: {
-                "net_lots": ce.net_exposure_lots,
-                "exposure_pct": ce.exposure_pct,
-            }
-            for ce in curr_report.exposures.values()
-        }
+        currency_exposure_data = serialize_currency_exposure_report(curr_report)
         portfolio_summary["currency_exposure"] = currency_exposure_data
+        portfolio_summary["currency_notional_exposure"] = {
+            k: v["currency_notional_exposure_pct"] for k, v in currency_exposure_data.items()
+        }
+        portfolio_summary["currency_open_risk"] = {
+            k: v["currency_open_risk_pct"] for k, v in currency_exposure_data.items()
+        }
+        portfolio_summary["total_gross_notional_exposure_pct"] = curr_report.total_gross_notional_exposure_pct
         if curr_report.warnings:
             portfolio_summary["currency_warnings"] = curr_report.warnings
     except Exception as exc:
         logger.debug("Currency exposure enrichment failed: %s", exc)
+
+    incremental_currency_open_risk_pct: dict[str, float] = {}
+    try:
+        from app.services.risk.currency_exposure import _decompose_symbol
+
+        base, quote = _decompose_symbol(resolved_pair or "")
+        for currency in (base, quote):
+            if currency:
+                incremental_currency_open_risk_pct[currency] = round(effective_risk_percent, 2)
+        if incremental_currency_open_risk_pct:
+            portfolio_summary["incremental_currency_open_risk_pct"] = incremental_currency_open_risk_pct
+    except Exception as exc:
+        logger.debug("Incremental currency open risk enrichment failed: %s", exc)
 
     # Tier 2: correlation alerts
     correlation_alerts: list[dict] = []
@@ -1502,11 +1544,17 @@ def portfolio_risk_evaluation(
     # Tier 3: stress test (advisory, non-blocking)
     stress_data: dict = {}
     try:
-        from app.services.risk.stress_test import run_stress_test
+        from app.services.risk.stress_test import SCENARIOS, run_stress_test
+        selected_scenarios = [
+            scenario
+            for scenario in SCENARIOS
+            if scenario.name in set(limits.stress_test_survival_required)
+        ] or None
         st_report = run_stress_test(
             positions=state.open_positions,
             equity=equity,
             used_margin=state.used_margin,
+            scenarios=selected_scenarios,
         )
         stress_data = {
             "worst_case_pnl_pct": st_report.worst_case_pnl_pct,
@@ -1520,11 +1568,16 @@ def portfolio_risk_evaluation(
     return {
         "accepted": assessment.accepted,
         "suggested_volume": assessment.suggested_volume,
+        "effective_risk_percent": round(effective_risk_percent, 2),
         "reasons": assessment.reasons,
+        "breached_limits": assessment.breached_limits,
+        "primary_rejection_reason": assessment.primary_rejection_reason,
         "portfolio_summary": portfolio_summary,
         "currency_exposure": currency_exposure_data,
         "correlation_alerts": correlation_alerts,
         "stress_test": stress_data,
+        "incremental_trade_risk_pct": round(effective_risk_percent, 2),
+        "incremental_currency_open_risk_pct": incremental_currency_open_risk_pct,
         "degraded": state.degraded,
         "degraded_reasons": state.degraded_reasons,
     }

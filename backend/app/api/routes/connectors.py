@@ -7,8 +7,15 @@ from app.core.config import get_settings
 from app.core.security import Role, require_roles
 from app.db.models.connector_config import ConnectorConfig
 from app.db.session import get_db
-from app.schemas.connector import ConnectorConfigOut, ConnectorConfigUpdate, MarketSymbolsOut, MarketSymbolsUpdate
+from app.schemas.connector import (
+    ConnectorConfigOut,
+    ConnectorConfigUpdate,
+    MarketSymbolsOut,
+    MarketSymbolsUpdate,
+    TradingConfigScopedUpdate,
+)
 from app.services.connectors.runtime_settings import RuntimeConnectorSettings
+from app.services.config.trading_config import build_scoped_trading_settings
 from app.services.llm.skill_bootstrap import bootstrap_agent_skills_into_settings
 from app.services.llm.model_selector import (
     AgentModelSelector,
@@ -287,6 +294,65 @@ def list_ollama_models(
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
 ) -> dict:
     return LlmClient().list_models(db, provider=provider)
+
+
+@router.put('/trading-config')
+def update_trading_config(
+    payload: TradingConfigScopedUpdate,
+    decision_mode: str = Query(default='balanced'),
+    execution_mode: str = Query(default='simulation'),
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
+) -> dict:
+    """Persist trading parameter overrides for one execution/decision profile."""
+    conn = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'trading').first()
+    if not conn:
+        conn = ConnectorConfig(connector_name='trading', enabled=True, settings={})
+        db.add(conn)
+        db.flush()
+
+    current_settings = conn.settings if isinstance(conn.settings, dict) else {}
+    next_settings = build_scoped_trading_settings(
+        current_settings,
+        decision_mode=decision_mode,
+        execution_mode=execution_mode,
+        gating=payload.gating,
+        risk_limits=payload.risk_limits,
+        sizing=payload.sizing,
+    )
+    conn.settings = next_settings
+    # Force SQLAlchemy to detect JSON column mutation
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(conn, 'settings')
+
+    try:
+        from app.db.models.trading_config_version import TradingConfigVersion
+        from sqlalchemy import func
+
+        max_ver = db.query(func.max(TradingConfigVersion.version)).scalar() or 0
+        version = TradingConfigVersion(
+            version=max_ver + 1,
+            changed_by='admin',
+            decision_mode=str(decision_mode),
+            settings_snapshot=next_settings,
+            changes_summary=(
+                f"scoped save for decision_mode={decision_mode}, execution_mode={execution_mode}"
+            ),
+        )
+        db.add(version)
+    except Exception:
+        pass
+
+    db.commit()
+    RuntimeConnectorSettings.clear_cache('trading')
+
+    from app.services.config.trading_config import get_current_values, get_param_catalog
+    return {
+        'catalog': get_param_catalog(),
+        'values': get_current_values(decision_mode, execution_mode),
+        'decision_mode': decision_mode,
+        'execution_mode': execution_mode,
+    }
 
 
 @router.put('/{connector_name}', response_model=ConnectorConfigOut)

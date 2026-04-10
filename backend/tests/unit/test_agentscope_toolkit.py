@@ -1,5 +1,12 @@
 import pytest
-from app.services.agentscope.toolkit import AGENT_TOOL_MAP, build_toolkit
+
+pytest.importorskip("agentscope")
+
+from app.services.agentscope.toolkit import (
+    AGENT_TOOL_MAP,
+    _build_risk_tool_trader_decision,
+    build_toolkit,
+)
 from app.services.mcp.client import get_mcp_client
 
 
@@ -34,3 +41,24 @@ async def test_build_toolkit_unknown_agent_empty():
     toolkit = await build_toolkit("unknown-agent")
     schemas = toolkit.get_json_schemas()
     assert len(schemas) == 0
+
+
+def test_build_risk_tool_trader_decision_injects_runtime_modes():
+    trader_out = {
+        "decision": "BUY",
+        "entry": 1.15535,
+        "stop_loss": 1.15466,
+        "take_profit": 1.1565,
+        "pair": "EURUSD.PRO",
+        "asset_class": "forex",
+    }
+
+    result = _build_risk_tool_trader_decision(
+        trader_out,
+        decision_mode="permissive",
+        execution_mode="live",
+    )
+
+    assert result["decision"] == "BUY"
+    assert result["mode"] == "live"
+    assert result["decision_mode"] == "permissive"

@@ -764,9 +764,9 @@ class AgentScopeRegistry:
             _trace_trading_params = {}
             try:
                 from app.services.config.trading_config import get_effective_gating_policy as _tgp, get_effective_sizing as _ts, get_effective_risk_limits as _trl
-                _tg = _tgp(decision_mode)
                 _run_mode = str(getattr(run, "mode", "simulation") or "simulation").strip().lower()
-                _tl = _trl(_run_mode)
+                _tg = _tgp(decision_mode, _run_mode)
+                _tl = _trl(_run_mode, decision_mode)
                 _trace_trading_params = {
                     "decision_mode": decision_mode,
                     "execution_mode": _run_mode,
@@ -779,15 +779,20 @@ class AgentScopeRegistry:
                     },
                     "risk_limits": {
                         "max_risk_per_trade_pct": _tl.max_risk_per_trade_pct,
+                        "enforce_max_risk_per_trade": _tl.enforce_max_risk_per_trade,
+                        "max_risk_per_trade_behavior": _tl.max_risk_per_trade_behavior,
+                        "log_risk_adjustments": _tl.log_risk_adjustments,
                         "max_daily_loss_pct": _tl.max_daily_loss_pct,
                         "max_weekly_loss_pct": _tl.max_weekly_loss_pct,
                         "max_open_risk_pct": _tl.max_open_risk_pct,
                         "max_positions": _tl.max_positions,
                         "max_positions_per_symbol": _tl.max_positions_per_symbol,
                         "min_free_margin_pct": _tl.min_free_margin_pct,
-                        "max_currency_exposure_pct": _tl.max_currency_exposure_pct,
+                        "max_currency_notional_exposure_pct_warn": _tl.max_currency_notional_exposure_pct_warn,
+                        "max_currency_notional_exposure_pct_block": _tl.max_currency_notional_exposure_pct_block,
+                        "max_currency_open_risk_pct": _tl.max_currency_open_risk_pct,
                     },
-                    "sizing": _ts(),
+                    "sizing": _ts(decision_mode, _run_mode),
                 }
             except Exception:
                 pass
@@ -1106,6 +1111,7 @@ class AgentScopeRegistry:
 
             # Resolve decision mode early so toolkits get it
             _resolved_decision_mode = model_selector.resolve_decision_mode(db)
+            _resolved_execution_mode = str(getattr(run, "mode", "simulation") or "simulation").strip().lower()
 
             # Build toolkits with OHLC preset + DB skills + snapshot for trader tools
             toolkits = {}
@@ -1116,6 +1122,7 @@ class AgentScopeRegistry:
                     skills=agent_skills,
                     snapshot=snapshot,
                     decision_mode=_resolved_decision_mode,
+                    execution_mode=_resolved_execution_mode,
                 )
 
             # Build prompt variables for context injection
@@ -1283,6 +1290,7 @@ class AgentScopeRegistry:
                     skills=model_selector.resolve_skills(db, rname),
                     snapshot=snapshot,
                     decision_mode=_resolved_decision_mode,
+                    execution_mode=_resolved_execution_mode,
                 )
                 if rname in agents:
                     agents[rname] = ALL_AGENT_FACTORIES[rname](
@@ -1604,11 +1612,17 @@ class AgentScopeRegistry:
                                 "price": snapshot.get("last_price", 0.0),
                                 "atr": snapshot.get("atr", 0.0),
                                 "decision_side": _trader_decision,
+                                "decision_mode": _resolved_decision_mode,
                             })
                             if isinstance(_auto_sizing, dict) and "entry" in _auto_sizing:
                                 agent_tool_invocations.setdefault("trader-agent", {})["trade_sizing"] = {
                                     "tool_id": "trade_sizing", "status": "ok",
-                                    "input": {"price": snapshot.get("last_price"), "atr": snapshot.get("atr"), "decision_side": _trader_decision},
+                                    "input": {
+                                        "price": snapshot.get("last_price"),
+                                        "atr": snapshot.get("atr"),
+                                        "decision_side": _trader_decision,
+                                        "decision_mode": _resolved_decision_mode,
+                                    },
                                     "data": _auto_sizing,
                                 }
                                 logger.info("Auto trade_sizing: entry=%s SL=%s TP=%s",
@@ -1642,6 +1656,10 @@ class AgentScopeRegistry:
                             "decision": meta.get("decision") or d.get("decision", "HOLD"),
                             "conviction": meta.get("conviction") or d.get("conviction", 0.0),
                             "reasoning": meta.get("reasoning") or d.get("reasoning", ""),
+                            "pair": pair,
+                            "mode": getattr(run, "mode", "simulation"),
+                            "decision_mode": _resolved_decision_mode,
+                            "asset_class": base_vars.get("asset_class"),
                             "key_level": meta.get("key_level") or d.get("key_level"),
                             "entry": _sizing_data.get("entry") or meta.get("entry") or d.get("entry"),
                             "stop_loss": _sizing_data.get("stop_loss") or meta.get("stop_loss") or d.get("stop_loss"),
@@ -1658,6 +1676,7 @@ class AgentScopeRegistry:
                             skills=model_selector.resolve_skills(db, "risk-manager"),
                             snapshot=snapshot,
                             decision_mode=_resolved_decision_mode,
+                            execution_mode=_resolved_execution_mode,
                             portfolio_state=_portfolio_state,
                         )
                         if "risk-manager" in agents:
@@ -1876,9 +1895,9 @@ class AgentScopeRegistry:
             _effective_trading_params = {}
             try:
                 from app.services.config.trading_config import get_effective_gating_policy, get_effective_risk_limits, get_effective_sizing
-                _eff_gating = get_effective_gating_policy(_resolved_decision_mode)
                 _run_mode_str = str(getattr(run, "mode", "simulation") or "simulation").strip().lower()
-                _eff_limits = get_effective_risk_limits(_run_mode_str)
+                _eff_gating = get_effective_gating_policy(_resolved_decision_mode, _run_mode_str)
+                _eff_limits = get_effective_risk_limits(_run_mode_str, _resolved_decision_mode)
                 _effective_trading_params = {
                     "decision_mode": _resolved_decision_mode,
                     "execution_mode": _run_mode_str,
@@ -1891,15 +1910,20 @@ class AgentScopeRegistry:
                     },
                     "risk_limits": {
                         "max_risk_per_trade_pct": _eff_limits.max_risk_per_trade_pct,
+                        "enforce_max_risk_per_trade": _eff_limits.enforce_max_risk_per_trade,
+                        "max_risk_per_trade_behavior": _eff_limits.max_risk_per_trade_behavior,
+                        "log_risk_adjustments": _eff_limits.log_risk_adjustments,
                         "max_daily_loss_pct": _eff_limits.max_daily_loss_pct,
                         "max_weekly_loss_pct": _eff_limits.max_weekly_loss_pct,
                         "max_open_risk_pct": _eff_limits.max_open_risk_pct,
                         "max_positions": _eff_limits.max_positions,
                         "max_positions_per_symbol": _eff_limits.max_positions_per_symbol,
                         "min_free_margin_pct": _eff_limits.min_free_margin_pct,
-                        "max_currency_exposure_pct": _eff_limits.max_currency_exposure_pct,
+                        "max_currency_notional_exposure_pct_warn": _eff_limits.max_currency_notional_exposure_pct_warn,
+                        "max_currency_notional_exposure_pct_block": _eff_limits.max_currency_notional_exposure_pct_block,
+                        "max_currency_open_risk_pct": _eff_limits.max_currency_open_risk_pct,
                     },
-                    "sizing": get_effective_sizing(),
+                    "sizing": get_effective_sizing(_resolved_decision_mode, _run_mode_str),
                 }
             except Exception:
                 pass
@@ -2010,6 +2034,7 @@ class AgentScopeRegistry:
                     skills=agent_skills,
                     snapshot=snapshot,
                     decision_mode=base_vars.get("decision_mode", "balanced"),
+                    execution_mode="simulation",
                 )
                 is_debate = name in ("bullish-researcher", "bearish-researcher", "trader-agent")
                 agents[name] = factory(

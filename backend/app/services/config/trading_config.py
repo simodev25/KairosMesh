@@ -7,8 +7,7 @@ multipliers. All values can be overridden at runtime via the ConnectorConfig
 
 from __future__ import annotations
 
-import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Any
 
 from app.services.agentscope.constants import (
@@ -17,9 +16,50 @@ from app.services.agentscope.constants import (
 )
 from app.services.risk.limits import RISK_LIMITS, RiskLimits
 
-logger = logging.getLogger(__name__)
-
 CONNECTOR_NAME = "trading"
+SCOPED_PROFILES_KEY = "profiles"
+
+DECISION_MODE_RISK_PRESETS: dict[str, dict[str, float | int]] = {
+    "conservative": {
+        "max_risk_per_trade_pct": 1.5,
+        "max_daily_loss_pct": 2.0,
+        "max_open_risk_pct": 4.5,
+        "max_positions": 2,
+        "max_positions_per_symbol": 1,
+        "min_free_margin_pct": 60.0,
+        "max_currency_notional_exposure_pct_warn": 10.0,
+        "max_currency_notional_exposure_pct_block": 12.0,
+        "max_currency_open_risk_pct": 5.0,
+        "max_weekly_loss_pct": 4.0,
+    },
+    "balanced": {},
+    "permissive": {
+        "max_risk_per_trade_pct": 2.5,
+        "max_daily_loss_pct": 4.0,
+        "max_open_risk_pct": 8.0,
+        "max_positions": 4,
+        "max_positions_per_symbol": 2,
+        "min_free_margin_pct": 40.0,
+        "max_currency_notional_exposure_pct_warn": 18.0,
+        "max_currency_notional_exposure_pct_block": 22.0,
+        "max_currency_open_risk_pct": 7.0,
+        "max_weekly_loss_pct": 6.0,
+    },
+}
+
+DECISION_MODE_SIZING_PRESETS: dict[str, dict[str, float]] = {
+    "conservative": {
+        "sl_atr_multiplier": 1.8,
+        "tp_atr_multiplier": 3.0,
+        "min_sl_distance_pct": 0.07,
+    },
+    "balanced": {},
+    "permissive": {
+        "sl_atr_multiplier": 1.2,
+        "tp_atr_multiplier": 2.0,
+        "min_sl_distance_pct": 0.03,
+    },
+}
 
 # ── Parameter catalog with descriptions ──
 # Each entry: (key, description, type, default_per_mode)
@@ -58,6 +98,57 @@ GATING_PARAMS: list[dict[str, Any]] = [
         "description": "Si actif, l'analyse technique seule peut declencher un trade meme si news et context sont neutres.",
         "type": "bool",
     },
+    {
+        "key": "block_major_contradiction",
+        "label": "Block Major Contradiction",
+        "description": "Si actif, une contradiction majeure entre indicateurs bloque le trade. Desactiver pour le mode permissive.",
+        "type": "bool",
+    },
+    {
+        "key": "contradiction_penalty_weak",
+        "label": "Contradiction Penalty (Weak)",
+        "description": "Penalite appliquee au score en cas de contradiction faible.",
+        "type": "float",
+        "min": 0.0,
+        "max": 0.3,
+        "step": 0.01,
+    },
+    {
+        "key": "contradiction_penalty_moderate",
+        "label": "Contradiction Penalty (Moderate)",
+        "description": "Penalite appliquee au score en cas de contradiction moderee.",
+        "type": "float",
+        "min": 0.0,
+        "max": 0.3,
+        "step": 0.01,
+    },
+    {
+        "key": "contradiction_penalty_major",
+        "label": "Contradiction Penalty (Major)",
+        "description": "Penalite appliquee au score en cas de contradiction majeure.",
+        "type": "float",
+        "min": 0.0,
+        "max": 0.3,
+        "step": 0.01,
+    },
+    {
+        "key": "confidence_multiplier_moderate",
+        "label": "Confidence Multiplier (Moderate)",
+        "description": "Multiplicateur de confiance en cas de contradiction moderee. 1.0 = pas de reduction.",
+        "type": "float",
+        "min": 0.5,
+        "max": 1.0,
+        "step": 0.05,
+    },
+    {
+        "key": "confidence_multiplier_major",
+        "label": "Confidence Multiplier (Major)",
+        "description": "Multiplicateur de confiance en cas de contradiction majeure. Plus c'est bas, plus la confiance est reduite.",
+        "type": "float",
+        "min": 0.3,
+        "max": 1.0,
+        "step": 0.05,
+    },
 ]
 
 RISK_PARAMS: list[dict[str, Any]] = [
@@ -69,6 +160,25 @@ RISK_PARAMS: list[dict[str, Any]] = [
         "min": 0.1,
         "max": 10.0,
         "step": 0.1,
+    },
+    {
+        "key": "enforce_max_risk_per_trade",
+        "label": "Enforce Max Risk Per Trade",
+        "description": "Si actif, la limite max_risk_per_trade_pct est appliquee explicitement par le moteur de risque.",
+        "type": "bool",
+    },
+    {
+        "key": "max_risk_per_trade_behavior",
+        "label": "Max Risk Per Trade Behavior",
+        "description": "Comportement si le risque demande depasse la limite: clamp = reduit automatiquement, reject = refuse, warn_only = laisse passer avec warning.",
+        "type": "enum",
+        "options": ["clamp", "reject", "warn_only"],
+    },
+    {
+        "key": "log_risk_adjustments",
+        "label": "Log Risk Adjustments",
+        "description": "Ajoute des messages explicites dans les traces quand le moteur ajuste automatiquement le risque ou le volume.",
+        "type": "bool",
     },
     {
         "key": "max_daily_loss_pct",
@@ -116,13 +226,31 @@ RISK_PARAMS: list[dict[str, Any]] = [
         "step": 5.0,
     },
     {
-        "key": "max_currency_exposure_pct",
-        "label": "Max Currency Exposure (%)",
-        "description": "Exposition maximale sur une seule devise. Evite la concentration (ex: tout en USD).",
+        "key": "max_currency_notional_exposure_pct_warn",
+        "label": "Max Currency Notional Exposure Warn (%)",
+        "description": "Seuil d'alerte de concentration notionnelle par devise. Mesure de concentration, pas de risque stop-based.",
         "type": "float",
         "min": 5.0,
-        "max": 100.0,
+        "max": 2000.0,
         "step": 5.0,
+    },
+    {
+        "key": "max_currency_notional_exposure_pct_block",
+        "label": "Max Currency Notional Exposure Block (%)",
+        "description": "Seuil de blocage dur de concentration notionnelle par devise. A utiliser avec prudence pendant la transition.",
+        "type": "float",
+        "min": 5.0,
+        "max": 2000.0,
+        "step": 5.0,
+    },
+    {
+        "key": "max_currency_open_risk_pct",
+        "label": "Max Currency Open Risk (%)",
+        "description": "Risque stop-based agrege par devise. Expose pour observabilite en phase 1, pas encore utilise comme hard gate.",
+        "type": "float",
+        "min": 1.0,
+        "max": 100.0,
+        "step": 1.0,
     },
     {
         "key": "max_weekly_loss_pct",
@@ -175,30 +303,124 @@ def _get_runtime_settings() -> dict[str, Any]:
         return {}
 
 
-def get_effective_gating_policy(mode: str) -> DecisionGatingPolicy:
-    """Resolve DecisionGatingPolicy: DB overrides > code defaults for the given mode."""
-    base = DECISION_MODES.get(mode, DECISION_MODES["balanced"])
+def _normalize_decision_mode_name(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in DECISION_MODES:
+        return normalized
+    return "balanced"
+
+
+def _normalize_execution_mode_name(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in RISK_LIMITS:
+        return normalized
+    return "live"
+
+
+def _get_section_overrides(
+    runtime: dict[str, Any],
+    *,
+    section: str,
+    decision_mode: str,
+    execution_mode: str | None = None,
+) -> dict[str, Any]:
+    # Start with flat/legacy structure as the base
+    result: dict[str, Any] = {}
+    legacy_section = runtime.get(section, {})
+    if isinstance(legacy_section, dict):
+        result = dict(legacy_section)
+
+    # Scoped profiles override flat when present and non-empty
+    profiles = runtime.get(SCOPED_PROFILES_KEY, {})
+    if execution_mode and isinstance(profiles, dict):
+        scoped_by_decision = profiles.get(_normalize_decision_mode_name(decision_mode), {})
+        if isinstance(scoped_by_decision, dict):
+            scoped_profile = scoped_by_decision.get(_normalize_execution_mode_name(execution_mode), {})
+            if isinstance(scoped_profile, dict):
+                scoped_section = scoped_profile.get(section)
+                if isinstance(scoped_section, dict) and scoped_section:
+                    return scoped_section
+    elif not execution_mode and result:
+        import logging
+        logging.getLogger(__name__).warning(
+            "_get_section_overrides: no execution_mode provided, "
+            "execution_mode-scoped profiles are ignored for section=%s",
+            section,
+        )
+
+    return result
+
+
+def _collect_overrides(raw_values: dict[str, Any], params: list[dict[str, Any]]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    for param in params:
+        key = param["key"]
+        if key not in raw_values:
+            continue
+        try:
+            if param["type"] == "float":
+                overrides[key] = float(raw_values[key])
+            elif param["type"] == "int":
+                overrides[key] = int(raw_values[key])
+            elif param["type"] == "bool":
+                overrides[key] = bool(raw_values[key])
+            elif param["type"] == "enum":
+                raw_value = str(raw_values[key]).strip().lower()
+                options = [str(option).strip().lower() for option in param.get("options", [])]
+                if raw_value in options:
+                    overrides[key] = raw_value
+        except (TypeError, ValueError):
+            pass
+    return overrides
+
+
+def build_scoped_trading_settings(
+    current_settings: dict[str, Any] | None,
+    *,
+    decision_mode: str,
+    execution_mode: str,
+    gating: dict[str, Any] | None = None,
+    risk_limits: dict[str, Any] | None = None,
+    sizing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    next_settings = dict(current_settings or {})
+    profiles = next_settings.get(SCOPED_PROFILES_KEY, {})
+    if not isinstance(profiles, dict):
+        profiles = {}
+
+    resolved_decision_mode = _normalize_decision_mode_name(decision_mode)
+    resolved_execution_mode = _normalize_execution_mode_name(execution_mode)
+
+    scoped_by_decision = profiles.get(resolved_decision_mode, {})
+    if not isinstance(scoped_by_decision, dict):
+        scoped_by_decision = {}
+
+    scoped_profile = scoped_by_decision.get(resolved_execution_mode, {})
+    if not isinstance(scoped_profile, dict):
+        scoped_profile = {}
+
+    scoped_profile["gating"] = dict(gating or {})
+    scoped_profile["risk_limits"] = dict(risk_limits or {})
+    scoped_profile["sizing"] = dict(sizing or {})
+    scoped_by_decision[resolved_execution_mode] = scoped_profile
+    profiles[resolved_decision_mode] = scoped_by_decision
+    next_settings[SCOPED_PROFILES_KEY] = profiles
+    return next_settings
+
+
+def get_effective_gating_policy(decision_mode: str, execution_mode: str | None = None) -> DecisionGatingPolicy:
+    """Resolve DecisionGatingPolicy: scoped DB overrides > legacy DB overrides > code defaults."""
+    resolved_mode = _normalize_decision_mode_name(decision_mode)
+    base = DECISION_MODES.get(resolved_mode, DECISION_MODES["balanced"])
     runtime = _get_runtime_settings()
 
-    gating_overrides = runtime.get("gating", {})
-    if not isinstance(gating_overrides, dict):
-        return base
-
-    # Build override dict from runtime settings
-    overrides: dict[str, Any] = {}
-    for param in GATING_PARAMS:
-        key = param["key"]
-        if key in gating_overrides:
-            try:
-                if param["type"] == "float":
-                    overrides[key] = float(gating_overrides[key])
-                elif param["type"] == "int":
-                    overrides[key] = int(gating_overrides[key])
-                elif param["type"] == "bool":
-                    overrides[key] = bool(gating_overrides[key])
-            except (TypeError, ValueError):
-                pass
-
+    gating_overrides = _get_section_overrides(
+        runtime,
+        section="gating",
+        decision_mode=resolved_mode,
+        execution_mode=execution_mode,
+    )
+    overrides = _collect_overrides(gating_overrides, GATING_PARAMS)
     if not overrides:
         return base
 
@@ -219,29 +441,30 @@ def get_effective_gating_policy(mode: str) -> DecisionGatingPolicy:
     return DecisionGatingPolicy(**base_dict)
 
 
-def get_effective_risk_limits(mode: str) -> RiskLimits:
-    """Resolve RiskLimits: DB overrides > code defaults for the given execution mode."""
-    base = RISK_LIMITS.get(mode, RISK_LIMITS["live"])
+def get_effective_risk_limits(execution_mode: str, decision_mode: str = "balanced") -> RiskLimits:
+    """Resolve RiskLimits: execution defaults > decision preset > scoped DB overrides > legacy DB overrides."""
+    resolved_mode = _normalize_execution_mode_name(execution_mode)
+    resolved_decision_mode = _normalize_decision_mode_name(decision_mode)
+    base = RISK_LIMITS.get(resolved_mode, RISK_LIMITS["live"])
+    decision_overrides = DECISION_MODE_RISK_PRESETS.get(
+        resolved_decision_mode,
+        DECISION_MODE_RISK_PRESETS["balanced"],
+    )
     runtime = _get_runtime_settings()
 
-    risk_overrides = runtime.get("risk_limits", {})
+    risk_overrides = _get_section_overrides(
+        runtime,
+        section="risk_limits",
+        decision_mode=resolved_decision_mode,
+        execution_mode=resolved_mode,
+    )
     if not isinstance(risk_overrides, dict):
-        return base
+        base_dict = asdict(base)
+        base_dict.update(decision_overrides)
+        return RiskLimits(**base_dict)
 
-    overrides: dict[str, Any] = {}
-    for param in RISK_PARAMS:
-        key = param["key"]
-        if key in risk_overrides:
-            try:
-                if param["type"] == "float":
-                    overrides[key] = float(risk_overrides[key])
-                elif param["type"] == "int":
-                    overrides[key] = int(risk_overrides[key])
-            except (TypeError, ValueError):
-                pass
-
-    if not overrides:
-        return base
+    overrides: dict[str, Any] = dict(decision_overrides)
+    overrides.update(_collect_overrides(risk_overrides, RISK_PARAMS))
 
     base_dict = asdict(base)
     base_dict.update(overrides)
@@ -249,26 +472,34 @@ def get_effective_risk_limits(mode: str) -> RiskLimits:
     return RiskLimits(**base_dict)
 
 
-def get_effective_sizing() -> dict[str, float]:
-    """Resolve trade sizing ATR multipliers: DB overrides > code defaults."""
+def get_effective_sizing(decision_mode: str = "balanced", execution_mode: str | None = None) -> dict[str, float]:
+    """Resolve trade sizing: defaults > decision preset > scoped DB overrides > legacy DB overrides."""
     from app.services.agentscope.constants import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER
 
+    resolved_decision_mode = _normalize_decision_mode_name(decision_mode)
     defaults: dict[str, float] = {
         "sl_atr_multiplier": SL_ATR_MULTIPLIER,
         "tp_atr_multiplier": TP_ATR_MULTIPLIER,
         "min_sl_distance_pct": 0.05,
     }
+    defaults.update(
+        DECISION_MODE_SIZING_PRESETS.get(
+            resolved_decision_mode,
+            DECISION_MODE_SIZING_PRESETS["balanced"],
+        )
+    )
     runtime = _get_runtime_settings()
-    sizing_overrides = runtime.get("sizing", {})
+    sizing_overrides = _get_section_overrides(
+        runtime,
+        section="sizing",
+        decision_mode=resolved_decision_mode,
+        execution_mode=execution_mode,
+    )
     if not isinstance(sizing_overrides, dict):
         return defaults
 
-    for key in defaults:
-        if key in sizing_overrides:
-            try:
-                defaults[key] = float(sizing_overrides[key])
-            except (TypeError, ValueError):
-                pass
+    for key, value in _collect_overrides(sizing_overrides, SIZING_PARAMS).items():
+        defaults[key] = float(value)
 
     return defaults
 
@@ -309,25 +540,25 @@ def _query_max_version(db: Any) -> int:
 
 def get_current_values(decision_mode: str, execution_mode: str) -> dict[str, dict[str, Any]]:
     """Return current effective values for all configurable parameters."""
-    gating = get_effective_gating_policy(decision_mode)
-    limits = get_effective_risk_limits(execution_mode)
-    sizing = get_effective_sizing()
+    gating = get_effective_gating_policy(decision_mode, execution_mode)
+    limits = get_effective_risk_limits(execution_mode, decision_mode)
+    sizing = get_effective_sizing(decision_mode, execution_mode)
 
     return {
-        "gating": {
-            "min_combined_score": gating.min_combined_score,
-            "min_confidence": gating.min_confidence,
-            "min_aligned_sources": gating.min_aligned_sources,
-            "allow_technical_single_source_override": gating.allow_technical_single_source_override,
-        },
+        "gating": asdict(gating),
         "risk_limits": {
             "max_risk_per_trade_pct": limits.max_risk_per_trade_pct,
+            "enforce_max_risk_per_trade": limits.enforce_max_risk_per_trade,
+            "max_risk_per_trade_behavior": limits.max_risk_per_trade_behavior,
+            "log_risk_adjustments": limits.log_risk_adjustments,
             "max_daily_loss_pct": limits.max_daily_loss_pct,
             "max_open_risk_pct": limits.max_open_risk_pct,
             "max_positions": limits.max_positions,
             "max_positions_per_symbol": limits.max_positions_per_symbol,
             "min_free_margin_pct": limits.min_free_margin_pct,
-            "max_currency_exposure_pct": limits.max_currency_exposure_pct,
+            "max_currency_notional_exposure_pct_warn": limits.max_currency_notional_exposure_pct_warn,
+            "max_currency_notional_exposure_pct_block": limits.max_currency_notional_exposure_pct_block,
+            "max_currency_open_risk_pct": limits.max_currency_open_risk_pct,
             "max_weekly_loss_pct": limits.max_weekly_loss_pct,
         },
         "sizing": sizing,

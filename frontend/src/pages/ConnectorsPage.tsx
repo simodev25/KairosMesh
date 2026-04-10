@@ -4,6 +4,7 @@ import { CRYPTO_PAIRS, FOREX_PAIRS, TRADEABLE_PAIRS } from '../constants/markets
 import { useAuth } from '../hooks/useAuth';
 import type {
   ConnectorConfig,
+  ExecutionMode,
   LlmModelUsage,
   LlmSummary,
   MarketSymbolGroup,
@@ -103,6 +104,7 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
 
 type LlmProvider = 'ollama' | 'openai' | 'mistral';
 type DecisionMode = 'conservative' | 'balanced' | 'permissive';
+const EXECUTION_MODE_OPTIONS: ExecutionMode[] = ['simulation', 'paper', 'live'];
 
 const LLM_PROVIDERS: LlmProvider[] = ['ollama', 'openai', 'mistral'];
 const DECISION_MODE_OPTIONS: Array<{ value: DecisionMode; label: string; description: string }> = [
@@ -135,6 +137,13 @@ function normalizeDecisionMode(value: unknown): DecisionMode {
   if (text === 'balanced') return 'balanced';
   if (text === 'permissive') return 'permissive';
   return 'conservative';
+}
+
+function normalizeExecutionMode(value: unknown): ExecutionMode {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (text === 'paper') return 'paper';
+  if (text === 'live') return 'live';
+  return 'simulation';
 }
 
 function normalizeBooleanSetting(value: unknown, fallback = false): boolean {
@@ -360,6 +369,7 @@ export function ConnectorsPage() {
   const [defaultLlmModel, setDefaultLlmModel] = useState('deepseek-v3.2');
   const [llmProvider, setLlmProvider] = useState<LlmProvider>('ollama');
   const [decisionMode, setDecisionMode] = useState<DecisionMode>('conservative');
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('simulation');
   const [agentModels, setAgentModels] = useState<Record<string, string>>(
     Object.fromEntries(MODEL_EDIT_AGENTS.map((agent) => [agent, ''])),
   );
@@ -413,7 +423,16 @@ export function ConnectorsPage() {
   const [savingCache, setSavingCache] = useState(false);
 
   // ── Trading config (decision gating + risk limits + trade sizing) ──
-  type TradingParamCatalog = Record<string, Array<{ key: string; label: string; description: string; type: string; min?: number; max?: number; step?: number }>>;
+  type TradingParamCatalog = Record<string, Array<{
+    key: string;
+    label: string;
+    description: string;
+    type: string;
+    min?: number;
+    max?: number;
+    step?: number;
+    options?: string[];
+  }>>;
   type TradingParamValues = Record<string, Record<string, unknown>>;
   const [tradingCatalog, setTradingCatalog] = useState<TradingParamCatalog>({});
   const [tradingValues, setTradingValues] = useState<TradingParamValues>({});
@@ -450,7 +469,7 @@ export function ConnectorsPage() {
   const loadTradingConfig = async () => {
     if (!token) return;
     try {
-      const resp = await api.getTradingConfig(token, decisionMode, 'simulation');
+      const resp = await api.getTradingConfig(token, decisionMode, executionMode);
       setTradingCatalog(resp.catalog as TradingParamCatalog);
       setTradingValues(resp.values as TradingParamValues);
       // Initialize edits from current values
@@ -464,21 +483,19 @@ export function ConnectorsPage() {
     e.preventDefault();
     if (!token) return;
 
-    const tradingConn = connectors.find((c) => c.connector_name === 'trading');
-    const existingSettings = (tradingConn?.settings ?? {}) as Record<string, unknown>;
-
     setSavingTrading(true);
     setError(null);
     try {
-      await api.updateConnector(token, 'trading', {
-        enabled: tradingConn?.enabled ?? true,
-        settings: {
-          ...existingSettings,
+      await api.updateTradingConfig(
+        token,
+        {
           gating: tradingEdits.gating ?? {},
           risk_limits: tradingEdits.risk_limits ?? {},
           sizing: tradingEdits.sizing ?? {},
         },
-      });
+        decisionMode,
+        executionMode,
+      );
       await loadAll();
       await loadTradingConfig();
       await loadTradingVersions();
@@ -741,16 +758,22 @@ export function ConnectorsPage() {
     }
   };
 
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+
   useEffect(() => {
-    void loadAll();
-    void loadTradingConfig();
+    if (!token) return;
+    (async () => {
+      await loadAll();
+      setInitialLoadDone(true);
+    })();
     void loadTradingVersions();
   }, [token]);
 
-  // Reload trading params when decision mode changes
+  // Load trading params AFTER loadAll resolves decisionMode
   useEffect(() => {
+    if (!initialLoadDone) return;
     void loadTradingConfig();
-  }, [decisionMode]);
+  }, [initialLoadDone, decisionMode, executionMode]);
 
   const activePromptByAgent = useMemo(() => {
     const map = new Map<string, PromptTemplate>();
@@ -1578,10 +1601,24 @@ export function ConnectorsPage() {
 
             <ExpansionPanelAlt title="TRADING_PARAMETERS" defaultOpen={false}>
               <p className="model-source" style={{ marginBottom: 12 }}>
-                Les valeurs ci-dessous sont les parametres effectifs pour le mode <strong>{decisionMode}</strong>.
-                Changer le Decision Mode ci-dessus recharge les valeurs par defaut du mode selectionne.
+                Les valeurs ci-dessous sont les parametres effectifs pour le mode de decision <strong>{decisionMode}</strong>
+                {' '}et le mode d'execution <strong>{executionMode}</strong>.
+                Le Decision Mode influence maintenant le gating, les risk limits et le sizing.
+                Changer le Decision Mode ou le Execution Mode recharge les valeurs effectives du profil selectionne.
                 Vos overrides sont sauvegardes separement et s'appliquent par-dessus les defaults.
               </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ marginBottom: 12 }}>
+                <label>
+                  Execution Mode
+                  <select value={executionMode} onChange={(e) => setExecutionMode(normalizeExecutionMode(e.target.value))}>
+                    {EXECUTION_MODE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <form className="flex flex-col gap-4" onSubmit={saveTradingConfig}>
                 {Object.entries(tradingCatalog).map(([section, params]) => (
                   <div key={section}>
@@ -1594,6 +1631,9 @@ export function ConnectorsPage() {
                         return (
                           <label key={param.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                             <span style={{ fontWeight: 500 }}>{param.label}</span>
+                            <span className="model-source" style={{ fontSize: 10, fontFamily: 'var(--font-mono)', opacity: 0.85 }}>
+                              {param.key}
+                            </span>
                             <span className="model-source" style={{ fontSize: 11, lineHeight: 1.3, marginBottom: 4 }}>{param.description}</span>
                             {param.type === 'bool' ? (
                               <input
@@ -1602,6 +1642,17 @@ export function ConnectorsPage() {
                                 checked={Boolean(currentVal)}
                                 onChange={(e) => updateTradingParam(section, param.key, e.target.checked)}
                               />
+                            ) : param.type === 'enum' ? (
+                              <select
+                                value={typeof currentVal === 'string' ? currentVal : String(currentVal || '')}
+                                onChange={(e) => updateTradingParam(section, param.key, e.target.value)}
+                              >
+                                {(param.options ?? []).map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
                             ) : (
                               <input
                                 type="number"
@@ -1619,7 +1670,7 @@ export function ConnectorsPage() {
                   </div>
                 ))}
                 {Object.keys(tradingCatalog).length > 0 && (
-                  <button className="btn-primary" disabled={savingTrading}>
+                  <button type="submit" className="btn-primary" disabled={savingTrading}>
                     {savingTrading ? 'Saving...' : 'Save trading parameters'}
                   </button>
                 )}

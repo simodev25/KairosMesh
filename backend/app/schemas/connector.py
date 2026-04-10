@@ -6,6 +6,12 @@ class ConnectorConfigUpdate(BaseModel):
     settings: dict = Field(default_factory=dict)
 
 
+class TradingConfigScopedUpdate(BaseModel):
+    gating: dict = Field(default_factory=dict)
+    risk_limits: dict = Field(default_factory=dict)
+    sizing: dict = Field(default_factory=dict)
+
+
 class MarketSymbolGroup(BaseModel):
     name: str
     symbols: list[str] = Field(default_factory=list)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.observability.metrics import risk_evaluation_total
@@ -39,10 +39,13 @@ class RiskAssessment:
     accepted: bool
     reasons: list[str]
     suggested_volume: float
+    effective_risk_percent: float = 0.0
     pip_size: float = 0.0001
     pip_value_per_lot: float = 10.0
     margin_required: float = 0.0
     asset_class: str = 'unknown'
+    breached_limits: list[dict[str, Any]] = field(default_factory=list)
+    primary_rejection_reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +215,13 @@ class RiskEngine:
             return volume
         return round(math.floor(volume / step) * step, 8)
 
+    @staticmethod
+    def _normalize_risk_limit_behavior(value: str | None) -> str:
+        behavior = str(value or "").strip().lower()
+        if behavior in {"clamp", "reject", "warn_only"}:
+            return behavior
+        return "warn_only"
+
     def evaluate(
         self,
         mode: str,
@@ -232,6 +242,7 @@ class RiskEngine:
                 accepted=True,
                 reasons=['No trade requested (HOLD).'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
@@ -241,6 +252,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid price: {price}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
         if not (isinstance(equity, (int, float)) and math.isfinite(equity) and equity > 0):
@@ -248,6 +260,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid equity: {equity}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
         if not (isinstance(risk_percent, (int, float)) and math.isfinite(risk_percent) and risk_percent > 0):
@@ -255,6 +268,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid risk_percent: {risk_percent}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
@@ -263,6 +277,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=['Stop loss is mandatory.'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
         if not (isinstance(stop_loss, (int, float)) and math.isfinite(stop_loss) and stop_loss > 0):
@@ -270,6 +285,7 @@ class RiskEngine:
                 accepted=False,
                 reasons=[f'Invalid stop_loss: {stop_loss}'],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
@@ -281,7 +297,12 @@ class RiskEngine:
         if stop_distance <= 0:
             reasons.append('Stop loss distance must be > 0.')
 
-        min_sl_pct = 0.0005  # 0.05% minimum distance
+        try:
+            from app.services.config.trading_config import get_effective_sizing
+            _sizing = get_effective_sizing()
+            min_sl_pct = _sizing.get("min_sl_distance_pct", 0.05) / 100.0
+        except Exception:
+            min_sl_pct = 0.0005  # 0.05% minimum distance
         if price > 0 and stop_distance / price < min_sl_pct:
             reasons.append('Stop loss is too tight for current market volatility.')
 
@@ -318,6 +339,7 @@ class RiskEngine:
             accepted=accepted,
             reasons=reasons,
             suggested_volume=round(suggested_volume, 4),
+            effective_risk_percent=risk_percent,
             pip_size=pip_size,
             pip_value_per_lot=pip_value,
             margin_required=round(margin_required, 2),
@@ -405,7 +427,13 @@ class RiskEngine:
 
         if new_stop_loss is not None and new_stop_loss > 0:
             sl_distance = abs(current_price - new_stop_loss)
-            if current_price > 0 and sl_distance / current_price < 0.0005:
+            try:
+                from app.services.config.trading_config import get_effective_sizing
+                _sizing = get_effective_sizing()
+                _min_sl_pct = _sizing.get("min_sl_distance_pct", 0.05) / 100.0
+            except Exception:
+                _min_sl_pct = 0.0005
+            if current_price > 0 and sl_distance / current_price < _min_sl_pct:
                 reasons.append('Proposed stop loss is too tight.')
             # Verify SL is on correct side
             if side == 'BUY' and new_stop_loss >= current_price:
@@ -440,136 +468,252 @@ class RiskEngine:
     ) -> RiskAssessment:
         """Evaluate a trade proposal against portfolio state and risk limits.
 
-        Checks are sequential — rejects on first failure:
-        1. Daily loss limit
-        2. Risk budget (open risk + new trade risk)
-        3. Max positions
-        4. Max positions per symbol
-        5. Free margin
-        6. Trade-level checks (existing evaluate()) with real equity
+        Rollout semantics:
+        - `currency_notional_exposure_pct` is concentration, not stop-based risk.
+        - `currency_open_risk_pct` is observability-only in phase 1.
+        - legacy rejection behaviour is preserved through the dedicated block
+          threshold `max_currency_notional_exposure_pct_block`.
         """
         ac = self._resolve_asset_class(proposed_trade.pair, proposed_trade.asset_class)
+        breached_limits: list[dict[str, Any]] = []
+        reasons: list[str] = []
+
+        def _add_breach(
+            *,
+            metric: str,
+            value: float | int | str,
+            limit: float | int | str,
+            message: str,
+            blocking: bool,
+            metric_type: str,
+        ) -> None:
+            breached_limits.append(
+                {
+                    "metric": metric,
+                    "value": value,
+                    "limit": limit,
+                    "blocking": blocking,
+                    "metric_type": metric_type,
+                    "message": message,
+                }
+            )
+            prefix = "REJECT" if blocking else "WARN"
+            reasons.append(f"{prefix}: {message}")
 
         if proposed_trade.decision == "HOLD":
             return RiskAssessment(
                 accepted=True,
                 reasons=["No trade requested (HOLD)."],
                 suggested_volume=0.0,
+                effective_risk_percent=0.0,
                 asset_class=ac,
             )
 
-        # Check 1: Daily loss limit
-        if portfolio.daily_drawdown_pct >= limits.max_daily_loss_pct:
-            return RiskAssessment(
-                accepted=False,
-                reasons=[
-                    f"REJECT: daily loss limit reached "
-                    f"({portfolio.daily_drawdown_pct:.1f}% >= {limits.max_daily_loss_pct:.1f}%)"
-                ],
-                suggested_volume=0.0,
-                asset_class=ac,
-            )
-
-        # Check 2: Risk budget
+        equity = portfolio.equity if portfolio.equity > 0 else 10000.0
         trade_risk_pct = proposed_trade.risk_percent
+        free_margin_pct = (portfolio.free_margin / equity) * 100 if equity > 0 else 0.0
+        requested_trade_risk_pct = trade_risk_pct
+        risk_limit_behavior = self._normalize_risk_limit_behavior(
+            limits.max_risk_per_trade_behavior,
+        )
+
+        if limits.enforce_max_risk_per_trade and trade_risk_pct > limits.max_risk_per_trade_pct:
+            if risk_limit_behavior == "reject":
+                _add_breach(
+                    metric="max_risk_per_trade_pct",
+                    value=round(trade_risk_pct, 2),
+                    limit=limits.max_risk_per_trade_pct,
+                    message=(
+                        f"requested trade risk {trade_risk_pct:.1f}% exceeds per-trade limit "
+                        f"{limits.max_risk_per_trade_pct:.1f}%"
+                    ),
+                    blocking=True,
+                    metric_type="stop_based_risk",
+                )
+            elif risk_limit_behavior == "clamp":
+                trade_risk_pct = limits.max_risk_per_trade_pct
+                if limits.log_risk_adjustments:
+                    reasons.append(
+                        f"Risk percent clamped from {requested_trade_risk_pct:.1f}% "
+                        f"to {trade_risk_pct:.1f}%."
+                    )
+            elif limits.log_risk_adjustments:
+                reasons.append(
+                    f"WARN: requested trade risk {requested_trade_risk_pct:.1f}% exceeds configured limit "
+                    f"{limits.max_risk_per_trade_pct:.1f}% but warn_only is active."
+                )
+
+        # Check 1: Stress test remains a hard block.
+        try:
+            from app.services.risk.stress_test import SCENARIOS, run_stress_test
+
+            selected_scenarios = [
+                scenario
+                for scenario in SCENARIOS
+                if scenario.name in set(limits.stress_test_survival_required)
+            ] or None
+
+            stress_report = run_stress_test(
+                positions=portfolio.open_positions,
+                equity=equity,
+                used_margin=portfolio.used_margin,
+                scenarios=selected_scenarios,
+            )
+            if stress_report.recommendation == "critical":
+                _add_breach(
+                    metric="stress_test_worst_case_pct",
+                    value=stress_report.worst_case_pnl_pct,
+                    limit="recommendation=critical",
+                    message=(
+                        f"stress_test_worst_case_pct {stress_report.worst_case_pnl_pct:.1f}% "
+                        f"with recommendation={stress_report.recommendation}"
+                    ),
+                    blocking=True,
+                    metric_type="stress_test_risk",
+                )
+        except Exception as exc:
+            logger.warning("Stress test check failed (non-blocking): %s", exc)
+
+        # Existing hard protections stay in place.
+        if portfolio.daily_drawdown_pct >= limits.max_daily_loss_pct:
+            _add_breach(
+                metric="daily_drawdown_pct",
+                value=round(portfolio.daily_drawdown_pct, 2),
+                limit=limits.max_daily_loss_pct,
+                message=(
+                    f"daily loss limit reached "
+                    f"({portfolio.daily_drawdown_pct:.1f}% >= {limits.max_daily_loss_pct:.1f}%)"
+                ),
+                blocking=True,
+                metric_type="portfolio_open_risk",
+            )
+
         if portfolio.open_risk_total_pct + trade_risk_pct > limits.max_open_risk_pct:
-            return RiskAssessment(
-                accepted=False,
-                reasons=[
-                    f"REJECT: risk budget exceeded "
+            _add_breach(
+                metric="portfolio_open_risk_pct",
+                value=round(portfolio.open_risk_total_pct + trade_risk_pct, 2),
+                limit=limits.max_open_risk_pct,
+                message=(
+                    f"risk budget exceeded "
                     f"({portfolio.open_risk_total_pct:.1f}% + {trade_risk_pct:.1f}% "
                     f"> {limits.max_open_risk_pct:.1f}%)"
-                ],
-                suggested_volume=0.0,
-                asset_class=ac,
+                ),
+                blocking=True,
+                metric_type="stop_based_risk",
             )
 
-        # Check 3: Max positions
         if portfolio.open_position_count >= limits.max_positions:
-            return RiskAssessment(
-                accepted=False,
-                reasons=[
-                    f"REJECT: max positions reached "
-                    f"({portfolio.open_position_count}/{limits.max_positions})"
-                ],
-                suggested_volume=0.0,
-                asset_class=ac,
+            _add_breach(
+                metric="max_positions",
+                value=portfolio.open_position_count,
+                limit=limits.max_positions,
+                message=f"max positions reached ({portfolio.open_position_count}/{limits.max_positions})",
+                blocking=True,
+                metric_type="position_limit",
             )
 
-        # Check 4: Max positions per symbol
         symbol = proposed_trade.pair or ""
         positions_on_symbol = sum(
             1 for p in portfolio.open_positions if p.symbol == symbol
         )
         if positions_on_symbol >= limits.max_positions_per_symbol:
-            return RiskAssessment(
-                accepted=False,
-                reasons=[
-                    f"REJECT: max positions on {symbol} reached "
+            _add_breach(
+                metric="max_positions_per_symbol",
+                value=positions_on_symbol,
+                limit=limits.max_positions_per_symbol,
+                message=(
+                    f"max positions on {symbol} reached "
                     f"({positions_on_symbol}/{limits.max_positions_per_symbol})"
-                ],
-                suggested_volume=0.0,
-                asset_class=ac,
+                ),
+                blocking=True,
+                metric_type="position_limit",
             )
 
-        # Check 5: Free margin
-        equity = portfolio.equity if portfolio.equity > 0 else 10000.0
-        free_margin_pct = (portfolio.free_margin / equity) * 100 if equity > 0 else 0.0
         if free_margin_pct < limits.min_free_margin_pct:
-            return RiskAssessment(
-                accepted=False,
-                reasons=[
-                    f"REJECT: insufficient free margin "
+            _add_breach(
+                metric="free_margin_pct",
+                value=round(free_margin_pct, 2),
+                limit=limits.min_free_margin_pct,
+                message=(
+                    f"insufficient free margin "
                     f"({free_margin_pct:.1f}% < {limits.min_free_margin_pct:.1f}%)"
-                ],
-                suggested_volume=0.0,
-                asset_class=ac,
+                ),
+                blocking=True,
+                metric_type="margin_risk",
             )
 
-        # Check 7: Weekly loss limit (Tier 2)
         if portfolio.weekly_drawdown_pct >= limits.max_weekly_loss_pct:
-            return RiskAssessment(
-                accepted=False,
-                reasons=[
-                    f"REJECT: weekly loss limit reached "
+            _add_breach(
+                metric="weekly_drawdown_pct",
+                value=round(portfolio.weekly_drawdown_pct, 2),
+                limit=limits.max_weekly_loss_pct,
+                message=(
+                    f"weekly loss limit reached "
                     f"({portfolio.weekly_drawdown_pct:.1f}% >= {limits.max_weekly_loss_pct:.1f}%)"
-                ],
-                suggested_volume=0.0,
-                asset_class=ac,
+                ),
+                blocking=True,
+                metric_type="portfolio_open_risk",
             )
 
-        # Check 8: Currency exposure (Tier 2)
         try:
             from app.services.risk.currency_exposure import compute_currency_exposure
             currency_report = compute_currency_exposure(portfolio.open_positions, equity)
             for ce in currency_report.exposures.values():
-                if ce.exposure_pct >= limits.max_currency_exposure_pct:
-                    return RiskAssessment(
-                        accepted=False,
-                        reasons=[
-                            f"REJECT: {ce.currency} exposure {ce.exposure_pct:.1f}% "
-                            f">= limit {limits.max_currency_exposure_pct:.1f}% "
-                            f"(positions: {', '.join(ce.contributing_positions)})"
-                        ],
-                        suggested_volume=0.0,
-                        asset_class=ac,
+                if ce.currency_notional_exposure_pct >= limits.max_currency_notional_exposure_pct_block:
+                    _add_breach(
+                        metric=f"currency_notional_exposure_pct[{ce.currency}]",
+                        value=ce.currency_notional_exposure_pct,
+                        limit=limits.max_currency_notional_exposure_pct_block,
+                        message=(
+                            f"currency_notional_exposure_pct[{ce.currency}] "
+                            f"{ce.currency_notional_exposure_pct:.1f}% > limit "
+                            f"{limits.max_currency_notional_exposure_pct_block:.1f}%"
+                        ),
+                        blocking=True,
+                        metric_type="notional_concentration",
+                    )
+                elif ce.currency_notional_exposure_pct >= limits.max_currency_notional_exposure_pct_warn:
+                    _add_breach(
+                        metric=f"currency_notional_exposure_pct[{ce.currency}]",
+                        value=ce.currency_notional_exposure_pct,
+                        limit=limits.max_currency_notional_exposure_pct_warn,
+                        message=(
+                            f"currency_notional_exposure_pct[{ce.currency}] "
+                            f"{ce.currency_notional_exposure_pct:.1f}% > warn "
+                            f"{limits.max_currency_notional_exposure_pct_warn:.1f}%"
+                        ),
+                        blocking=False,
+                        metric_type="notional_concentration",
                     )
 
-            # Check 9: Gross exposure (Tier 2)
-            if currency_report.total_gross_exposure_pct >= limits.max_gross_exposure_pct:
-                return RiskAssessment(
-                    accepted=False,
-                    reasons=[
-                        f"REJECT: gross exposure {currency_report.total_gross_exposure_pct:.1f}% "
+                if ce.currency_open_risk_pct >= limits.max_currency_open_risk_pct:
+                    _add_breach(
+                        metric=f"currency_open_risk_pct[{ce.currency}]",
+                        value=ce.currency_open_risk_pct,
+                        limit=limits.max_currency_open_risk_pct,
+                        message=(
+                            f"currency_open_risk_pct[{ce.currency}] {ce.currency_open_risk_pct:.2f}% > limit "
+                            f"{limits.max_currency_open_risk_pct:.2f}% (observability-only during rollout)"
+                        ),
+                        blocking=False,
+                        metric_type="stop_based_risk",
+                    )
+
+            if currency_report.total_gross_notional_exposure_pct >= limits.max_gross_exposure_pct:
+                _add_breach(
+                    metric="total_gross_notional_exposure_pct",
+                    value=currency_report.total_gross_notional_exposure_pct,
+                    limit=limits.max_gross_exposure_pct,
+                    message=(
+                        f"total_gross_notional_exposure_pct {currency_report.total_gross_notional_exposure_pct:.1f}% "
                         f">= limit {limits.max_gross_exposure_pct:.1f}%"
-                    ],
-                    suggested_volume=0.0,
-                    asset_class=ac,
+                    ),
+                    blocking=False,
+                    metric_type="notional_concentration",
                 )
         except Exception as exc:
             logger.warning("Currency exposure check failed (non-blocking): %s", exc)
 
-        # Check 10: Correlation risk (Tier 2)
         try:
             from app.services.risk.correlation_exposure import compute_correlation_exposure
             corr_report = compute_correlation_exposure(
@@ -578,24 +722,41 @@ class RiskEngine:
                 limits.max_correlation_risk_multiplier,
             )
             if corr_report.should_reduce:
-                return RiskAssessment(
-                    accepted=False,
-                    reasons=[
-                        f"REJECT: correlation risk multiplier {corr_report.effective_risk_multiplier:.1f}x "
+                _add_breach(
+                    metric="correlation_effective_risk_multiplier",
+                    value=round(corr_report.effective_risk_multiplier, 2),
+                    limit=limits.max_correlation_risk_multiplier,
+                    message=(
+                        f"correlation risk multiplier {corr_report.effective_risk_multiplier:.1f}x "
                         f">= limit {limits.max_correlation_risk_multiplier:.1f}x "
                         f"(adjusted risk: {corr_report.adjusted_open_risk_pct:.1f}%)"
-                    ],
-                    suggested_volume=0.0,
-                    asset_class=ac,
+                    ),
+                    blocking=True,
+                    metric_type="correlation_risk",
                 )
         except Exception as exc:
             logger.warning("Correlation exposure check failed (non-blocking): %s", exc)
 
-        # Check 6: Trade-level checks (existing logic) with REAL equity
+        primary_rejection_reason = next(
+            (item["metric"] for item in breached_limits if item["blocking"]),
+            None,
+        )
+        if primary_rejection_reason is not None:
+            return RiskAssessment(
+                accepted=False,
+                reasons=reasons,
+                suggested_volume=0.0,
+                effective_risk_percent=trade_risk_pct,
+                asset_class=ac,
+                breached_limits=breached_limits,
+                primary_rejection_reason=primary_rejection_reason,
+            )
+
+        # Trade-level checks with real equity.
         assessment = self.evaluate(
             mode=proposed_trade.mode,
             decision=proposed_trade.decision,
-            risk_percent=proposed_trade.risk_percent,
+            risk_percent=trade_risk_pct,
             price=proposed_trade.entry_price,
             stop_loss=proposed_trade.stop_loss,
             pair=proposed_trade.pair,
@@ -603,6 +764,8 @@ class RiskEngine:
             asset_class=proposed_trade.asset_class,
             leverage=portfolio.leverage,
         )
+        assessment.breached_limits = breached_limits
+        assessment.primary_rejection_reason = None
 
         # Volume adjustment: if near budget limit (>80%), reduce proportionally
         if assessment.accepted:
@@ -620,5 +783,10 @@ class RiskEngine:
                     f"Volume reduced to {assessment.suggested_volume} "
                     f"(risk budget {budget_usage:.0%} utilized)"
                 )
+            if reasons:
+                assessment.reasons.extend(reasons)
+        else:
+            assessment.breached_limits = breached_limits
+            assessment.primary_rejection_reason = "trade_level_checks"
 
         return assessment

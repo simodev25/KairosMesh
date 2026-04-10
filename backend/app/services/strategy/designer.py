@@ -166,6 +166,7 @@ async def run_strategy_designer(
     toolkit = await build_toolkit(
         "strategy-designer", ohlc=ohlc, news=news,
         skills=agent_skills, snapshot=snapshot,
+        execution_mode="simulation",
     )
 
     # Resolve prompt: DB first, fallback to DEFAULT_PROMPTS
