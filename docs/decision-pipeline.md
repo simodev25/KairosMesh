@@ -19,7 +19,9 @@ Phase 4: Trader decision → risk validation → preflight → execution
 
 ## Phase 1: Score and confidence aggregation
 
-Each Phase 1 agent produces a `score` (typically -1.0 to +1.0) and `confidence` (0.0 to 1.0).
+Each Phase 1 agent produces structured qualitative analysis — bias direction, signal strength, and similar fields (e.g., `structural_bias`, `local_momentum`). The Pydantic schemas (`TechnicalAnalysisResult`, `NewsAnalysisResult`, `MarketContextResult`) do **not** include `score` or `confidence` as schema-validated fields.
+
+Each agent's response may include a `metadata.confidence` value (0.0–1.0). This field is not schema-validated but is extracted and used in the gating aggregation. When absent from the LLM's JSON response, the confidence for that agent defaults to `0.0`.
 
 **Confidence aggregation** (live decision loop):
 
@@ -28,7 +30,7 @@ Each Phase 1 agent produces a `score` (typically -1.0 to +1.0) and `confidence` 
 _avg_conf = sum(_confs) / len(_confs) if _confs else 0.0
 ```
 
-Confidence is a **simple unweighted average** of the three Phase 1 agent confidence values. No per-agent weighting is applied in the live path.
+Confidence is a **simple unweighted average** of the three Phase 1 agent `metadata.confidence` values. No per-agent weighting is applied in the live path.
 
 **Score synthesis**: In LLM mode, the trader agent receives all three Phase 1 analyses as context and synthesizes its own directional assessment. There is no deterministic weighted formula applied to scores in the live decision loop.
 
@@ -107,7 +109,7 @@ If trader-agent produces a BUY/SELL decision but is missing entry, stop-loss, or
 ## What happens with a HOLD decision
 
 If the trader decides HOLD:
-- Risk manager is skipped entirely
+- Risk manager LLM is bypassed — a synthetic stub response is recorded for the step (`accepted=false`, `reasons=["HOLD decision"]`). No position sizing or portfolio risk check is performed.
 - Execution manager is skipped
 - Run completes as `completed` with no order created
 - The HOLD reasoning is stored in the run trace
