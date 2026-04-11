@@ -88,9 +88,9 @@ export function GovernanceSettingsPanel({ settings, saving, onUpdate }: Props) {
               execution_mode: settings.execution_mode === 'auto' ? 'confirmation' : 'auto',
             })}
             disabled={saving}
-            className={`relative w-10 h-5 rounded-full transition-colors ${settings.execution_mode === 'auto' ? 'bg-success' : 'bg-surface-raised border border-border'}`}
+            className={`relative w-10 h-5 rounded-full overflow-hidden transition-colors ${settings.execution_mode === 'auto' ? 'bg-success' : 'bg-surface-raised border border-border'}`}
           >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.execution_mode === 'auto' ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.execution_mode === 'auto' ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
           </button>
           <span className={`text-[10px] font-bold tracking-widest ${settings.execution_mode === 'auto' ? 'text-success' : 'text-text-dim'}`}>
             AUTO
