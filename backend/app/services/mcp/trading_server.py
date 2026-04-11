@@ -1194,7 +1194,7 @@ def technical_scoring(
         for p in patterns
     )
     divergence_score = sum(DIVERGENCE_WEIGHT * (1 if d.get("type") == "bullish" else -1) for d in divergences)
-    multi_tf_score = multi_tf_alignment * MULTI_TF_WEIGHT
+    multi_tf_score = (multi_tf_alignment or 0.0) * MULTI_TF_WEIGHT
     level_score = (support_proximity - resistance_proximity) * LEVEL_WEIGHT
 
     raw_score = structure_score + momentum_score + pattern_score + divergence_score + multi_tf_score + level_score
