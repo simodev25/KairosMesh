@@ -52,6 +52,7 @@ services:
     volumes:
       - ./backend/debug-traces:/app/debug-traces
       - ./backend/debug-strategy:/app/debug-strategy
+      - ./backend/debug-governance:/app/debug-governance
     command: >
       sh -c "mkdir -p /tmp/prometheus-backend && rm -rf /tmp/prometheus-backend/* &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000"
@@ -81,6 +82,7 @@ services:
     volumes:
       - ./backend/debug-traces:/app/debug-traces
       - ./backend/debug-strategy:/app/debug-strategy
+      - ./backend/debug-governance:/app/debug-governance
     expose:
       - '${PROMETHEUS_WORKER_PORT:-9101}'
     command: >
