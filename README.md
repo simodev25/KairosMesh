@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A governed multi-agent trading system that orchestrates 8 specialized LLM agents through a structured research and decision workflow. Paper-trading mode is the default and safe starting point. Live execution requires explicit configuration.
+A governed multi-agent trading system that orchestrates 8 specialized agents through a structured research and decision workflow. Simulation mode is the default — no broker connection required to start. Live execution requires explicit configuration.
 
 ---
 
@@ -33,10 +33,10 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 
 | Area | Status |
 |------|--------|
-| Paper trading (MetaAPI paper account) | Implemented, default |
-| Simulation mode (DB only, no broker call) | Implemented |
+| Paper trading (MetaAPI paper account) | Implemented; requires `METAAPI_TOKEN` and `METAAPI_ACCOUNT_ID` |
+| Simulation mode (DB only, no broker call) | Implemented — default when no mode is specified |
 | Live trading | Implemented but off by default; requires `ALLOW_LIVE_TRADING=true` and `TRADER_OPERATOR` role |
-| 8-agent pipeline | Fully implemented |
+| 8-agent pipeline | Implemented |
 | Debate phase | Conditional — only runs if all 3 debate agents have LLM enabled |
 | Memory / learning loop | Not implemented — each run is stateless |
 | Strategy monitoring (auto-run on signal) | Implemented via Celery Beat |
@@ -70,8 +70,8 @@ LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Py
 
 ## Agent pipeline
 
-| # | Agent | Role | Output advisory? |
-|---|-------|------|-----------------|
+| # | Agent | Role | Authority |
+|---|-------|------|-----------|
 | 1 | Technical Analyst | RSI, MACD, EMA, ATR, patterns, divergence, S/R | Advisory |
 | 2 | News Analyst | Sentiment scoring, relevance filtering | Advisory |
 | 3 | Market Context | Regime detection, session, macro | Advisory |
@@ -156,6 +156,7 @@ infra/
 
 | Document | Description |
 |----------|-------------|
+| [UI Guide](docs/ui-guide.md) | Page-by-page walkthrough of the dashboard (with screenshots) |
 | [Getting Started](docs/getting-started.md) | Prerequisites, install, first run |
 | [Quickstart](docs/quickstart.md) | Minimal path to a working run |
 | [Architecture](docs/architecture.md) | System layers, component map |

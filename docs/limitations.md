@@ -16,7 +16,7 @@ This document catalogues known limitations, incomplete features, and operational
 | Structured output degradation | Schema validation uses clamping/normalization that can mask low-quality LLM outputs. NaN/Inf fields are rejected, but near-threshold values may pass. | Graceful with guards |
 | Single LLM provider per run | All agents in a run use the same provider (Ollama/OpenAI/Mistral). Per-agent model selection is not supported. | Not implemented |
 | Deterministic fallback is not an error recovery | `_run_deterministic()` activates only when `llm_enabled=false`. LLM failures retry and then propagate as errors — they do not silently fall back. | By design |
-| `ORCHESTRATOR_AUTONOMY_ENABLED` flag exists but autonomy path is untested | The multi-cycle orchestrator flag is `true` by default but the code path is not exercised in the main analysis flow. | Experimental |
+| `ORCHESTRATOR_AUTONOMY_ENABLED` is `true` by default but its code path is not exercised | The multi-cycle autonomy setting is enabled by default (`backend/app/core/config.py:182`) but the corresponding execution path is not triggered in the main analysis flow. Its behaviour under real workloads is untested. | Experimental — treat as disabled |
 
 ---
 
@@ -49,7 +49,8 @@ This document catalogues known limitations, incomplete features, and operational
 
 | Limitation | Impact | Status |
 |-----------|--------|--------|
-| 4 templates only | Strategy generation is limited to EMA crossover, RSI mean reversion, Bollinger breakout, MACD divergence. | By design |
+| 20 fixed templates — no custom templates | Strategy generation uses 20 built-in templates (EMA crossover, RSI mean reversion, Bollinger breakout, MACD divergence, Supertrend, Ichimoku, VWAP, and 13 others). Adding new templates requires code changes. | By design |
+| VWAP strategy uses a cumulative mean, not true VWAP | `vwap_strategy` in `signal_engine.py` approximates VWAP as a cumulative average of close prices because candle data lacks volume. Signals from this template do not reflect real volume-weighted levels. | Known gap |
 | No walk-forward testing | Backtests use in-sample data only. No out-of-sample validation. | Not implemented |
 | No Monte Carlo simulation | No confidence intervals on backtest results. | Not implemented |
 | Promotion is manual | VALIDATED → PAPER → LIVE strategy promotion requires manual action. | By design |

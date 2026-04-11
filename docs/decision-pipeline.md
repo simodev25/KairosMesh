@@ -1,6 +1,6 @@
 # Decision Pipeline
 
-This document describes how market data is processed through the agent pipeline and combined into a trade intent.
+This document covers scoring weights, gating thresholds, and contradiction handling — the mechanics behind how agent outputs combine into a trade decision. For a step-by-step execution walkthrough, see [Runtime Flow](runtime-flow.md). For per-agent schemas, see [Agents](agents.md).
 
 ## Pipeline stages
 
@@ -80,23 +80,13 @@ Thresholds are defined by `DECISION_MODE` (set via env var or UI). All three mod
 
 ### Contradiction penalties
 
-When Phase 1 agents disagree, the effective confidence is reduced:
+When Phase 1 agents disagree, effective confidence is adjusted as `conf = conf × multiplier − penalty`. Weak contradictions apply only the additive penalty (no multiplier). Values from `constants.py`:
 
-| Level | Conservative | Balanced | Permissive |
-|-------|-------------|---------|------------|
-| Weak | 0.0 | 0.0 | -0.01 |
-| Moderate | conf × 0.80 (then -0.08) | conf × 0.85 (then -0.06) | conf × 0.90 (then -0.04) |
-| Major | conf × 0.60 (then -0.14) | conf × 0.70 (then -0.11) | conf × 0.75 (then -0.08) |
-
-Exact values from `constants.py`:
-
-| Field | Conservative | Balanced | Permissive |
-|-------|-------------|---------|------------|
-| `contradiction_penalty_weak` | 0.0 | 0.0 | 0.01 |
-| `contradiction_penalty_moderate` | 0.08 | 0.06 | 0.04 |
-| `contradiction_penalty_major` | 0.14 | 0.11 | 0.08 |
-| `confidence_multiplier_moderate` | 0.80 | 0.85 | 0.90 |
-| `confidence_multiplier_major` | 0.60 | 0.70 | 0.75 |
+| Level | Conservative | Balanced (default) | Permissive |
+|-------|-------------|-------------------|------------|
+| Weak | — | — | −0.01 |
+| Moderate | ×0.80 then −0.08 | ×0.85 then −0.06 | ×0.90 then −0.04 |
+| Major | ×0.60 then −0.14 | ×0.70 then −0.11 | ×0.75 then −0.08 |
 
 ## Trade sizing
 
@@ -106,7 +96,7 @@ If trader-agent produces a BUY/SELL decision but is missing entry, stop-loss, or
 - Take profit: `entry ± ATR × 2.5` (`TP_ATR_MULTIPLIER = 2.5`)
 - Fallback (no ATR available): SL = 0.3% from entry (`SL_PERCENT_FALLBACK = 0.003`), TP = 0.6% from entry (`TP_PERCENT_FALLBACK = 0.006`)
 
-## What happens with a HOLD decision
+## HOLD decisions
 
 If the trader decides HOLD:
 - Risk manager LLM is bypassed — a synthetic stub response is recorded for the step (`accepted=false`, `reasons=["HOLD decision"]`). No position sizing or portfolio risk check is performed.

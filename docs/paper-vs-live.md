@@ -95,7 +95,7 @@ Complete every item on this list before setting `ALLOW_LIVE_TRADING=true`. There
 
 - [ ] **Paper trading tested and working on the same instrument.** Run at least one full paper cycle on the instrument you intend to trade live. Confirm that orders reach MetaAPI, fills are returned, and no `paper_fallback` flag appears in responses.
 
-- [ ] **`docs/limitations.md` read and understood.** That document covers known gaps in the system. It does not yet exist as a shipped file — if it is absent from your copy of the repository, treat that as a reason to delay live trading until it is written.
+- [ ] **`docs/limitations.md` read and understood.** That document covers known modelling gaps, unimplemented safeguards, and experimental flags. Read it before enabling live trading.
 
 - [ ] **`SECURITY.md` reviewed.** Covers authentication, credential handling, and recommended deployment hardening. If absent from your copy, check the repository for the latest version or raise the issue with the project maintainer before proceeding.
 

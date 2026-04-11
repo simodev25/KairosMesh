@@ -88,7 +88,7 @@ These are hardcoded defaults in `backend/app/services/risk/rules.py`. They are N
 
 > **Note**: Exotic or non-standard instruments may use incorrect contract specs because classification is heuristic (pattern matching on symbol name).
 
-## What governance does NOT cover
+## Governance gaps
 
 | Gap | Implication |
 |----|------------|
@@ -100,6 +100,6 @@ These are hardcoded defaults in `backend/app/services/risk/rules.py`. They are N
 
 ## Further reading
 
-- [Execution](execution.md) (forthcoming) — preflight and order submission
-- [Paper vs Live](paper-vs-live.md) (forthcoming) — how limits differ by mode
-- [Limitations](limitations.md) (forthcoming) — known gaps
+- [Execution](execution.md) — preflight checks, idempotency, and order submission
+- [Paper vs Live](paper-vs-live.md) — how limits differ by mode and the pre-live checklist
+- [Limitations](limitations.md) — known gaps in risk coverage

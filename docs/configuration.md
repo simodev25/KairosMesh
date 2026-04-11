@@ -181,7 +181,7 @@ MetaAPI connects Kairos Mesh to MetaTrader 4/5 accounts.
 | Variable | Type | Default | Description |
 |---|---|---|---|
 | `ALLOW_LIVE_TRADING` | `bool` | `false` | ⚠️ **Dangerous.** Set to `true` to allow the execution layer to place real orders on a live broker account. The authenticated user must also hold the `trader-operator` role. Leaving this `false` means all generated signals are logged but never sent to the broker. |
-| `ENABLE_PAPER_EXECUTION` | `bool` | `true` | Enable paper (simulated) execution. Signals are recorded as if executed, with no actual broker connection required. |
+| `ENABLE_PAPER_EXECUTION` | `bool` | `true` | Enable paper-mode order submission to MetaAPI. When `true`, paper-mode runs send orders to a MetaAPI demo account (no real capital at risk). When `false`, paper-mode runs are blocked. Requires `METAAPI_TOKEN` and `METAAPI_ACCOUNT_ID`. |
 | `DEFAULT_FOREX_PAIRS` | `List[str]` | `EURUSD.PRO,GBPUSD.PRO,...` (10 pairs) | Comma-separated list of Forex instrument symbols loaded into the default watchlist. Values are uppercased automatically. |
 | `DEFAULT_CRYPTO_PAIRS` | `List[str]` | `BTCUSD,ETHUSD,...` (13 pairs) | Comma-separated list of crypto instrument symbols loaded into the default watchlist. |
 | `DEFAULT_TIMEFRAMES` | `List[str]` | `M5,M15,H1,H4,D1` | Comma-separated list of analysis timeframes. |

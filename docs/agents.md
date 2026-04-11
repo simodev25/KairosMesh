@@ -1,13 +1,13 @@
 # Agents
 
-Kairos Mesh runs 8 agents across a 4-phase pipeline. This document describes each agent's role, inputs, outputs, and the tools it calls.
+Kairos Mesh runs 8 agents across a 4-phase pipeline. This document is a technical reference covering each agent's role, inputs, output schema, and MCP tool calls. For a pipeline overview, read [Runtime Flow](runtime-flow.md) first.
 
 Note: this document covers only the 8 decision-pipeline agents. Additional agents exist in the system for strategy management and scheduling (e.g., `schedule-planner-agent`, `order-guardian`, `strategy-designer`) and are configured in `backend/config/agent-skills.json`, but are not part of the per-candle decision pipeline described here.
 
 ## Agent inventory
 
-| # | Name | Phase | LLM-driven | Output type |
-|---|------|-------|-----------|-------------|
+| # | Name | Phase | LLM by default | Authority |
+|---|------|-------|----------------|-----------|
 | 1 | technical-analyst | 1 (parallel) | Configurable per-agent | Advisory |
 | 2 | news-analyst | 1 (parallel) | Configurable per-agent | Advisory |
 | 3 | market-context-analyst | 1 (parallel) | Configurable per-agent | Advisory |
@@ -53,8 +53,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `tradability`: `"high"` | `"medium"` | `"low"`
 - `degraded`: bool (true when data is incomplete)
 
-**Output advisory?**: Advisory
-
 **Constraints / Notes**: Must call tools first, then describe findings. Must not invent levels or patterns not returned by tools. Does not make a trading recommendation.
 
 ---
@@ -88,8 +86,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `summary`: factual paragraph (required, min length 1)
 - `degraded`: bool
 
-**Output advisory?**: Advisory
-
 **Constraints / Notes**: Only uses news items actually provided — never invents news. When `coverage=none`, `sentiment` is forced to `"neutral"`. Direction convention is instrument-relative (bullish USD = bearish EUR/USD).
 
 ---
@@ -119,8 +115,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `summary`: factual paragraph (required, min length 1)
 - `degraded`: bool
 
-**Output advisory?**: Advisory
-
 **Constraints / Notes**: Reports conditions only — does not recommend trades. If data is insufficient, says so explicitly.
 
 ---
@@ -148,8 +142,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `invalidation_conditions`: list of future events that would break the thesis
 - `degraded`: bool
 
-**Output advisory?**: Advisory
-
 **Constraints / Notes**: Must call `evidence_query()` first, then `thesis_support_extractor()`. Invalidation conditions must describe future events — not conditions already present. If any debate agent (bullish-researcher, bearish-researcher, trader-agent) has `llm_enabled=false`, the debate is skipped entirely and both researchers run in parallel deterministic mode, with `debate_result` set to `DebateResult(winner="no_edge", conviction="weak")`.
 
 ---
@@ -176,8 +168,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `confidence`: float 0.0–1.0
 - `invalidation_conditions`: list of future events that would break the thesis
 - `degraded`: bool
-
-**Output advisory?**: Advisory
 
 **Constraints / Notes**: Identical tool set and schema to bullish-researcher — opposite mandate. Subject to same debate-skip rule (see bullish-researcher notes).
 
@@ -212,8 +202,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `invalidation`: string or null (what would prove the decision wrong)
 - `degraded`: bool
 
-**Output advisory?**: Decision-bearing
-
 **Constraints / Notes**: Tools are advisory — trader decides freely. `decision_gating` and `contradiction_detector` provide perspective, not veto. `trade_sizing` is called when BUY/SELL to compute exact entry/SL/TP. MACD diff, ATR, and price are pre-injected into relevant tools from the market snapshot so the LLM cannot invent incorrect values. Source for preset/force_kwargs injection: `backend/app/services/agentscope/toolkit.py`.
 
 ---
@@ -243,8 +231,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `risk_flags`: list of risk concern strings
 - `degraded`: bool
 
-**Output advisory?**: Binding
-
 **Constraints / Notes**: Hard limits (daily loss, weekly loss, position count, free margin, max currency exposure) are non-negotiable. Soft factors (Friday, correlation, drawdown) are judgment calls. For HOLD decisions, immediately returns `approved=false, adjusted_volume=0` without calling tools. The `portfolio_risk_evaluation` tool result is authoritative — if it conflicts with the LLM's reasoning, the tool result wins. The risk engine is deterministic Python code, not an LLM judgment. The `portfolio_risk_evaluation` function receives `trader_decision` automatically via `force_kwargs` — the LLM cannot override or omit it. Source for force_kwargs injection: `backend/app/services/agentscope/toolkit.py`.
 
 ---
@@ -271,8 +257,6 @@ Per-agent LLM enable/disable is configured in the UI (Connectors → AI Models) 
 - `reasoning`: explanation string (required, min length 1)
 - `expected_slippage`: `"low"` | `"medium"` | `"high"`
 - `degraded`: bool
-
-**Output advisory?**: Binding
 
 **Constraints / Notes**: Must never change the decision, side, or volume. LLM is disabled by default (`EXECUTION_MANAGER_LLM_ENABLED=false`); in that case the agent runs in deterministic mode, choosing order type and timing from snapshot conditions without LLM inference.
 
