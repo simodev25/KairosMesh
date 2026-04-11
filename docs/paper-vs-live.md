@@ -2,19 +2,12 @@
 
 Kairos Mesh supports three execution modes: **simulation** (default), **paper**, and **live**. This document explains precisely what differs between them, what each mode does and does not model, and what an operator must verify before enabling live trading.
 
-Source files cited throughout:
-- `backend/app/services/execution/executor.py`
-- `backend/app/services/execution/preflight.py`
-- `backend/app/services/risk/limits.py`
-- `backend/.env.example`
-- `backend/app/core/config.py`
+Source files cited throughout: `execution/executor.py`, `execution/preflight.py`, `risk/limits.py`, `core/config.py`, `.env.example`.
 
----
-
-## 1. Mode Comparison
+## Mode comparison
 
 | Aspect | Simulation | Paper | Live |
-|---|---|---|---|
+|--------|-----------|-------|------|
 | Broker connection | None | Yes — MetaAPI demo account | Yes — MetaAPI real account |
 | Real capital at risk | No | No | Yes |
 | Order fills | Assumed exact (no broker) | Demo account via MetaAPI | Real market via MetaAPI |
@@ -38,9 +31,7 @@ Config defaults are in `backend/app/core/config.py`:
 - `allow_live_trading: bool = Field(default=False, ...)`
 - `enable_paper_execution: bool = Field(default=True, ...)`
 
----
-
-## 2. What Simulation Does Not Model
+## What simulation does not model
 
 Simulation mode records that an order would have been placed and marks it with status `simulated`, but it does not contact any broker. This has several implications:
 
@@ -52,9 +43,7 @@ Simulation mode records that an order would have been placed and marks it with s
 
 Simulation is useful for testing agent logic, pipeline wiring, and risk rule behaviour. It is not a substitute for paper trading when you need to verify broker connectivity or execution realism.
 
----
-
-## 3. What Paper Trading Gives You — and Its Limits
+## Paper trading: capabilities and limits
 
 ### What it provides
 
@@ -69,9 +58,7 @@ Simulation is useful for testing agent logic, pipeline wiring, and risk rule beh
 - **Requires valid MetaAPI credentials.** `METAAPI_TOKEN` and `METAAPI_ACCOUNT_ID` must be set and must correspond to a working demo account. Without them, every paper order falls back to simulated.
 - **Same market-hours logic as simulation.** Preflight applies the same simplified UTC-window check regardless of mode.
 
----
-
-## 4. Pre-Live Checklist
+## Pre-live checklist
 
 Complete every item on this list before setting `ALLOW_LIVE_TRADING=true`. There is no automated enforcement of this checklist — it is the operator's responsibility.
 
@@ -91,17 +78,15 @@ Complete every item on this list before setting `ALLOW_LIVE_TRADING=true`. There
 
 - [ ] **`SECRET_KEY` changed from the default.** The `.env.example` ships with `SECRET_KEY=change-me`. In `config.py`, if `SECRET_KEY` is empty or equals `change-me`, the application generates an ephemeral random key on startup and logs a critical warning in production environments. An ephemeral key invalidates all JWT tokens on every restart. Set a stable, random value of at least 48 characters before deploying.
 
-- [ ] **Risk limits reviewed and understood.** The live limits in `backend/app/services/risk/limits.py` are more restrictive than paper or simulation (2% max risk per trade, 3% max daily loss, 3 max positions). Review them against your intended strategy. See [risk-and-governance.md](risk-and-governance.md) for the full risk engine documentation.
+- [ ] **Risk limits reviewed and understood.** The live limits in `backend/app/services/risk/limits.py` are more restrictive than paper or simulation (2% max risk per trade, 3% max daily loss, 3 max positions). Review them against your intended strategy. See [Risk & Governance](risk-and-governance.md) for the full risk engine documentation.
 
 - [ ] **Paper trading tested and working on the same instrument.** Run at least one full paper cycle on the instrument you intend to trade live. Confirm that orders reach MetaAPI, fills are returned, and no `paper_fallback` flag appears in responses.
 
-- [ ] **`docs/limitations.md` read and understood.** That document covers known modelling gaps, unimplemented safeguards, and experimental flags. Read it before enabling live trading.
+- [ ] **`docs/limitations.md` read and understood.** That document covers known modelling gaps, unimplemented safeguards, and experimental flags.
 
-- [ ] **`SECURITY.md` reviewed.** Covers authentication, credential handling, and recommended deployment hardening. If absent from your copy, check the repository for the latest version or raise the issue with the project maintainer before proceeding.
+- [ ] **`SECURITY.md` reviewed.** Covers authentication, credential handling, and recommended deployment hardening.
 
----
-
-## 5. How to Switch Modes
+## Switching modes
 
 The execution mode is set per run, not globally, via the `mode` field in the run creation request:
 
@@ -124,9 +109,7 @@ Valid values for `mode` are `simulation`, `paper`, and `live`.
 
 These guards are in `backend/app/services/execution/executor.py` (lines 258–274).
 
----
-
-## 6. Safety Reminder
+## Safety reminder
 
 Kairos Mesh is research software. It has not been independently audited, stress-tested under real market conditions, or hardened for production deployment with live capital.
 
@@ -138,3 +121,9 @@ Before enabling live trading:
 - Understand that demo-account performance does not guarantee live-account performance.
 - Keep position sizes small while validating live execution for the first time.
 - Monitor the system actively; do not leave it running unattended without alerting and circuit-breaker configuration in place.
+
+## Further reading
+
+- [Risk & Governance](risk-and-governance.md) — risk engine limits and governance gaps
+- [Execution](execution.md) — preflight checks, idempotency, and order flow
+- [Limitations](limitations.md) — known constraints relevant to live deployment

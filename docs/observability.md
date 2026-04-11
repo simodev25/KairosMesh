@@ -1,10 +1,18 @@
 # Observability
 
-Kairos Mesh exposes four observability mechanisms: Prometheus metrics, structured run records in PostgreSQL, WebSocket real-time events to the frontend, and debug trade trace files. A Grafana instance is included in the default Docker Compose stack and is pre-provisioned with dashboards. OpenTelemetry / distributed tracing exists as a configuration option but is not wired to a trace backend by default.
+Kairos Mesh provides metrics, structured run records, WebSocket events, and debug trace files as its primary observability mechanisms. A Grafana instance is included in the default Docker Compose stack and is pre-provisioned with dashboards. OpenTelemetry tracing exists as a configuration option but is not wired to a backend by default.
 
----
+**In this document**
 
-## 1. Prometheus Metrics
+- [Prometheus metrics](#prometheus-metrics) — 35+ metrics covering HTTP, runs, LLM, tools, risk
+- [Structured run records](#structured-run-records) — PostgreSQL audit trail (4 tables)
+- [WebSocket protocol](#websocket-protocol) — 4 real-time endpoints
+- [Debug trace files](#debug-trace-files) — per-run JSON snapshots
+- [OpenTelemetry](#opentelemetry) — scaffolding present, not activated by default
+- [Grafana](#grafana) — pre-provisioned dashboards
+- [Logging](#logging) — stdout logs, correlation IDs
+
+## Prometheus metrics
 
 **Default:** enabled (`PROMETHEUS_ENABLED=true`)
 
@@ -111,11 +119,9 @@ scrape_configs:
 | `PROMETHEUS_WORKER_PORT` | `9101` | Port for the worker's standalone metrics HTTP server |
 | `PROMETHEUS_MULTIPROC_DIR` | _(unset)_ | When set, enables `prometheus_client` multiprocess aggregation across forked workers |
 
----
+## Structured run records
 
-## 2. Structured Run Records (Audit Trail)
-
-Every analysis run writes a structured record to PostgreSQL. This is an **audit trail**, not a learning store. Records are queryable via the UI or directly in the database.
+Every analysis run writes a structured record to PostgreSQL. This is an audit trail, not a learning store — records are queryable via the UI or directly in the database, but are never read back into LLM inference. See [Memory](memory.md) for the design rationale.
 
 ### Tables
 
@@ -194,9 +200,7 @@ One row per order attempt. Defined in `backend/app/db/models/execution_order.py`
 | `error` | Text | Error if order failed |
 | `created_at` | DateTime | Order creation time |
 
----
-
-## 3. WebSocket Protocol
+## WebSocket protocol
 
 The frontend receives real-time updates via WebSocket. All WebSocket endpoints require JWT authentication. The token can be sent in the `Authorization: Bearer <token>` header or, if `WS_ALLOW_QUERY_TOKEN=true`, as a `?token=` query parameter.
 
@@ -252,9 +256,7 @@ Streams portfolio state (balance, equity, margins, drawdown, open positions, ris
 | `WS_REQUIRE_AUTH` | `true` | Require JWT on all WebSocket connections |
 | `WS_ALLOW_QUERY_TOKEN` | `false` | Allow token as `?token=` query param (off by default for security) |
 
----
-
-## 4. Debug Trade Trace Files
+## Debug trace files
 
 When enabled, the system writes a JSON file per run to the configured directory. This is useful for detailed post-run inspection of what each agent saw and decided. The files are self-contained — no database access is required to read them.
 
@@ -299,9 +301,7 @@ Trace files are written by `_write_debug_trace()` in `backend/app/services/agent
 | `DEBUG_TRADE_JSON_PRICE_HISTORY_LIMIT` | `200` | Maximum number of candles written (trailing N bars) |
 | `DEBUG_TRADE_JSON_INLINE_IN_RUN_TRACE` | `false` | When true, embeds the trace payload directly into `run.trace` instead of writing a separate file |
 
----
-
-## 5. OpenTelemetry — Partial / Not Wired by Default
+## OpenTelemetry
 
 `OPEN_TELEMETRY_ENABLED=false` by default (`backend/app/core/config.py`, line 165).
 
@@ -318,9 +318,7 @@ The worker has a helper `backend/app/tasks/worker_tracing.py` that calls `agents
 | `OPEN_TELEMETRY_ENABLED` | `false` | Activates FastAPI OTLP instrumentation |
 | `AGENTSCOPE_TRACING_URL` | `http://tempo:4318/v1/traces` | OTLP HTTP endpoint used by the worker tracing init helper. Read via `os.environ.get()` in `backend/app/tasks/worker_tracing.py` (line 16) — **not** part of the Pydantic settings model in `config.py`, so it is not validated by the app settings system. |
 
----
-
-## 6. Grafana
+## Grafana
 
 Grafana is included in the default Docker Compose stack (`docker-compose.yml`).
 
@@ -344,9 +342,7 @@ Provisioning files are mounted from `infra/docker/grafana/provisioning/`. Dashbo
 
 Datasources (Prometheus at `http://prometheus:9090`, Tempo at `http://tempo:3200`) are provisioned from `infra/docker/grafana/provisioning/datasources/datasource.yml`.
 
----
-
-## 7. Logging
+## Logging
 
 The application uses Python's standard `logging` module, configured at startup in `backend/app/core/logging.py`. All output goes to stdout at `INFO` level using the format:
 

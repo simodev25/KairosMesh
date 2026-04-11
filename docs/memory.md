@@ -2,8 +2,6 @@
 
 This document describes how Kairos Mesh agents store and access information — both within a single run and across runs.
 
----
-
 ## Summary
 
 - Each agent gets its own isolated `InMemoryMemory` instance for the duration of a run.
@@ -11,9 +9,7 @@ This document describes how Kairos Mesh agents store and access information — 
 - PostgreSQL stores a complete audit trail per run, but that data is never read back into LLM inference.
 - There is no RAG system, no vector store, and no outcome-based learning loop.
 
----
-
-## 1. In-run memory (transient)
+## In-run memory
 
 Each agent is constructed at the start of a run using a factory function in `backend/app/services/agentscope/agents.py`. Every factory call passes a freshly constructed `InMemoryMemory()` to the `ReActAgent`:
 
@@ -33,13 +29,11 @@ def _build_agent(name, model, formatter, toolkit, sys_prompt, ...):
 
 `InMemoryMemory` stores the agent's conversation history in process memory: the system prompt, any tool calls the agent makes, and the LLM responses. This buffer exists only within the lifetime of the agent object, which is scoped to a single call to `AgentScopeRegistry.execute()` in `backend/app/services/agentscope/registry.py`.
 
-**Agents do not share memory.** The eight pipeline agents (technical-analyst, news-analyst, market-context-analyst, bullish-researcher, bearish-researcher, trader-agent, risk-manager, execution-manager) — i.e. the agents registered in `ALL_AGENT_FACTORIES` in `backend/app/services/agentscope/agents.py` — each have their own isolated `InMemoryMemory` instance. One agent cannot read another agent's conversation buffer. (Additional agents such as `strategy-designer`, `order-guardian`, and `schedule-planner-agent` exist in the same file but are not part of the trading pipeline and are not discussed in this document.)
+**Agents do not share memory.** The eight pipeline agents (technical-analyst, news-analyst, market-context-analyst, bullish-researcher, bearish-researcher, trader-agent, risk-manager, execution-manager) each have their own isolated `InMemoryMemory` instance. One agent cannot read another agent's conversation buffer. Additional agents (`strategy-designer`, `order-guardian`, `schedule-planner-agent`) exist in the same file but are not part of the trading pipeline.
 
 After `execute()` returns, the agent objects go out of scope and their memory is garbage collected. There is no explicit flush, no serialization, and no persistence of the in-memory conversation history.
 
----
-
-## 2. No cross-run memory
+## No cross-run memory
 
 Each run starts cold. The following mechanisms are **not implemented**:
 
@@ -54,11 +48,9 @@ The only inputs to each run are:
 
 1. The system prompt for each agent (loaded from the DB or defaults at runtime)
 2. Live market data fetched at run time (price snapshot, OHLC bars, news headlines)
-3. Structured outputs passed explicitly between agents within the same run (see section 4)
+3. Structured outputs passed explicitly between agents within the same run (see below)
 
----
-
-## 3. Persistent storage (audit log, not a learning store)
+## Persistent storage
 
 PostgreSQL holds a complete record of every run, but this data is used for human review and audit — it is never read back into LLM inference.
 
@@ -93,23 +85,13 @@ One record per trade order submitted to the broker. Stores symbol, side, volume,
 
 All four tables are queryable by operators for inspection, debugging, and compliance review. None of their contents are read by the pipeline on subsequent runs.
 
----
-
-## 4. What IS passed between agents within a run
+## Inter-agent data passing
 
 Agents do not share memory, but structured outputs are passed explicitly between phases. This is data passing via function arguments, not shared memory.
 
 **Phase 1 → Phase 2+3 (debate):**
 
-After the three analysts complete, their text outputs are concatenated into `analysis_summary` and passed as a new `Msg` to the bullish and bearish researchers:
-
-```python
-research_msg = Msg("system",
-    f"Analysis results from Phase 1:\n{analysis_summary}\n\n"
-    f"Original context:\n{context_msg.get_text_content()}", "system")
-```
-
-The researcher toolkits are also rebuilt with `analysis_outputs` so that the `evidence_query` tool can reference Phase 1 findings.
+After the three analysts complete, their text outputs are concatenated into `analysis_summary` and passed as a new `Msg` to the bullish and bearish researchers. The researcher toolkits are also rebuilt with `analysis_outputs` so that the `evidence_query` tool can reference Phase 1 findings.
 
 **Phase 2+3 → Phase 4 (trader):**
 
@@ -121,16 +103,20 @@ The trader's structured output (`trader_out`) is passed as an argument to the ri
 
 In all cases the mechanism is explicit argument passing within a single Python coroutine (`execute()`). It is not shared memory, a message bus, or a blackboard.
 
----
+## Limitations
 
-## 5. Limitations
-
-The following are explicit design constraints, not implementation gaps to be resolved:
+The following are explicit design constraints, not implementation gaps:
 
 - **No outcome-based learning.** Whether a trade is profitable or not has no effect on any future run. There is no mechanism to record outcomes and adjust agent behavior.
 - **No adaptive prompts.** System prompts are static per run. They can be edited by an operator in the DB between runs, but the pipeline does not modify them automatically.
-- **No inter-agent memory within a run.** Agents cannot read each other's `InMemoryMemory`. Information sharing is limited to the explicit structured outputs described in section 4.
+- **No inter-agent memory within a run.** Agents cannot read each other's `InMemoryMemory`. Information sharing is limited to the explicit structured outputs described above.
 - **DB logs are not used in inference.** The `agent_steps`, `llm_call_logs`, and `execution_orders` tables are queryable by humans but are never fetched and injected into LLM context.
 - **No compression or summarization of past runs.** There is no job that summarizes past run outcomes and prepends them to future prompts.
 
 The design prioritizes determinism, auditability, and operational simplicity over adaptive behavior.
+
+## Further reading
+
+- [Runtime Flow](runtime-flow.md) — how structured outputs flow between pipeline phases
+- [Observability](observability.md) — what is persisted to PostgreSQL and how to query it
+- [Limitations](limitations.md) — memory and learning constraints in context with other gaps

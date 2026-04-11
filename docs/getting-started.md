@@ -73,7 +73,7 @@ Default credentials: `admin@local.dev` / `admin1234`
 2. Navigate to **Connectors** → **AI Models** and confirm your LLM provider is configured
 3. Navigate to **Terminal**
 4. Select a pair (e.g. `EURUSD`), timeframe (e.g. `H1`), and mode **Simulation**
-5. Click **Run Analysis**
+5. Click **Start**
 6. Watch the pipeline progress in real time via WebSocket
 
 Simulation mode requires no broker account — orders are recorded in the database only and no broker connection is made.

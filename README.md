@@ -154,22 +154,34 @@ infra/
 
 ## Documentation
 
+### Setup and first steps
+
 | Document | Description |
 |----------|-------------|
-| [UI Guide](docs/ui-guide.md) | Page-by-page walkthrough of the dashboard (with screenshots) |
-| [Getting Started](docs/getting-started.md) | Prerequisites, install, first run |
-| [Quickstart](docs/quickstart.md) | Minimal path to a working run |
-| [Architecture](docs/architecture.md) | System layers, component map |
-| [Runtime Flow](docs/runtime-flow.md) | Step-by-step: how a run executes |
-| [Agents](docs/agents.md) | All 8 agents: roles, inputs, outputs |
-| [Decision Pipeline](docs/decision-pipeline.md) | Analysis → debate → trade intent → gating |
-| [Risk & Governance](docs/risk-and-governance.md) | Deterministic risk engine, limits, gates |
-| [Execution](docs/execution.md) | Order flow, paper vs live, safeguards |
-| [Memory](docs/memory.md) | Storage backends, transient vs persistent |
+| [UI Guide](docs/ui-guide.md) | Page-by-page dashboard walkthrough with screenshots |
+| [Getting Started](docs/getting-started.md) | Prerequisites, Docker setup, first analysis |
+| [Quickstart](docs/quickstart.md) | Minimal path to a working simulation run |
+
+### Pipeline reference
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/architecture.md) | System layers, component map, trust boundaries |
+| [Agents](docs/agents.md) | All 8 agents: roles, inputs, outputs, tool calls |
+| [Decision Pipeline](docs/decision-pipeline.md) | Scoring, thresholds, debate mechanics, HOLD handling |
+| [Runtime Flow](docs/runtime-flow.md) | Step-by-step: how a run executes from API to DB |
+
+### Operations and deployment
+
+| Document | Description |
+|----------|-------------|
 | [Configuration](docs/configuration.md) | Full environment variable reference |
-| [Observability](docs/observability.md) | Metrics, logs, audit trail |
-| [Paper vs Live](docs/paper-vs-live.md) | What differs, safety checklist |
-| [Limitations](docs/limitations.md) | Known constraints, incomplete features |
+| [Paper vs Live](docs/paper-vs-live.md) | Mode comparison and pre-live safety checklist |
+| [Risk & Governance](docs/risk-and-governance.md) | Deterministic risk engine, limits, governance gaps |
+| [Execution](docs/execution.md) | Order flow, preflight checks, idempotency, safeguards |
+| [Observability](docs/observability.md) | Metrics, WebSocket protocol, debug traces, Grafana |
+| [Memory](docs/memory.md) | What agents remember and what they don't |
+| [Limitations](docs/limitations.md) | Known constraints — read before deploying with real capital |
 
 ## Limitations
 

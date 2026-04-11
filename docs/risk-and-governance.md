@@ -2,7 +2,7 @@
 
 The risk engine is deterministic Python code in `backend/app/services/risk/`. It is not an LLM. Its result is authoritative — it cannot be overridden by any agent's LLM reasoning.
 
-## Execution gate
+## Trade execution gate
 
 A trade must pass all of these in sequence before any order is submitted:
 
@@ -40,9 +40,7 @@ The `portfolio_risk_evaluation` tool is called with `force_kwargs`: `backend/app
 | Tool: accepted=false, LLM summary: approve | **Tool wins** — trade blocked |
 | Tool: accepted=false, LLM summary: reject | Trade blocked |
 
-Attribution:
-- **Tool accepts, LLM would reject**: `backend/app/services/agentscope/registry.py` explicitly overrides the LLM and uses the tool result.
-- **Tool rejects, LLM would approve**: the tool-override branch is not triggered; the execution gate simply reads the tool's `accepted=false` as authoritative. No override action fires — the gate consumes the field directly.
+Source: `backend/app/services/agentscope/registry.py` (tool-accepts, LLM-rejects path triggers an explicit override; tool-rejects path reads `accepted=false` directly with no override branch).
 
 ## Per-mode risk limits
 
