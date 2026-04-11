@@ -83,16 +83,14 @@ export function GovernanceSettingsPanel({ settings, saving, onUpdate }: Props) {
           <span className={`text-[10px] font-bold tracking-widest ${settings.execution_mode === 'confirmation' ? 'text-accent' : 'text-text-dim'}`}>
             CONFIRMATION
           </span>
-          <button
-            onClick={() => onUpdate({
-              execution_mode: settings.execution_mode === 'auto' ? 'confirmation' : 'auto',
-            })}
+          <input
+            type="checkbox"
+            className="ui-switch"
+            checked={settings.execution_mode === 'auto'}
             disabled={saving}
-            className={`relative w-10 h-5 rounded-full overflow-hidden transition-colors ${settings.execution_mode === 'auto' ? 'bg-success' : 'bg-surface-raised border border-border'}`}
-          >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.execution_mode === 'auto' ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
-          </button>
-          <span className={`text-[10px] font-bold tracking-widest ${settings.execution_mode === 'auto' ? 'text-success' : 'text-text-dim'}`}>
+            onChange={(e) => onUpdate({ execution_mode: e.target.checked ? 'auto' : 'confirmation' })}
+          />
+          <span className={`text-[10px] font-bold tracking-widest ${settings.execution_mode === 'auto' ? 'text-accent' : 'text-text-dim'}`}>
             AUTO
           </span>
         </div>
