@@ -62,6 +62,10 @@ def build_strategy_designer(*, model, formatter, toolkit, sys_prompt: str, max_i
     return _build_agent("strategy-designer", model, formatter, toolkit, sys_prompt, max_iters, parallel_tool_calls=True)
 
 
+def build_governance_decision(*, model, formatter, toolkit, sys_prompt: str, max_iters: int = 3) -> ReActAgent:
+    return _build_agent("governance-decision", model, formatter, toolkit, sys_prompt, max_iters)
+
+
 ALL_AGENT_FACTORIES = {
     "technical-analyst": build_technical_analyst,
     "news-analyst": build_news_analyst,
@@ -71,4 +75,5 @@ ALL_AGENT_FACTORIES = {
     "trader-agent": build_trader,
     "risk-manager": build_risk_manager,
     "execution-manager": build_execution_manager,
+    "governance-decision": build_governance_decision,
 }

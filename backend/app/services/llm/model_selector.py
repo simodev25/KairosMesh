@@ -21,6 +21,7 @@ DEFAULT_AGENT_LLM_ENABLED: dict[str, bool] = {
     'agentic-runtime-planner': True,
     'risk-manager': False,
     'execution-manager': False,
+    'governance-decision': True,
 }
 
 SUPPORTED_LLM_PROVIDERS = {'ollama', 'openai', 'mistral'}

@@ -9,7 +9,7 @@ from app.core.security import Role, require_roles
 from app.db.models.run import AnalysisRun
 from app.db.models.user import User
 from app.db.session import get_db
-from app.services.governance.service import GovernanceService
+from app.services.governance.service import GovernanceService, _json_safe
 from app.services.governance.settings_crud import get_governance_settings, update_governance_settings
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ async def get_positions(db: Session = Depends(get_db), _: User = _VIEWER):
     """Return open positions enriched with their latest governance run decision."""
     service = GovernanceService()
     try:
-        positions = await service._fetch_open_positions()
+        positions = await service._fetch_open_positions(db)
     except Exception as exc:
         logger.warning('governance_positions_fetch_failed: %s', exc)
         positions = []
@@ -61,15 +61,19 @@ async def get_positions(db: Session = Depends(get_db), _: User = _VIEWER):
     result = []
     for pos in positions:
         pos_id = str(pos.get('id', ''))
-        latest_run = (
-            db.query(AnalysisRun)
-            .filter(
-                AnalysisRun.run_type == 'governance',
-                AnalysisRun.governance_position_id == pos_id,
+        latest_run = None
+        try:
+            latest_run = (
+                db.query(AnalysisRun)
+                .filter(
+                    AnalysisRun.run_type == 'governance',
+                    AnalysisRun.governance_position_id == pos_id,
+                )
+                .order_by(AnalysisRun.created_at.desc())
+                .first()
             )
-            .order_by(AnalysisRun.created_at.desc())
-            .first()
-        )
+        except Exception as exc:
+            logger.warning('governance_positions_run_lookup_failed pos_id=%s: %s', pos_id, exc)
         result.append({
             **pos,
             'latest_governance_run': {
@@ -136,7 +140,7 @@ async def reevaluate_one(
 
     settings = get_governance_settings(db)
 
-    positions = await service._fetch_open_positions()
+    positions = await service._fetch_open_positions(db)
     position = next((p for p in positions if str(p.get('id', '')) == position_id), None)
     if not position:
         raise HTTPException(status_code=404, detail=f'Position {position_id} not found')
@@ -153,7 +157,7 @@ async def reevaluate_one(
         governance_position_id=position_id,
         decision={},
         trace={
-            'governance_position': position,
+            'governance_position': _json_safe(position),
             'analysis_depth': settings.get('analysis_depth', 'light'),
         },
         created_by_id=current_user.id,

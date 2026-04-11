@@ -1,8 +1,7 @@
-const BASE = '/api/v1/governance';
+import { request } from './client';
 
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : {};
+function token(): string | undefined {
+  return localStorage.getItem('token') ?? undefined;
 }
 
 export interface GovernanceSettings {
@@ -55,55 +54,45 @@ export interface GovernanceStreamItem {
   rejected: boolean;
 }
 
-export async function fetchGovernanceSettings(): Promise<GovernanceSettings> {
-  const res = await fetch(`${BASE}/settings`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch governance settings: ${res.status}`);
-  return res.json();
+export function fetchGovernanceSettings(): Promise<GovernanceSettings> {
+  return request<GovernanceSettings>('/governance/settings', {}, token());
 }
 
-export async function updateGovernanceSettings(settings: Partial<GovernanceSettings>): Promise<GovernanceSettings> {
-  const res = await fetch(`${BASE}/settings`, {
+export function updateGovernanceSettings(settings: Partial<GovernanceSettings>): Promise<GovernanceSettings> {
+  return request<GovernanceSettings>('/governance/settings', {
     method: 'PUT',
-    headers: authHeaders(),
     body: JSON.stringify(settings),
-  });
-  if (!res.ok) throw new Error(`Failed to update governance settings: ${res.status}`);
-  return res.json();
+  }, token());
 }
 
-export async function fetchGovernancePositions(): Promise<GovernancePosition[]> {
-  const res = await fetch(`${BASE}/positions`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch governance positions: ${res.status}`);
-  return res.json();
+export function fetchGovernancePositions(): Promise<GovernancePosition[]> {
+  return request<GovernancePosition[]>('/governance/positions', {}, token());
 }
 
-export async function fetchGovernanceStream(): Promise<GovernanceStreamItem[]> {
-  const res = await fetch(`${BASE}/stream`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch governance stream: ${res.status}`);
-  return res.json();
+export function fetchGovernanceStream(): Promise<GovernanceStreamItem[]> {
+  return request<GovernanceStreamItem[]>('/governance/stream', {}, token());
 }
 
-export async function reevaluateAll(): Promise<{ created_runs: number; run_ids: number[] }> {
-  const res = await fetch(`${BASE}/reevaluate`, { method: 'POST', headers: authHeaders() });
-  if (!res.ok) throw new Error(`Reevaluate failed: ${res.status}`);
-  return res.json();
+export function reevaluateAll(): Promise<{ created_runs: number; run_ids: number[] }> {
+  return request<{ created_runs: number; run_ids: number[] }>('/governance/reevaluate', {
+    method: 'POST',
+  }, token());
 }
 
-export async function reevaluatePosition(positionId: string): Promise<{ run_id: number }> {
-  const res = await fetch(`${BASE}/reevaluate/${positionId}`, {
-    method: 'POST', headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`Reevaluate position failed: ${res.status}`);
-  return res.json();
+export function reevaluatePosition(positionId: string): Promise<{ run_id: number }> {
+  return request<{ run_id: number }>(`/governance/reevaluate/${positionId}`, {
+    method: 'POST',
+  }, token());
 }
 
-export async function approveGovernanceAction(runId: number): Promise<Record<string, unknown>> {
-  const res = await fetch(`${BASE}/approve/${runId}`, { method: 'POST', headers: authHeaders() });
-  if (!res.ok) throw new Error(`Approve failed: ${res.status}`);
-  return res.json();
+export function approveGovernanceAction(runId: number): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/governance/approve/${runId}`, {
+    method: 'POST',
+  }, token());
 }
 
-export async function rejectGovernanceAction(runId: number): Promise<void> {
-  const res = await fetch(`${BASE}/reject/${runId}`, { method: 'POST', headers: authHeaders() });
-  if (!res.ok) throw new Error(`Reject failed: ${res.status}`);
+export function rejectGovernanceAction(runId: number): Promise<void> {
+  return request<void>(`/governance/reject/${runId}`, {
+    method: 'POST',
+  }, token());
 }

@@ -1,4 +1,19 @@
+import { useState } from 'react';
+import { Info } from 'lucide-react';
 import type { GovernanceSettings } from '../../api/governance';
+
+const DEPTH_INFO: Record<'light' | 'full', { agents: string; time: string; desc: string }> = {
+  light: {
+    agents: 'technical-analyst · news-analyst · market-context',
+    time: '~30–60s',
+    desc: 'Phase 1 only. Fast scan — recommended for continuous automated monitoring.',
+  },
+  full: {
+    agents: '+ bullish-researcher · bearish-researcher · structured debate',
+    time: '~2–4 min',
+    desc: 'Phase 1 + Phase 2 debate. Bull/bear thesis before decision — best for manual deep analysis.',
+  },
+};
 
 interface Props {
   settings: GovernanceSettings | null;
@@ -7,6 +22,7 @@ interface Props {
 }
 
 export function GovernanceSettingsPanel({ settings, saving, onUpdate }: Props) {
+  const [depthTooltip, setDepthTooltip] = useState(false);
   if (!settings) return null;
 
   return (
@@ -15,7 +31,30 @@ export function GovernanceSettingsPanel({ settings, saving, onUpdate }: Props) {
 
       {/* Analysis depth */}
       <div className="flex flex-col gap-2">
-        <span className="micro-label text-text-dim">ANALYSIS_DEPTH</span>
+        <div className="flex items-center gap-1.5">
+          <span className="micro-label text-text-dim">ANALYSIS_DEPTH</span>
+          <div className="relative">
+            <button
+              type="button"
+              onMouseEnter={() => setDepthTooltip(true)}
+              onMouseLeave={() => setDepthTooltip(false)}
+              className="w-4 h-4 flex items-center justify-center text-text-dim hover:text-text-muted transition-colors"
+            >
+              <Info className="w-3 h-3" />
+            </button>
+            {depthTooltip && (
+              <div className="absolute left-0 bottom-full mb-2 z-50 w-72 p-3 rounded-xl bg-surface border border-border shadow-xl text-[10px] leading-relaxed">
+                {(['light', 'full'] as const).map((d) => (
+                  <div key={d} className={`mb-2 last:mb-0 ${d === settings.analysis_depth ? 'text-accent' : 'text-text-muted'}`}>
+                    <div className="font-bold tracking-widest mb-0.5">{d.toUpperCase()} · {DEPTH_INFO[d].time}</div>
+                    <div className="text-text-dim font-mono mb-0.5">{DEPTH_INFO[d].agents}</div>
+                    <div>{DEPTH_INFO[d].desc}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
         <div className="flex gap-2">
           {(['light', 'full'] as const).map((depth) => (
             <button
@@ -31,6 +70,9 @@ export function GovernanceSettingsPanel({ settings, saving, onUpdate }: Props) {
               {depth.toUpperCase()}
             </button>
           ))}
+        </div>
+        <div className="text-[9px] text-text-dim leading-relaxed px-0.5">
+          {DEPTH_INFO[settings.analysis_depth].desc}
         </div>
       </div>
 

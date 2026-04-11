@@ -24,7 +24,24 @@ class GovernanceDecision(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _clamp_scores(cls, values: dict) -> dict:
+    def _normalise_and_clamp(cls, values: dict) -> dict:
+        if not isinstance(values, dict):
+            return values
+        # action: uppercase
+        if 'action' in values and isinstance(values['action'], str):
+            values['action'] = values['action'].upper().strip()
+        # reasoning aliases
+        if 'reasoning' not in values:
+            for alias in ('reason', 'explanation', 'rationale', 'justification', 'analysis'):
+                if alias in values:
+                    values['reasoning'] = values.pop(alias)
+                    break
+        # score aliases
+        if 'risk_score' not in values and 'risk' in values:
+            values['risk_score'] = values.pop('risk')
+        if 'confidence' not in values and 'conf' in values:
+            values['confidence'] = values.pop('conf')
+        # clamp scores to [0, 1]
         for field in ('risk_score', 'confidence'):
             v = values.get(field)
             if isinstance(v, (int, float)):

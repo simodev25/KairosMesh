@@ -1,12 +1,14 @@
 """GovernanceService — orchestrates position monitoring and governance action execution."""
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.db.models.audit_log import AuditLog
+from app.db.models.metaapi_account import MetaApiAccount
 from app.db.models.run import AnalysisRun
 from app.services.trading.metaapi_client import MetaApiClient
 from app.tasks.governance_monitor_task import run_governance_task
@@ -14,12 +16,45 @@ from app.tasks.governance_monitor_task import run_governance_task
 logger = logging.getLogger(__name__)
 
 
+def _json_safe(obj: object) -> object:
+    """Recursively convert non-JSON-serializable values (datetime, etc.) to strings."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    # Final safety net — anything json.dumps can't handle becomes a string
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        return str(obj)
+
+
 class GovernanceService:
 
-    async def _fetch_open_positions(self) -> list[dict]:
-        """Fetch current open positions from MetaAPI."""
+    async def _fetch_open_positions(self, db: Session | None = None) -> list[dict]:
+        """Fetch current open positions from MetaAPI.
+
+        Looks up the default (or first enabled) MetaApiAccount from the DB so
+        that the correct account_id and region are passed to MetaApiClient.
+        Falls back to the client's own resolution when db is not provided.
+        """
+        account_id: str | None = None
+        region: str | None = None
+        if db is not None:
+            account = (
+                db.query(MetaApiAccount)
+                .filter(MetaApiAccount.enabled == True)  # noqa: E712
+                .order_by(MetaApiAccount.is_default.desc(), MetaApiAccount.id.asc())
+                .first()
+            )
+            if account:
+                account_id = account.account_id
+                region = account.region
         client = MetaApiClient()
-        result = await client.get_positions()
+        result = await client.get_positions(account_id=account_id, region=region)
         return result.get('positions', [])
 
     def _has_active_governance_run(self, db: Session, position_id: str) -> bool:
@@ -43,7 +78,7 @@ class GovernanceService:
         system_user_id: int,
     ) -> list[int]:
         """Create governance runs for all open positions that don't already have one running."""
-        positions = await self._fetch_open_positions()
+        positions = await self._fetch_open_positions(db)
         if not positions:
             logger.info('governance_monitor no_open_positions')
             return []
@@ -71,7 +106,7 @@ class GovernanceService:
                 governance_position_id=pos_id,
                 decision={},
                 trace={
-                    'governance_position': position,
+                    'governance_position': _json_safe(position),
                     'analysis_depth': depth,
                 },
                 created_by_id=system_user_id,

@@ -1092,10 +1092,28 @@ class AgentScopeRegistry:
         """Parse agent output into a GovernanceDecision, falling back to HOLD on any error."""
         from app.services.governance.schemas import GovernanceDecision
         from pydantic import ValidationError
+
+        # Normalise common LLM field-name variations before validation
+        norm: dict = dict(raw)
+        # action: uppercase and strip whitespace
+        if 'action' in norm and isinstance(norm['action'], str):
+            norm['action'] = norm['action'].upper().strip()
+        # reasoning: accept 'reason', 'explanation', 'rationale', 'justification'
+        if 'reasoning' not in norm:
+            for alias in ('reason', 'explanation', 'rationale', 'justification', 'analysis'):
+                if alias in norm:
+                    norm['reasoning'] = norm.pop(alias)
+                    break
+        # scores: accept 'risk' and 'conf'
+        if 'risk_score' not in norm and 'risk' in norm:
+            norm['risk_score'] = norm.pop('risk')
+        if 'confidence' not in norm and 'conf' in norm:
+            norm['confidence'] = norm.pop('conf')
+
         try:
-            return GovernanceDecision(**raw)
+            return GovernanceDecision(**norm)
         except (ValidationError, TypeError, KeyError) as exc:
-            logger.warning("governance_decision_parse_failed raw=%s error=%s", raw, exc)
+            logger.warning("governance_decision_parse_failed raw=%s normalised=%s error=%s", raw, norm, exc)
             return GovernanceDecision(
                 action='HOLD',
                 reasoning='Parse error — defaulting to HOLD for safety.',
@@ -1335,65 +1353,83 @@ class AgentScopeRegistry:
 
             _set_progress(70)
 
-            # Build governance prompt from Phase 1 summaries + optional debate
+            # Build governance prompt using the governance-decision agent's user template
             governance_prompt_content = (
-                f"{context_msg.content}\n\n"
-                f"MARKET_ANALYSIS_SUMMARY:\n{phase1_summary}"
+                f"OPEN POSITION:\n{context_msg.content}\n\n"
+                f"MARKET ANALYSIS SUMMARY:\n{phase1_summary}"
                 f"{debate_summary}\n\n"
-                f"Based on the above analysis, output a governance decision as JSON with fields: "
-                f"action (HOLD/ADJUST_SL/ADJUST_TP/ADJUST_BOTH/CLOSE), "
-                f"new_sl (float or null), new_tp (float or null), "
-                f"reasoning (string), risk_score (0.0-1.0), confidence (0.0-1.0)."
+                f"Reply with ONLY a JSON object — no markdown, no prose. Required fields:\n"
+                f'{{"action":"HOLD|ADJUST_SL|ADJUST_TP|ADJUST_BOTH|CLOSE",'
+                f'"new_sl":null,"new_tp":null,'
+                f'"reasoning":"...","risk_score":0.0,"confidence":0.0}}'
             )
 
-            governance_prompt = Msg(name='user', content=governance_prompt_content, role='user')
+            gov_sys_prompt = self._get_sys_prompt('governance-decision', db)
+            model_name = agent_model_names.get('governance-decision', default_model_name)
+            gov_model = build_model(provider, model_name, base_url, api_key)
 
-            # Use trader-agent for governance decision
-            trader_factory = ALL_AGENT_FACTORIES.get('trader-agent')
-            if not trader_factory:
-                raise RuntimeError('trader-agent factory not found')
-
-            model_name = agent_model_names.get('trader-agent', default_model_name)
-            model = build_model(provider, model_name, base_url, api_key)
-            trader_toolkit = await build_toolkit(
-                "trader-agent", ohlc=ohlc, news=market_data.get("news", {}),
-                snapshot=snapshot,
-                decision_mode=_resolved_decision_mode,
-                execution_mode=_resolved_execution_mode,
-            )
-            trader = trader_factory(
-                model=model,
-                formatter=chat_fmt,
-                toolkit=trader_toolkit,
-                sys_prompt=self._get_sys_prompt('trader-agent', db),
-            )
-
-            response = await trader(governance_prompt)
-            raw_decision = {}
-            if hasattr(response, 'metadata') and isinstance(response.metadata, dict):
-                raw_decision = response.metadata
-            elif hasattr(response, 'content'):
+            # Direct LLM call — no ReActAgent needed; governance decision is a single JSON generation step
+            import re as _re2
+            gov_messages = [
+                {"role": "system", "content": gov_sys_prompt},
+                {"role": "user", "content": governance_prompt_content},
+            ]
+            raw_decision: dict = {}
+            try:
+                llm_resp = await gov_model(gov_messages)
+                # ChatResponse.content is a list of blocks (TextBlock, ToolUseBlock, …)
+                # Extract text from all TextBlocks; fall back to str(llm_resp).
                 try:
-                    content_str = str(response.content)
-                    json_match = _re.search(r'\{.*\}', content_str, _re.DOTALL)
-                    if json_match:
-                        raw_decision = json.loads(json_match.group())
+                    content = llm_resp.get('content') or getattr(llm_resp, 'content', None)
+                    if isinstance(content, list):
+                        raw_text = ''.join(
+                            block.get('text', '') for block in content
+                            if isinstance(block, dict) and block.get('type') == 'text'
+                        )
+                    else:
+                        raw_text = str(content) if content is not None else str(llm_resp)
                 except Exception:
-                    pass
+                    raw_text = str(llm_resp)
+                # Strip markdown code fences LLMs commonly add
+                clean_text = _re2.sub(r'```(?:json)?\s*|\s*```', '', raw_text).strip()
+                raw_decision = _try_extract_json(clean_text)
+                logger.info(
+                    'governance_decision_llm run_id=%d model=%s raw_len=%d extracted_keys=%s preview=%.200s',
+                    run.id, model_name, len(raw_text), list(raw_decision.keys()), clean_text,
+                )
+                if not raw_decision:
+                    logger.warning(
+                        'governance_decision_no_json run_id=%d full_response=%.500s',
+                        run.id, raw_text,
+                    )
+            except Exception as _llm_exc:
+                logger.error('governance_decision_llm_failed run_id=%d error=%s', run.id, _llm_exc, exc_info=True)
 
             decision = self._parse_governance_decision(raw_decision)
 
             _set_progress(90)
 
-            # Persist decision into run
+            # Persist decision + debug trace into run
             run.decision = decision.model_dump()
             run.status = 'completed'
             run.progress = 100
+            existing_trace = run.trace if isinstance(run.trace, dict) else {}
+            run.trace = {
+                **existing_trace,
+                'debug_governance': {
+                    'model': model_name,
+                    'raw_llm_response': raw_text if 'raw_text' in dir() else None,
+                    'extracted_keys': list(raw_decision.keys()),
+                    'parse_ok': decision.reasoning != 'Parse error — defaulting to HOLD for safety.',
+                    'phase1_agents': list(phase1_results.keys()),
+                    'analysis_depth': analysis_depth,
+                },
+            }
             db.commit()
 
             logger.info(
-                'governance_run_completed run_id=%d position_id=%s action=%s risk_score=%.2f',
-                run.id, run.governance_position_id, decision.action, decision.risk_score,
+                'governance_run_completed run_id=%d position_id=%s action=%s risk_score=%.2f confidence=%.2f',
+                run.id, run.governance_position_id, decision.action, decision.risk_score, decision.confidence,
             )
 
             return decision.model_dump()
