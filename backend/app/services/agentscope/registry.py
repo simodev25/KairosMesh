@@ -842,6 +842,81 @@ class AgentScopeRegistry:
         except Exception as exc:
             logger.warning("Failed to write debug trace: %s", exc)
 
+    def _write_governance_debug_trace(
+        self,
+        run: Any,
+        position_context: dict,
+        analysis_depth: str,
+        phase1_results: dict,
+        debate_summary: str,
+        raw_decision: dict,
+        raw_text: str,
+        model_name: str,
+    ) -> None:
+        """Write a governance debug trace JSON file to ./debug-governance/."""
+        from app.core.config import get_settings
+        import os
+
+        settings = get_settings()
+        if not settings.debug_trade_json_enabled:
+            return
+
+        try:
+            trace_dir = os.path.join(
+                os.path.dirname(settings.debug_trade_json_dir or "./debug-traces"),
+                "debug-governance",
+            )
+            os.makedirs(trace_dir, exist_ok=True)
+
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            pos_id = str(getattr(run, "governance_position_id", "unknown") or "unknown")
+            filename = f"gov-run-{run.id}-pos-{pos_id}-{ts}.json"
+            filepath = os.path.join(trace_dir, filename)
+
+            # Serialise phase1 results (Pydantic models or plain dicts)
+            def _dump(v: Any) -> Any:
+                if hasattr(v, "model_dump"):
+                    return v.model_dump()
+                return v
+
+            payload = {
+                "schema_version": 1,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "run": {
+                    "id": run.id,
+                    "pair": getattr(run, "pair", None),
+                    "timeframe": getattr(run, "timeframe", None),
+                    "status": getattr(run, "status", None),
+                    "position_id": pos_id,
+                    "analysis_depth": analysis_depth,
+                    "created_at": str(getattr(run, "created_at", "")),
+                    "updated_at": str(getattr(run, "updated_at", "")),
+                },
+                "position": position_context,
+                "phase1_results": {k: _dump(v) for k, v in phase1_results.items()},
+                "debate_summary": debate_summary or None,
+                "llm": {
+                    "model": model_name,
+                    "raw_response": raw_text,
+                    "extracted_json": raw_decision,
+                    "parse_ok": bool(raw_decision),
+                },
+                "decision": getattr(run, "decision", {}),
+            }
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+
+            logger.info("Governance debug trace written: %s", filepath)
+
+            existing_trace = run.trace if isinstance(run.trace, dict) else {}
+            run.trace = {
+                **existing_trace,
+                "debug_governance_trace_file": filepath,
+            }
+        except Exception as exc:
+            logger.warning("Failed to write governance debug trace: %s", exc)
+
     def _build_prompt_meta(self, db, agent_name: str, model_name: str, llm_enabled: bool,
                            variables: dict | None = None,
                            _prompt_cache: dict | None = None) -> dict[str, Any]:
@@ -1425,6 +1500,18 @@ class AgentScopeRegistry:
                     'analysis_depth': analysis_depth,
                 },
             }
+            db.commit()
+
+            self._write_governance_debug_trace(
+                run=run,
+                position_context=position_context,
+                analysis_depth=analysis_depth,
+                phase1_results=phase1_results,
+                debate_summary=debate_summary,
+                raw_decision=raw_decision,
+                raw_text=raw_text if 'raw_text' in dir() else '',
+                model_name=model_name,
+            )
             db.commit()
 
             logger.info(
