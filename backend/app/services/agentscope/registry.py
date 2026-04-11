@@ -1263,6 +1263,12 @@ class AgentScopeRegistry:
                            chat_fmt, llm_enabled, agent_model_names, toolkit) -> tuple[dict, dict]:
         """Run Phase 1 agents (technical, news, market-context).
 
+        Phase 1 agents always receive pure market context only — no position
+        info.  The position context (governance_msg) is reserved for the
+        governance-decision agent so that analysts produce their standard
+        structured output (TechnicalAnalysisResult, etc.) rather than
+        governance-flavoured prose.
+
         Returns:
             (results, raw_msgs) where results maps agent name → Pydantic model
             (used for phase1_summary / debate) and raw_msgs maps agent name →
@@ -1289,13 +1295,9 @@ class AgentScopeRegistry:
                 toolkit=toolkit,
                 sys_prompt=self._get_sys_prompt(name, db),
             )
-            # Prepend governance context if provided
-            if governance_msg is not None:
-                combined_content = f"{governance_msg.content}\n\n{market_msg.content}"
-                msg_to_send = Msg(name=market_msg.name, content=combined_content, role=market_msg.role)
-            else:
-                msg_to_send = market_msg
-            response = await agent(msg_to_send)
+            # Always send pure market context — same as the regular execute() pipeline.
+            # Position context goes only to the governance-decision agent.
+            response = await agent(market_msg)
             # Rich dict (text + metadata + tool_results) — used for debug traces
             raw_msgs[name] = _msg_to_dict(response)
             # Pydantic model — used for phase1_summary and debate prompt

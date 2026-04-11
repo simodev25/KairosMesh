@@ -55,7 +55,7 @@ def list_runs(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[RunOut]:
-    query = db.query(AnalysisRun)
+    query = db.query(AnalysisRun).filter(AnalysisRun.run_type != 'governance')
     # Per-user data isolation: admins see all, others see only their own
     if user.role not in {Role.SUPER_ADMIN, Role.ADMIN}:
         query = query.filter(AnalysisRun.created_by_id == user.id)
