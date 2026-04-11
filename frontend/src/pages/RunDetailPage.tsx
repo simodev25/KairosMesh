@@ -385,6 +385,7 @@ const AGENT_ICON_MAP: Record<string, { icon: LucideIcon; color: string }> = {
   'trader-agent':           { icon: Wallet,        color: '#06B6D4' },
   'risk-manager':           { icon: ShieldAlert,   color: '#F97316' },
   'execution-manager':      { icon: Zap,           color: '#EAB308' },
+  'governance-decision':    { icon: ShieldAlert,   color: '#F59E0B' },
 };
 const DEFAULT_AGENT_ICON = { icon: Bot, color: '#5A5E6E' };
 
@@ -394,12 +395,18 @@ const PIPELINE_AGENTS = [
   'trader-agent', 'risk-manager', 'execution-manager',
 ];
 
-function PipelineProgress({ steps, status, progress }: { steps: AgentStep[]; status: string; progress?: number }) {
+const GOVERNANCE_PIPELINE_AGENTS = [
+  'technical-analyst', 'news-analyst', 'market-context-analyst',
+  'governance-decision',
+];
+
+function PipelineProgress({ steps, status, progress, isGovernance }: { steps: AgentStep[]; status: string; progress?: number; isGovernance?: boolean }) {
+  const pipelineAgents = isGovernance ? GOVERNANCE_PIPELINE_AGENTS : PIPELINE_AGENTS;
   const completedAgents = new Set(steps.map(s => s.agent_name));
   const isActive = !TERMINAL_RUN_STATUSES.has(status);
 
   // Determine which agent is currently running (first non-completed in pipeline order)
-  const currentAgent = isActive ? PIPELINE_AGENTS.find(name => !completedAgents.has(name)) ?? null : null;
+  const currentAgent = isActive ? pipelineAgents.find(name => !completedAgents.has(name)) ?? null : null;
 
   return (
     <div className="mb-4">
@@ -409,18 +416,18 @@ function PipelineProgress({ steps, status, progress }: { steps: AgentStep[]; sta
           <div className="flex-1 h-1.5 rounded-full bg-surface-alt overflow-hidden">
             <div
               className="h-full bg-accent rounded-full transition-all duration-700"
-              style={{ width: `${progress ?? Math.round((completedAgents.size / PIPELINE_AGENTS.length) * 100)}%` }}
+              style={{ width: `${progress ?? Math.round((completedAgents.size / pipelineAgents.length) * 100)}%` }}
             />
           </div>
           <span className="text-[9px] font-mono text-accent shrink-0">
-            {progress ?? Math.round((completedAgents.size / PIPELINE_AGENTS.length) * 100)}%
+            {progress ?? Math.round((completedAgents.size / pipelineAgents.length) * 100)}%
           </span>
         </div>
       )}
 
       {/* Agent pipeline steps */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {PIPELINE_AGENTS.map((name) => {
+        {pipelineAgents.map((name) => {
           const { icon: Icon, color } = AGENT_ICON_MAP[name] ?? DEFAULT_AGENT_ICON;
           const isDone = completedAgents.has(name);
           const isRunning = name === currentAgent;
@@ -457,6 +464,9 @@ function PipelineProgress({ steps, status, progress }: { steps: AgentStep[]; sta
 function AgentStepPanel({ step, jsonText }: { step: AgentStep; jsonText: string }) {
   const [open, setOpen] = useState(false);
   const { icon: Icon, color } = AGENT_ICON_MAP[step.agent_name] ?? DEFAULT_AGENT_ICON;
+  // Extract text preview from output_payload.text (the raw LLM response)
+  const llmText = typeof step.output_payload?.text === 'string' ? step.output_payload.text : null;
+  const previewText = llmText ? llmText.slice(0, 300).trim() : null;
   return (
     <div className="hw-surface-alt overflow-hidden">
       <button
@@ -482,6 +492,20 @@ function AgentStepPanel({ step, jsonText }: { step: AgentStep; jsonText: string 
           <ChevronDown className={`w-3.5 h-3.5 text-[#4A4B50] transition-transform duration-200 ${open ? '' : '-rotate-90'}`} />
         </div>
       </button>
+      {/* LLM text preview — always visible, collapsed on click */}
+      {previewText && !open && (
+        <div
+          className="px-4 pb-2.5 cursor-pointer"
+          onClick={() => setOpen(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => e.key === 'Enter' && setOpen(true)}
+        >
+          <p className="text-[10px] text-text-muted leading-relaxed line-clamp-3 whitespace-pre-wrap">
+            {previewText}{llmText && llmText.length > 300 ? '…' : ''}
+          </p>
+        </div>
+      )}
       {open && (
         <div className="px-4 pb-4">
           {step.error && <div className="alert mb-3">{step.error}</div>}
@@ -923,7 +947,7 @@ export function RunDetailPage() {
         })()}
 
         {/* Pipeline progress */}
-        <PipelineProgress steps={run.steps} status={run.status} progress={run.progress} />
+        <PipelineProgress steps={run.steps} status={run.status} progress={run.progress} isGovernance={isGovernanceRun} />
 
         <div className="flex items-center justify-between mb-2">
           <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase">FINAL_DECISION</span>
@@ -982,6 +1006,7 @@ export function RunDetailPage() {
       <ExpansionPanel
         title="AGENT_STEPS"
         icon={Layers}
+        defaultOpen={run.steps.length > 0}
         headerRight={<span className="text-[9px] font-bold text-[#4A4B50] tabular-nums">{run.steps.length} steps</span>}
       >
         <div className="flex flex-col gap-2">
