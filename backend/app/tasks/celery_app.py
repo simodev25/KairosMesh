@@ -1,8 +1,30 @@
+import asyncio
 import logging
 import os
+from typing import Any, Coroutine, TypeVar
 
 from celery import Celery
 from celery.signals import after_setup_logger, worker_process_init, worker_process_shutdown, worker_ready
+
+_T = TypeVar('_T')
+
+# Persistent event loop per worker process — avoids the RuntimeError('Event loop is closed')
+# that occurs when asyncio.run() closes the loop and httpx tries to clean up afterwards.
+_worker_loop: asyncio.AbstractEventLoop | None = None
+
+
+def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Run a coroutine on the worker's persistent event loop.
+
+    Use this instead of asyncio.run() inside Celery tasks so that the loop
+    stays alive between tasks, allowing httpx/anyio to clean up connections
+    without hitting 'RuntimeError: Event loop is closed'.
+    """
+    global _worker_loop
+    if _worker_loop is None or _worker_loop.is_closed():
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+    return _worker_loop.run_until_complete(coro)
 
 from app.core.config import get_settings
 from app.observability.prometheus import mark_worker_process_dead, start_worker_metrics_server
@@ -103,7 +125,10 @@ def _start_prometheus_worker_metrics_server(**_: object) -> None:
 
 @worker_process_init.connect(weak=False)
 def _init_agentscope_tracing_in_worker_process(**_: object) -> None:
-    """Initialize tracing in each forked Celery worker process."""
+    """Initialize tracing and a persistent event loop in each forked worker process."""
+    global _worker_loop
+    _worker_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_worker_loop)
     init_agentscope_tracing_for_current_process()
 
 

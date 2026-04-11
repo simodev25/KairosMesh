@@ -5,13 +5,12 @@ Runs every 15 minutes during market hours:
 2. Saves a 'periodic' snapshot to DB
 3. Updates daily_high_equity if new high
 """
-import asyncio
 import logging
 from datetime import datetime, timezone
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal
-from app.tasks.celery_app import celery_app
+from app.tasks.celery_app import celery_app, run_async
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -141,7 +140,7 @@ def snapshot_portfolio() -> None:
                     )
                     return acct_resp, pos_resp
 
-            acct_resp, pos_resp = asyncio.run(_fetch_rest())
+            acct_resp, pos_resp = run_async(_fetch_rest())
 
             if acct_resp.status_code != 200:
                 logger.warning("portfolio_snapshot REST failed: account=%d positions=%d",

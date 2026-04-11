@@ -1,12 +1,10 @@
-import asyncio
-
 from app.core.config import get_settings
 from app.db.models.run import AnalysisRun
 from app.db.session import SessionLocal
 from app.services.agentscope.registry import AgentScopeRegistry
 from app.services.market.news_provider import MarketProvider
 from app.services.prompts.registry import PromptTemplateService
-from app.tasks.celery_app import celery_app
+from app.tasks.celery_app import celery_app, run_async
 
 settings = get_settings()
 
@@ -29,7 +27,7 @@ def execute(run_id: int, risk_percent: float, metaapi_account_ref: int | None = 
             prompt_service=PromptTemplateService(),
             market_provider=MarketProvider(),
         )
-        asyncio.run(
+        run_async(
             registry.execute(
                 db,
                 run,

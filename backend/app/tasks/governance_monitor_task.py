@@ -4,7 +4,6 @@ Two tasks:
 - check_all: periodic Beat task that triggers governance analysis for all open positions
 - run_governance_task: per-run task that executes the governance pipeline for one run
 """
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -12,11 +11,13 @@ logger = logging.getLogger(__name__)
 # Import celery_app lazily to avoid pulling the full task dependency chain
 # (agentscope, etc.) when this module is imported in test environments.
 try:
-    from app.tasks.celery_app import celery_app as _celery_app
+    from app.tasks.celery_app import celery_app as _celery_app, run_async
     _CELERY_AVAILABLE = True
 except Exception:  # pragma: no cover
+    import asyncio
     _CELERY_AVAILABLE = False
     _celery_app = None  # type: ignore[assignment]
+    run_async = asyncio.run  # type: ignore[assignment]
 
 
 def _check_all_impl() -> None:
@@ -37,7 +38,7 @@ def _check_all_impl() -> None:
 
         depth = settings.get('analysis_depth', 'light')
         service = GovernanceService()
-        run_ids = asyncio.run(
+        run_ids = run_async(
             service.analyze_open_positions(db, depth=depth, system_user_id=system_user_id)
         )
         if run_ids:
@@ -62,7 +63,7 @@ def _run_governance_task_impl(run_id: int) -> None:
             return
 
         registry = AgentScopeRegistry()
-        asyncio.run(
+        run_async(
             registry.execute(
                 db, run,
                 pair=run.pair,

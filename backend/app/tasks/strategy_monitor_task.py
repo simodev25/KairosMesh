@@ -6,7 +6,6 @@ When a strategy has is_monitoring=True, this task:
 3. Checks if a new signal (BUY/SELL) has appeared
 4. If yes, creates a Run through the full agent workflow
 """
-import asyncio
 import logging
 
 from app.core.config import get_settings
@@ -14,7 +13,7 @@ from app.db.models.run import AnalysisRun
 from app.db.models.strategy import Strategy
 from app.db.session import SessionLocal
 from app.services.strategy.signal_engine import compute_strategy_overlays_and_signals
-from app.tasks.celery_app import celery_app
+from app.tasks.celery_app import celery_app, run_async
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -77,7 +76,7 @@ def _check_strategy(db, strategy: Strategy, run_analysis_execute) -> None:
                 timeframe=strategy.timeframe,
                 limit=200,
             )
-        result_data = asyncio.run(_fetch())
+        result_data = run_async(_fetch())
         candles = result_data.get('candles', []) if isinstance(result_data, dict) else []
         logger.info('strategy_monitor_candles id=%s count=%d', strategy.strategy_id, len(candles))
     except Exception as exc:
