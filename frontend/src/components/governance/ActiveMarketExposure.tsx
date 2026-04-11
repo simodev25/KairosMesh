@@ -1,4 +1,4 @@
-import { Settings, Zap, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import type { GovernancePosition } from '../../api/governance';
 import { reevaluateAll, reevaluatePosition } from '../../api/governance';
 import { useState } from 'react';
@@ -37,6 +37,7 @@ function DecisionBadge({ decision }: { decision: GovernancePosition['latest_gove
 
 export function ActiveMarketExposure({ positions, autoGuardian, onAutoGuardianToggle, onRefresh }: Props) {
   const [reevaluating, setReevaluating] = useState(false);
+  const [reevaluatingIds, setReevaluatingIds] = useState<Set<string>>(new Set());
 
   async function handleReevaluateAll() {
     setReevaluating(true);
@@ -49,11 +50,14 @@ export function ActiveMarketExposure({ positions, autoGuardian, onAutoGuardianTo
   }
 
   async function handleReevaluateOne(positionId: string) {
+    setReevaluatingIds(prev => new Set(prev).add(positionId));
     try {
       await reevaluatePosition(positionId);
       onRefresh();
     } catch {
-      // error is swallowed — position may already have an active run (409)
+      // 409 = run already in progress, silently ignored
+    } finally {
+      setReevaluatingIds(prev => { const n = new Set(prev); n.delete(positionId); return n; });
     }
   }
 
@@ -131,18 +135,15 @@ export function ActiveMarketExposure({ positions, autoGuardian, onAutoGuardianTo
                     <DecisionBadge decision={pos.latest_governance_run} />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <button className="w-7 h-7 rounded-lg border border-border bg-surface-raised flex items-center justify-center hover:bg-surface-alt transition-colors" title="Position settings">
-                        <Settings className="w-3.5 h-3.5 text-text-dim" />
-                      </button>
-                      <button
-                        onClick={() => void handleReevaluateOne(pos.id)}
-                        className="w-7 h-7 rounded-lg border border-accent/30 bg-accent/10 flex items-center justify-center hover:bg-accent/20 transition-colors"
-                        title="Reevaluate this position"
-                      >
-                        <Zap className="w-3.5 h-3.5 text-accent" />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => void handleReevaluateOne(pos.id)}
+                      disabled={reevaluatingIds.has(pos.id)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-accent/30 bg-accent/10 text-accent text-[10px] font-bold tracking-widest hover:bg-accent/20 transition-colors disabled:opacity-50"
+                      title="Reevaluate this position"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${reevaluatingIds.has(pos.id) ? 'animate-spin' : ''}`} />
+                      RUN
+                    </button>
                   </td>
                 </tr>
               );
