@@ -814,15 +814,22 @@ export function RunDetailPage() {
     URL.revokeObjectURL(url);
   };
 
+  const isGovernanceRun = (run as RunDetail & { run_type?: string }).run_type === 'governance';
+
   return (
     <div className="flex flex-col gap-5">
       {/* ── Header + Decision ─────────────────────────── */}
       <section className="hw-surface p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <span className="text-[11px] font-bold tracking-[0.12em] text-text uppercase">
-              RUN_#{run.id} // {instrumentTitle} // {run.timeframe}
-            </span>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[11px] font-bold tracking-[0.12em] text-text uppercase">
+                RUN_#{run.id} // {instrumentTitle} // {run.timeframe}
+              </span>
+              {isGovernanceRun && (
+                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">GOVERNANCE</span>
+              )}
+            </div>
             <div className="flex flex-wrap gap-3 mt-1">
               <span className="text-[10px] font-mono text-text-muted">Raw symbol: <code>{run.pair}</code></span>
               {instrument?.asset_class ? <span className="text-[10px] font-mono text-text-muted">Asset class: <code>{humanizeValue(instrument.asset_class)}</code></span> : null}
@@ -870,7 +877,8 @@ export function RunDetailPage() {
           const decision = run.decision && typeof run.decision === 'object' ? run.decision as Record<string, unknown> : {};
           const execution = decision.execution && typeof decision.execution === 'object' ? decision.execution as Record<string, unknown> : {};
           const debate = decision.debate && typeof decision.debate === 'object' ? decision.debate as Record<string, unknown> : {};
-          const traderDecision = typeof decision.decision === 'string' ? decision.decision : '-';
+          // Governance: action field; Analysis: decision field
+          const traderDecision = typeof decision.decision === 'string' ? decision.decision : (typeof decision.action === 'string' ? decision.action : '-');
           const execStatus = typeof execution.status === 'string' ? execution.status : '-';
           const conviction = typeof decision.confidence === 'number' ? `${Math.round(Number(decision.confidence) * 100)}%` : (typeof decision.conviction === 'number' ? `${Math.round(Number(decision.conviction) * 100)}%` : '-');
           const signal = typeof decision.signal === 'string' ? decision.signal : '-';
@@ -886,7 +894,7 @@ export function RunDetailPage() {
               <div><span className="micro-label">Timeframe</span><div className="text-[11px] font-mono text-text">{run.timeframe}</div></div>
               <div><span className="micro-label">Mode</span><div className="text-[11px] font-mono text-text">{run.mode}</div></div>
               <div><span className="micro-label">Running time</span><div className="text-[11px] font-mono text-text">{elapsed}</div></div>
-              <div><span className="micro-label">Decision</span><div className={`text-[11px] font-bold ${traderDecision === 'BUY' ? 'text-green-400' : traderDecision === 'SELL' ? 'text-red-400' : 'text-text-muted'}`}>{traderDecision} / {execStatus}</div></div>
+              <div><span className="micro-label">Decision</span><div className={`text-[11px] font-bold ${traderDecision === 'BUY' || traderDecision === 'HOLD' ? 'text-green-400' : traderDecision === 'SELL' || traderDecision === 'CLOSE' ? 'text-red-400' : 'text-amber-400'}`}>{traderDecision}{execStatus !== '-' ? ` / ${execStatus}` : ''}</div></div>
               <div><span className="micro-label">Signal</span><div className={`text-[11px] font-bold ${signal === 'bullish' ? 'text-green-400' : signal === 'bearish' ? 'text-red-400' : 'text-text-muted'}`}>{signal}</div></div>
               <div><span className="micro-label">Conviction</span><div className="text-[11px] font-mono text-text">{conviction}</div></div>
               <div><span className="micro-label">Debate</span><div className="text-[11px] font-mono text-text">{debateWinner} ({debateConviction})</div></div>
@@ -895,7 +903,7 @@ export function RunDetailPage() {
             </div>
             {(decision.reasoning || decision.trader_summary) ? (
               <div className="mt-1 mb-3 p-2.5 rounded bg-surface-alt/20 border border-border/20">
-                <span className="micro-label">Trader reasoning</span>
+                <span className="micro-label">{isGovernanceRun ? 'Governance reasoning' : 'Trader reasoning'}</span>
                 <p className="text-[10px] text-text-muted mt-1 leading-relaxed">{String(decision.reasoning || decision.trader_summary)}</p>
               </div>
             ) : null}
@@ -914,7 +922,7 @@ export function RunDetailPage() {
           </>);
         })()}
 
-        {/* Pipeline progress — shows agent-by-agent status */}
+        {/* Pipeline progress */}
         <PipelineProgress steps={run.steps} status={run.status} progress={run.progress} />
 
         <div className="flex items-center justify-between mb-2">

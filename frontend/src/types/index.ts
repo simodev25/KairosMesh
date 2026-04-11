@@ -13,6 +13,7 @@ export interface Run {
   pair: string;
   timeframe: string;
   mode: ExecutionMode;
+  run_type?: string;
   status: string;
   progress?: number;
   decision: Record<string, unknown>;

@@ -33,6 +33,7 @@ class RunOut(BaseModel):
     pair: str
     timeframe: str
     mode: str
+    run_type: str = 'analysis'
     status: str
     progress: int = 0
     decision: dict[str, Any]

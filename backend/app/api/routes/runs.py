@@ -33,6 +33,7 @@ def _serialize_run(
         'pair': run.pair,
         'timeframe': run.timeframe,
         'mode': run.mode,
+        'run_type': run.run_type or 'analysis',
         'status': run.status,
         'progress': run.progress,
         'decision': run.decision if isinstance(run.decision, dict) else {},
@@ -55,7 +56,7 @@ def list_runs(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[RunOut]:
-    query = db.query(AnalysisRun).filter(AnalysisRun.run_type != 'governance')
+    query = db.query(AnalysisRun)
     # Per-user data isolation: admins see all, others see only their own
     if user.role not in {Role.SUPER_ADMIN, Role.ADMIN}:
         query = query.filter(AnalysisRun.created_by_id == user.id)

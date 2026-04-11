@@ -1298,8 +1298,10 @@ class AgentScopeRegistry:
             # Always send pure market context — same as the regular execute() pipeline.
             # Position context goes only to the governance-decision agent.
             response = await agent(market_msg)
-            # Rich dict (text + metadata + tool_results) — used for debug traces
-            raw_msgs[name] = _msg_to_dict(response)
+            # Extract tool invocations (same as execute() does)
+            invocations = await _extract_tool_invocations(agent)
+            # Rich dict (text + metadata + tool_results) — used for debug traces and steps
+            raw_msgs[name] = _msg_to_dict(response, tool_invocations=invocations if invocations else None)
             # Pydantic model — used for phase1_summary and debate prompt
             raw = raw_msgs[name].get("metadata") or {}
             try:
@@ -1309,6 +1311,100 @@ class AgentScopeRegistry:
 
         await asyncio.gather(*[_run_one(n, s) for n, s in phase1_agents])
         return results, raw_msgs
+
+    async def _do_governance_decision(
+        self, db, run, pair: str, timeframe: str,
+        analysis_summary: str, debate_result,
+        provider: str, default_model_name: str, base_url: str, api_key: str,
+        agent_model_names: dict,
+    ) -> dict:
+        """Call governance-decision agent and record the step.
+
+        Called at the end of the main execute() pipeline — after phase 1 (LIGHT)
+        or after phases 1+2+3 (FULL) — instead of the phase 4 trader/risk/execution
+        sequence.  All preceding agent steps are already recorded.
+        """
+        import re as _re_gov
+        position_context = run.trace.get('governance_position', {}) if isinstance(run.trace, dict) else {}
+
+        gov_prompt = (
+            f"OPEN POSITION:\n{json.dumps(position_context, default=str)}\n\n"
+            f"MARKET ANALYSIS:\n{analysis_summary}"
+        )
+        if debate_result is not None:
+            gov_prompt += (
+                f"\n\nDEBATE RESULT:\nWinner: {debate_result.winner} | "
+                f"Conviction: {debate_result.conviction}\n"
+                f"Key argument: {debate_result.key_argument}\n"
+                f"Weakness: {debate_result.weakness}"
+            )
+        gov_prompt += (
+            "\n\nReply with ONLY a JSON object — no markdown, no prose. Required fields:\n"
+            '{"action":"HOLD|ADJUST_SL|ADJUST_TP|ADJUST_BOTH|CLOSE",'
+            '"new_sl":null,"new_tp":null,"reasoning":"...","risk_score":0.0,"confidence":0.0}'
+        )
+
+        gov_sys_prompt = self._get_sys_prompt('governance-decision', db)
+        gov_model_name = agent_model_names.get('governance-decision', default_model_name)
+        gov_model = build_model(provider, gov_model_name, base_url, api_key)
+        gov_messages = [
+            {"role": "system", "content": gov_sys_prompt},
+            {"role": "user", "content": gov_prompt},
+        ]
+
+        raw_decision: dict = {}
+        raw_text = ""
+        try:
+            llm_resp = await gov_model(gov_messages)
+            try:
+                content = llm_resp.get('content') or getattr(llm_resp, 'content', None)
+                if isinstance(content, list):
+                    raw_text = ''.join(
+                        block.get('text', '') for block in content
+                        if isinstance(block, dict) and block.get('type') == 'text'
+                    )
+                else:
+                    raw_text = str(content) if content is not None else str(llm_resp)
+            except Exception:
+                raw_text = str(llm_resp)
+            clean_text = _re_gov.sub(r'```(?:json)?\s*|\s*```', '', raw_text).strip()
+            raw_decision = _try_extract_json(clean_text)
+            logger.info(
+                'governance_decision_llm run_id=%d model=%s keys=%s preview=%.200s',
+                run.id, gov_model_name, list(raw_decision.keys()), clean_text,
+            )
+        except Exception as exc:
+            logger.error('governance_decision_failed run_id=%d: %s', run.id, exc, exc_info=True)
+
+        gov_decision = self._parse_governance_decision(raw_decision)
+
+        # Record as an agent step — same pattern as execution-manager
+        self._record_step(
+            db, run, "governance-decision",
+            {"pair": pair, "timeframe": timeframe, "position_id": str(position_context.get("id", ""))},
+            {
+                "text": raw_text,
+                "metadata": raw_decision,
+                "llm_enabled": True,
+                "llm_model": gov_model_name,
+                "action": gov_decision.action,
+                "reasoning": gov_decision.reasoning,
+                "risk_score": gov_decision.risk_score,
+                "confidence": gov_decision.confidence,
+            },
+        )
+        self._flush_pending_steps(db)
+
+        run.decision = gov_decision.model_dump()
+        run.status = 'completed'
+        run.progress = 100
+        db.commit()
+
+        logger.info(
+            'governance_completed run_id=%d action=%s risk_score=%.2f confidence=%.2f',
+            run.id, gov_decision.action, gov_decision.risk_score, gov_decision.confidence,
+        )
+        return gov_decision.model_dump()
 
     async def _execute_governance(self, db, run, pair: str, timeframe: str) -> dict:
         """Governance pipeline: Phase 1 agents + optional Phase 2 debate + governance decision.
@@ -1368,10 +1464,22 @@ class AgentScopeRegistry:
             _set_progress(20)
 
             # Run Phase 1 agents
+            t_phase1 = time.time()
             phase1_results, phase1_raw_msgs = await self._run_phase1(
                 db, run, pair, timeframe, context_msg, market_context_msg,
                 chat_fmt, llm_enabled, agent_model_names, phase1_toolkit,
             )
+            phase1_ms = (time.time() - t_phase1) * 1000
+
+            # Record steps for phase1 agents — same as execute() does
+            for name, raw_msg in phase1_raw_msgs.items():
+                self._record_step(
+                    db, run, name,
+                    {"pair": pair, "timeframe": timeframe, "llm_enabled": llm_enabled.get(name, False)},
+                    {**raw_msg, "llm_enabled": llm_enabled.get(name, False), "llm_model": agent_model_names.get(name, default_model_name)},
+                    elapsed_ms=phase1_ms / max(len(phase1_raw_msgs), 1),
+                )
+            self._flush_pending_steps(db)
 
             _set_progress(50)
 
@@ -1557,6 +1665,28 @@ class AgentScopeRegistry:
 
             decision = self._parse_governance_decision(raw_decision)
 
+            # Record governance-decision as a step — same pattern as execution-manager
+            self._record_step(
+                db, run, "governance-decision",
+                {
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "position_id": str(position_context.get("id", "")),
+                    "analysis_depth": analysis_depth,
+                },
+                {
+                    "text": raw_text if "raw_text" in dir() else "",
+                    "metadata": raw_decision,
+                    "llm_enabled": True,
+                    "llm_model": model_name,
+                    "action": decision.action,
+                    "reasoning": decision.reasoning,
+                    "risk_score": decision.risk_score,
+                    "confidence": decision.confidence,
+                },
+            )
+            self._flush_pending_steps(db)
+
             _set_progress(90)
 
             # Persist decision + debug trace into run
@@ -1630,10 +1760,8 @@ class AgentScopeRegistry:
             db.commit()
             db.refresh(run)
 
-            # ── Governance branch ────────────────────────────────────────────
-            if getattr(run, 'run_type', 'analysis') == 'governance':
-                return await self._execute_governance(db, run, pair, timeframe)
-            # ── End governance branch ────────────────────────────────────────
+            _is_governance = getattr(run, 'run_type', 'analysis') == 'governance'
+            _gov_depth = (run.trace.get('analysis_depth', 'light') if isinstance(run.trace, dict) else 'light') if _is_governance else None
 
             from app.services.llm.model_selector import AgentModelSelector
             model_selector = AgentModelSelector()
@@ -1841,6 +1969,13 @@ class AgentScopeRegistry:
                 f"Analysis results from Phase 1:\n{analysis_summary}\n\n"
                 f"Original context:\n{context_msg.get_text_content()}", "system")
 
+            # ── Governance LIGHT: phase 1 done → call governance-decision ──────
+            if _is_governance and _gov_depth != 'full':
+                return await self._do_governance_decision(
+                    db, run, pair, timeframe, analysis_summary, None,
+                    provider, default_model_name, base_url, api_key, agent_model_names,
+                )
+
             # Rebuild researcher toolkits with Phase 1 outputs.
             # Researchers need analysis_outputs for evidence_query.
             for rname in ("bullish-researcher", "bearish-researcher"):
@@ -1930,6 +2065,13 @@ class AgentScopeRegistry:
                 self._record_step(db, run, name,
                     {"phase": "debate", "llm_enabled": llm_enabled.get(name, False)},
                     d, elapsed_ms=debate_ms / 2)
+
+            # ── Governance FULL: phases 1+2+3 done → call governance-decision ──
+            if _is_governance:
+                return await self._do_governance_decision(
+                    db, run, pair, timeframe, analysis_summary, debate_result,
+                    provider, default_model_name, base_url, api_key, agent_model_names,
+                )
 
             # ── Fetch portfolio state for Phase 4 ──
             _portfolio_state = None

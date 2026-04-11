@@ -23,7 +23,6 @@ coverage/
 .vscode/
 .agents/skills/architecture-designer/references/adr-template.md
 backend/mock_run/*
-backend/config/skills/strategy-designer/SKILL.md
 backend/debug-strategy/*
 
 # Claude Code internal
@@ -38,3 +37,7 @@ frontend/test-results/
 
 # Internal docs
 MIGRATION_REPORT_EN.md
+docs/superpowers/plans/2026-04-10-governance-monitoring.md
+.gitignore
+.gitignore
+backend/debug-governance/

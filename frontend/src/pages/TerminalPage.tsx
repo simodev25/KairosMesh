@@ -629,7 +629,8 @@ export function TerminalPage() {
               )}
               {pagedRuns.map((run) => {
                 const trace = run.trace || {};
-                const isStrategy = trace.triggered_by === 'strategy_monitor';
+                const isGovernance = run.run_type === 'governance';
+                const isStrategy = !isGovernance && trace.triggered_by === 'strategy_monitor';
                 const stratName = typeof trace.strategy_name === 'string' ? trace.strategy_name : null;
                 const signalSide = typeof trace.signal_side === 'string' ? trace.signal_side : null;
                 const decision = asRecord(run.decision);
@@ -638,7 +639,9 @@ export function TerminalPage() {
                   <tr key={run.id} className={run.status === 'cancelled' ? 'opacity-40' : ''}>
                     <td className="font-mono text-text-muted">{run.id}</td>
                     <td>
-                      {isStrategy ? (
+                      {isGovernance ? (
+                        <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">GOVERNANCE</span>
+                      ) : isStrategy ? (
                         <div>
                           <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">STRATEGY</span>
                           {stratName && (
