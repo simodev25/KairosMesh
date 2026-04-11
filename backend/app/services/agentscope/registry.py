@@ -847,13 +847,17 @@ class AgentScopeRegistry:
         run: Any,
         position_context: dict,
         analysis_depth: str,
-        phase1_results: dict,
+        phase1_raw_msgs: dict,
         debate_summary: str,
         raw_decision: dict,
         raw_text: str,
         model_name: str,
     ) -> None:
-        """Write a governance debug trace JSON file to ./debug-governance/."""
+        """Write a governance debug trace JSON file to ./debug-governance/.
+
+        Uses the same agent_steps / workflow / analysis_bundle structure as
+        debug-traces so the files are easy to compare side-by-side.
+        """
         from app.core.config import get_settings
         import os
 
@@ -870,22 +874,79 @@ class AgentScopeRegistry:
 
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             pos_id = str(getattr(run, "governance_position_id", "unknown") or "unknown")
+            pair = getattr(run, "pair", "")
+            timeframe = getattr(run, "timeframe", "")
             filename = f"gov-run-{run.id}-pos-{pos_id}-{ts}.json"
             filepath = os.path.join(trace_dir, filename)
 
-            # Serialise phase1 results (Pydantic models or plain dicts)
-            def _dump(v: Any) -> Any:
-                if hasattr(v, "model_dump"):
-                    return v.model_dump()
-                return v
+            # Build agent_steps in the same format as debug-traces
+            phase1_agent_names = ["technical-analyst", "news-analyst", "market-context-analyst"]
+            workflow = phase1_agent_names + (
+                ["bullish-researcher", "bearish-researcher"] if analysis_depth == "full" else []
+            ) + ["governance-decision"]
+
+            agent_steps = []
+            for name in phase1_agent_names:
+                out = phase1_raw_msgs.get(name, {})
+                step_output = {**out.get("metadata", {})}
+                if out.get("tool_results"):
+                    for tool_name, tool_data in out["tool_results"].items():
+                        if isinstance(tool_data, dict):
+                            if tool_name == "indicator_bundle":
+                                step_output.setdefault("indicators", tool_data)
+                            elif tool_name == "pattern_detector":
+                                step_output.setdefault("patterns", tool_data.get("patterns", []))
+                            elif tool_name == "support_resistance_detector":
+                                step_output.setdefault("structure", tool_data)
+                            elif tool_name == "multi_timeframe_context":
+                                step_output.setdefault("multi_timeframe", tool_data)
+                if out.get("tooling"):
+                    step_output["tooling"] = out["tooling"]
+                agent_steps.append({
+                    "agent_name": name,
+                    "status": "completed",
+                    "input_payload": {"pair": pair, "timeframe": timeframe, "position_id": pos_id},
+                    "output_payload": step_output,
+                    "output_text": out.get("text", "")[:2000],
+                })
+
+            # Governance-decision step
+            agent_steps.append({
+                "agent_name": "governance-decision",
+                "status": "completed",
+                "input_payload": {"analysis_depth": analysis_depth},
+                "output_payload": {
+                    "model": model_name,
+                    "raw_response": raw_text[:2000] if raw_text else "",
+                    "extracted_json": raw_decision,
+                    "parse_ok": bool(raw_decision),
+                    "debate_summary": debate_summary or None,
+                },
+                "output_text": raw_text[:2000] if raw_text else "",
+            })
+
+            def _bundle_out(name: str) -> dict:
+                out = phase1_raw_msgs.get(name, {})
+                meta = out.get("metadata", {})
+                if not meta:
+                    text = out.get("text", "")
+                    if text:
+                        meta = {"summary": text[:1000]}
+                return meta
+
+            analysis_bundle = {
+                "analysis_outputs": {k: _bundle_out(k) for k in phase1_agent_names},
+                "governance_decision": raw_decision,
+            }
 
             payload = {
                 "schema_version": 1,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
+                "runtime_engine": "governance_v1",
                 "run": {
                     "id": run.id,
-                    "pair": getattr(run, "pair", None),
-                    "timeframe": getattr(run, "timeframe", None),
+                    "pair": pair,
+                    "timeframe": timeframe,
                     "status": getattr(run, "status", None),
                     "position_id": pos_id,
                     "analysis_depth": analysis_depth,
@@ -893,8 +954,9 @@ class AgentScopeRegistry:
                     "updated_at": str(getattr(run, "updated_at", "")),
                 },
                 "position": position_context,
-                "phase1_results": {k: _dump(v) for k, v in phase1_results.items()},
-                "debate_summary": debate_summary or None,
+                "workflow": workflow,
+                "agent_steps": agent_steps,
+                "analysis_bundle": analysis_bundle,
                 "llm": {
                     "model": model_name,
                     "raw_response": raw_text,
@@ -902,6 +964,7 @@ class AgentScopeRegistry:
                     "parse_ok": bool(raw_decision),
                 },
                 "decision": getattr(run, "decision", {}),
+                "debate_summary": debate_summary or None,
             }
 
             with open(filepath, "w", encoding="utf-8") as f:
@@ -1197,9 +1260,16 @@ class AgentScopeRegistry:
             )
 
     async def _run_phase1(self, db, run, pair, timeframe, governance_msg, market_msg,
-                           chat_fmt, llm_enabled, agent_model_names, toolkit) -> dict:
-        """Run Phase 1 agents (technical, news, market-context) and return their results."""
-        results = {}
+                           chat_fmt, llm_enabled, agent_model_names, toolkit) -> tuple[dict, dict]:
+        """Run Phase 1 agents (technical, news, market-context).
+
+        Returns:
+            (results, raw_msgs) where results maps agent name → Pydantic model
+            (used for phase1_summary / debate) and raw_msgs maps agent name →
+            _msg_to_dict output (rich dict used for debug traces).
+        """
+        results: dict = {}
+        raw_msgs: dict = {}
         phase1_agents = [
             ('technical-analyst', TechnicalAnalysisResult),
             ('news-analyst', NewsAnalysisResult),
@@ -1226,14 +1296,17 @@ class AgentScopeRegistry:
             else:
                 msg_to_send = market_msg
             response = await agent(msg_to_send)
-            raw = response.metadata if hasattr(response, 'metadata') and isinstance(response.metadata, dict) else {}
+            # Rich dict (text + metadata + tool_results) — used for debug traces
+            raw_msgs[name] = _msg_to_dict(response)
+            # Pydantic model — used for phase1_summary and debate prompt
+            raw = raw_msgs[name].get("metadata") or {}
             try:
                 results[name] = schema_cls(**raw)
             except Exception:
                 results[name] = raw
 
         await asyncio.gather(*[_run_one(n, s) for n, s in phase1_agents])
-        return results
+        return results, raw_msgs
 
     async def _execute_governance(self, db, run, pair: str, timeframe: str) -> dict:
         """Governance pipeline: Phase 1 agents + optional Phase 2 debate + governance decision.
@@ -1293,7 +1366,7 @@ class AgentScopeRegistry:
             _set_progress(20)
 
             # Run Phase 1 agents
-            phase1_results = await self._run_phase1(
+            phase1_results, phase1_raw_msgs = await self._run_phase1(
                 db, run, pair, timeframe, context_msg, market_context_msg,
                 chat_fmt, llm_enabled, agent_model_names, phase1_toolkit,
             )
@@ -1506,7 +1579,7 @@ class AgentScopeRegistry:
                 run=run,
                 position_context=position_context,
                 analysis_depth=analysis_depth,
-                phase1_results=phase1_results,
+                phase1_raw_msgs=phase1_raw_msgs,
                 debate_summary=debate_summary,
                 raw_decision=raw_decision,
                 raw_text=raw_text if 'raw_text' in dir() else '',
