@@ -1,6 +1,46 @@
-# Multi-Agent Trading Platform
+# Kairos Mesh
 
-A multi-agent AI trading system that orchestrates **8 specialized LLM agents** to produce consensus-driven trading decisions across multiple asset classes. Features real-time execution via MetaAPI and a React monitoring dashboard.
+<p align="center">
+  <img src="kairos_mesh_logo.svg" alt="Kairos Mesh" width="420">
+</p>
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A governed multi-agent trading system that orchestrates 8 specialized LLM agents through a structured research and decision workflow. Paper-trading mode is the default and safe starting point. Live execution requires explicit configuration.
+
+---
+
+## What is Kairos Mesh?
+
+Kairos Mesh is an open-source, structured trading research system. It runs a deterministic 4-phase pipeline per analysis request:
+
+1. **Analysis** — three agents run in parallel: technical indicators, news sentiment, macro context
+2. **Debate** — a bullish researcher and bearish researcher build opposing theses; a trader agent moderates
+3. **Decision** — the trader agent produces a BUY / SELL / HOLD with entry, stop-loss, and take-profit levels
+4. **Governance** — a deterministic risk engine validates the decision; an execution manager applies preflight checks before any order is submitted
+
+LLM agents provide reasoning and synthesis. Risk enforcement is deterministic Python code — not an LLM judgment.
+
+## What it does not do
+
+- It does not trade autonomously or make unsupervised decisions
+- It does not learn from past outcomes — there is no feedback loop from trade results to future runs
+- It does not provide financial advice
+- It is not production-ready for live capital without additional hardening (see [Limitations](docs/limitations.md))
+- Live trading is disabled by default (`ALLOW_LIVE_TRADING=false`)
+
+## Current scope
+
+| Area | Status |
+|------|--------|
+| Paper trading (MetaAPI paper account) | Implemented, default |
+| Simulation mode (DB only, no broker call) | Implemented |
+| Live trading | Implemented but off by default; requires `ALLOW_LIVE_TRADING=true` and `TRADER_OPERATOR` role |
+| 8-agent pipeline | Fully implemented |
+| Debate phase | Conditional — only runs if all 3 debate agents have LLM enabled |
+| Memory / learning loop | Not implemented — each run is stateless |
+| Strategy monitoring (auto-run on signal) | Implemented via Celery Beat |
+| Backtesting | Implemented (rule-based; LLM optional) |
 
 ## Architecture
 
@@ -13,198 +53,146 @@ A multi-agent AI trading system that orchestrates **8 specialized LLM agents** t
 ┌────────────────────────▼───────────────────────────────────────┐
 │                    FastAPI Backend                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐    │
-│  │  AgentScope   │  │  Risk Engine │  │  Execution Layer  │    │
-│  │  Registry     │  │ (determin.)  │  │  Paper / Live     │    │
-│  │  (8 Agents)   │  └──────────────┘  └───────────────────┘    │
+│  │  AgentScope  │  │  Risk Engine │  │  Execution Layer  │    │
+│  │  Registry    │  │ (determin.)  │  │  Paper / Live     │    │
+│  │  (8 Agents)  │  └──────────────┘  └───────────────────┘    │
 │  └──────┬───────┘                                              │
 │         │                                                      │
 │  ┌──────▼──────────────────────────────────────────────┐       │
-│  │           MCP Tool Layer (25+ tools)                │       │
+│  │           MCP Tool Layer (18 tools)                 │       │
 │  │  Indicators · Patterns · News · Risk · Sizing       │       │
-│  │  Decision Support · Strategy Building               │       │
-│  └─────────────────────────────────────────────────────┘       │
-│                                                                │
-│  ┌─────────────────────────────────────────────────────┐       │
-│  │         Strategy Engine + Monitor                   │       │
-│  │  AI Generation · Indicators · Signal Monitoring     │       │
-│  │  Auto-execution via Agent Workflow                  │       │
 │  └─────────────────────────────────────────────────────┘       │
 └────────────────────────────────────────────────────────────────┘
          │              │              │
     PostgreSQL       Redis        RabbitMQ
-    Primary DB       Cache       Celery Queue + Beat
+    Runs / Steps     Cache       Celery Queue + Beat
 ```
 
-### Agent Pipeline
+## Agent pipeline
 
-Each analysis run flows sequentially through 8 agents:
+| # | Agent | Role | Output advisory? |
+|---|-------|------|-----------------|
+| 1 | Technical Analyst | RSI, MACD, EMA, ATR, patterns, divergence, S/R | Advisory |
+| 2 | News Analyst | Sentiment scoring, relevance filtering | Advisory |
+| 3 | Market Context | Regime detection, session, macro | Advisory |
+| 4 | Bullish Researcher | Bull thesis construction | Advisory (debate) |
+| 5 | Bearish Researcher | Bear thesis construction | Advisory (debate) |
+| 6 | Trader | BUY / SELL / HOLD with entry, SL, TP | Decision-bearing |
+| 7 | Risk Manager | Position sizing, portfolio risk validation | Binding (tool overrides LLM) |
+| 8 | Execution Manager | Preflight checks + order submission | Binding (deterministic preflight) |
 
-| # | Agent | Role |
-|---|-------|------|
-| 1 | **Technical Analyst** | RSI, MACD, EMA, ATR, support/resistance, divergence detection |
-| 2 | **News Analyst** | News sentiment scoring and relevance filtering |
-| 3 | **Market Context** | Macro environment, session timing, regime detection |
-| 4 | **Bullish Researcher** | Constructs the bull case with evidence |
-| 5 | **Bearish Researcher** | Constructs the bear case with evidence |
-| 6 | **Trader** | Final BUY / SELL / HOLD decision with entry, SL, TP |
-| 7 | **Risk Manager** | Position sizing validation and portfolio risk checks |
-| 8 | **Execution Manager** | Order placement (paper or live) |
+Agents 4–5 (debate) only run when all 3 debate agents have LLM enabled. If skipped, the trader agent decides without debate input.
 
-## Features
+## Quick start
 
-- **Multi-asset support** — Forex, crypto, indices, metals, energy, equities
-- **Multiple LLM providers** — Ollama (local), OpenAI, Mistral
-- **Multi-source news** — NewsAPI, Finnhub, AlphaVantage, Trading Economics, LLM Web Search (Ollama/OpenAI)
-- **3 decision modes** — Conservative (strict convergence), Balanced (default, moderate), Permissive (opportunistic)
-- **25+ MCP tools** — Technical indicators, news, patterns, risk evaluation, decision gating, strategy building
-- **Paper & live trading** — MetaAPI broker integration with idempotency, input validation, and DB commit protection
-- **AI Strategy Engine** — LLM-powered strategy generation (EMA crossover, RSI mean reversion, Bollinger breakout, MACD divergence) with per-strategy symbol/timeframe
-- **Strategy Monitoring** — Backend Celery Beat monitors active strategies every 30s, auto-creates Runs through the full agent workflow when new signals detected (dedup via signal key)
-- **Chart Overlays** — Strategy indicator lines (EMA, Bollinger bands) and BUY/SELL signal markers rendered on the live chart
-- **Backtesting** — Historical analysis with configurable LLM sampling and agent-validated entries
-- **Scheduled runs** — Automated analysis via Celery Beat
-- **Real-time updates** — WebSocket streaming during analysis runs
-- **Observability** — Prometheus metrics, Grafana dashboards, OpenTelemetry tracing
-- **Risk management** — Per-asset-class contract specs, configurable leverage, NaN/Inf validation, position sizing, SL/TP validation
-- **Safety** — Agent call timeouts, debate fallback, per-user data isolation, security headers, bcrypt hashing, ephemeral key generation
+```bash
+cp backend/.env.example backend/.env
+# Edit backend/.env — set LLM_PROVIDER and your API keys
+docker compose up --build
+```
 
-## Tech Stack
+Access points after startup:
+- Frontend: http://localhost:5173
+- Backend API + docs: http://localhost:8000/docs
+- Grafana: http://localhost:3000
+- Prometheus: http://localhost:9090
+
+Application default credentials: `admin@local.dev` / `admin1234`
+Grafana default credentials: `admin` / `admin`
+
+See [Getting Started](docs/getting-started.md) for full setup instructions.
+
+## Tech stack
 
 | Layer | Technologies |
 |-------|-------------|
 | Frontend | React 19, TypeScript, Material-UI 7, Vite, Lightweight Charts |
-| Backend | FastAPI, SQLAlchemy 2, Alembic, Celery, LangChain |
+| Backend | FastAPI, SQLAlchemy 2, Alembic, Celery, AgentScope |
 | Data | PostgreSQL 16, Redis 7, RabbitMQ 3 |
 | Infra | Docker Compose, Helm/K8s, Prometheus, Grafana |
-| LLM | Ollama, OpenAI, Mistral (configurable per deployment) |
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.12+
-- Node.js 22+
-- Docker & Docker Compose
-
-### Docker (recommended)
-
-```bash
-# Copy and configure environment
-cp backend/.env.example backend/.env
-# Edit backend/.env with your API keys (LLM provider, MetaAPI, etc.)
-
-# Start all services
-docker compose up --build
-```
-
-The platform will be available at:
-- **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:8000
-- **API docs**: http://localhost:8000/docs
-- **RabbitMQ UI**: http://localhost:15672
-- **Grafana**: http://localhost:3000
-- **Prometheus**: http://localhost:9090
-Default credentials: `admin@local.dev` / `admin1234`
-
-### Local Development
-
-```bash
-# Backend
-make backend-install
-make backend-run          # http://localhost:8000
-
-# Frontend
-make frontend-install
-make frontend-run         # http://localhost:5173
-
-# Tests
-make backend-test
-```
-
-> **Note**: Local development still requires PostgreSQL, Redis, and RabbitMQ. You can start only the infrastructure services with:
-> ```bash
-> docker compose up postgres redis rabbitmq -d
-> ```
+| LLM | Ollama (default), OpenAI, Mistral |
+| Broker | MetaAPI (MT4/MT5) |
 
 ## Configuration
 
-All configuration is done via environment variables. See [`backend/.env.example`](backend/.env.example) for the full list. Key settings:
+All configuration is via environment variables. Copy `backend/.env.example` to `backend/.env` and edit.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LLM_PROVIDER` | LLM backend (`ollama`, `openai`, `mistral`) | `ollama` |
-| `OLLAMA_MODEL` | Model name for Ollama | `deepseek-v3.2` |
-| `DECISION_MODE` | Trading decision threshold (`conservative`, `balanced`, `permissive`) | `balanced` |
+| `DECISION_MODE` | Gating policy (`conservative`, `balanced`, `permissive`) | `balanced` |
 | `ALLOW_LIVE_TRADING` | Enable real broker execution | `false` |
-| `ENABLE_PAPER_EXECUTION` | Enable paper trading | `true` |
+| `ENABLE_PAPER_EXECUTION` | Enable paper trading via MetaAPI (requires `METAAPI_TOKEN` and `METAAPI_ACCOUNT_ID`) | `true` |
 | `METAAPI_TOKEN` | MetaAPI authentication token | — |
-| `NEWSAPI_API_KEY` | NewsAPI key (news provider) | — |
-| `FINNHUB_API_KEY` | Finnhub key (news provider) | — |
-| `ALPHAVANTAGE_API_KEY` | AlphaVantage key (news provider) | — |
-| `TRADINGECONOMICS_API_KEY` | TradingEconomics key (news provider) | — |
 
-### Decision Modes
+Full reference: [Configuration](docs/configuration.md)
 
-| Mode | Description |
-|------|-------------|
-| **Conservative** | Strict convergence required: 2+ aligned sources, no single-source override, high score/confidence thresholds |
-| **Balanced** (default) | Moderate thresholds, single-source technical override allowed (score >= 0.25), 1 aligned source sufficient |
-| **Permissive** | Opportunistic but prudent: lower thresholds, technical override allowed, major contradictions still blocked |
-
-Configurable via `DECISION_MODE` env var or in the UI (Connectors > AI Models).
-
-### News Providers
-
-News sources are managed in the UI (Connectors > News). Available providers:
-
-| Provider | Type | Requires API Key |
-|----------|------|:---:|
-| **NewsAPI** | REST API | Yes |
-| **Finnhub** | REST API | Yes |
-| **AlphaVantage** | REST API | Yes |
-| **Trading Economics** | REST API | Yes |
-| **LLM Web Search** | Web search via configured LLM provider (Ollama / OpenAI) | No (uses LLM key) |
-
-LLM Web Search uses the LLM provider selected in Connectors > AI Models to perform targeted web searches (site:reuters.com, site:forexlive.com, etc.) with date-aware queries.
-
-## Project Structure
+## Project structure
 
 ```
-backend/
-  app/
-    api/routes/            # REST endpoints (runs, strategies, backtests, trading, connectors)
-    services/
-      agentscope/          # 4-phase agent pipeline (registry, debate, schemas, toolkit)
-      mcp/                 # MCP tool server (25+ computational tools) + in-process client
-      strategy/            # Strategy designer agent
-      llm/                 # LLM provider clients (Ollama, OpenAI, Mistral)
-      market/              # Market data, news providers, instrument classification
-      trading/             # MetaAPI client, price streaming, execution
-      risk/                # Risk engine & position sizing
-      execution/           # Paper/live order execution service
-      backtest/            # Historical backtesting engine
-      news/                # News aggregation & FX pair bias
-      analytics/           # LLM usage analytics
-      prompts/             # Prompt template management
-      connectors/          # Runtime connector settings
-    db/                    # SQLAlchemy models
-    observability/         # Prometheus, OpenTelemetry
-    tasks/                 # Celery tasks (analysis, backtest, strategy monitor)
+backend/app/
+  api/routes/          # REST endpoints (runs, strategies, backtests, trading)
+  services/
+    agentscope/        # 4-phase agent pipeline (registry, debate, schemas, toolkit)
+    mcp/               # MCP tool server (18 computational tools)
+    risk/              # Deterministic risk engine
+    execution/         # Paper/live order execution
+    strategy/          # Strategy designer and monitor
+    market/            # Market data, news, instrument classification
+    llm/               # LLM provider clients
+  tasks/               # Celery tasks (analysis, backtest, strategy monitor)
+  db/                  # SQLAlchemy models
 
-frontend/
-  src/
-    pages/                 # Terminal, Strategies, RunDetail, Orders, Backtests, Connectors
-    components/            # TradingViewChart (overlays, markers), Layout, UI
-    hooks/                 # Auth, market data, orders
+frontend/src/
+  pages/               # Terminal, Strategies, RunDetail, Orders, Backtests
+  components/          # TradingViewChart, PortfolioKPIs, Layout
 
 infra/
-  docker/                  # Prometheus config, Grafana dashboards
-  helm/                    # Kubernetes Helm charts
-
-docs/
-  architecture/            # System architecture & module reference
+  docker/              # Prometheus config, Grafana dashboards
+  helm/                # Kubernetes Helm charts
 ```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Getting Started](docs/getting-started.md) | Prerequisites, install, first run |
+| [Quickstart](docs/quickstart.md) | Minimal path to a working run |
+| [Architecture](docs/architecture.md) | System layers, component map |
+| [Runtime Flow](docs/runtime-flow.md) | Step-by-step: how a run executes |
+| [Agents](docs/agents.md) | All 8 agents: roles, inputs, outputs |
+| [Decision Pipeline](docs/decision-pipeline.md) | Analysis → debate → trade intent → gating |
+| [Risk & Governance](docs/risk-and-governance.md) | Deterministic risk engine, limits, gates |
+| [Execution](docs/execution.md) | Order flow, paper vs live, safeguards |
+| [Memory](docs/memory.md) | Storage backends, transient vs persistent |
+| [Configuration](docs/configuration.md) | Full environment variable reference |
+| [Observability](docs/observability.md) | Metrics, logs, audit trail |
+| [Paper vs Live](docs/paper-vs-live.md) | What differs, safety checklist |
+| [Limitations](docs/limitations.md) | Known constraints, incomplete features |
+
+## Limitations
+
+This project has known limitations that affect production readiness. Read [docs/limitations.md](docs/limitations.md) before deploying in any environment involving real capital.
+
+Key constraints:
+- No learning loop — each run starts with fresh context
+- Paper trading assumes exact fill at requested price (no slippage model)
+- Live trading support is implemented but not hardened or audited for production
+- Single LLM provider per run (no per-agent model selection)
+- No rate limiting on API endpoints
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the vulnerability reporting process and known security boundaries.
+
+## Disclaimer
+
+This software is for educational and research purposes only. It does not constitute financial advice. Past performance does not indicate future results. Use at your own risk. The authors accept no responsibility for financial losses incurred through use of this software.
 
 ## License
 
-Private — All rights reserved.
+[MIT](LICENSE)
