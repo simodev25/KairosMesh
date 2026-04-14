@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, CheckCircle, Clock,
   Globe, Newspaper, LineChart, Shield, ShieldAlert, XCircle,
@@ -120,6 +120,7 @@ function Phase1Card({ name, data }: { name: string; data: Record<string, unknown
 export function GovernanceRunDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { token } = useAuth();
+  const navigate = useNavigate();
   const [run, setRun] = useState<GovernanceRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -144,9 +145,9 @@ export function GovernanceRunDetailPage() {
   if (error || !run) {
     return (
       <div className="space-y-4 p-4">
-        <Link to="/terminal" className="flex items-center gap-1.5 text-[10px] text-text-muted hover:text-text">
-          <ArrowLeft className="w-3 h-3" /> Back to Terminal
-        </Link>
+        <button type="button" onClick={() => navigate(-1)} className="flex items-center gap-1.5 text-[10px] text-text-muted hover:text-text">
+          <ArrowLeft className="w-3 h-3" /> Back
+        </button>
         <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded text-[11px] text-red-400">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           {error || 'Governance run not found'}
@@ -163,9 +164,9 @@ export function GovernanceRunDetailPage() {
     <div className="space-y-4 max-w-4xl mx-auto">
       {/* Back nav */}
       <div className="flex items-center gap-3">
-        <Link to="/terminal" className="flex items-center gap-1.5 text-[10px] text-text-muted hover:text-text">
-          <ArrowLeft className="w-3 h-3" /> Terminal
-        </Link>
+        <button type="button" onClick={() => navigate(-1)} className="flex items-center gap-1.5 text-[10px] text-text-muted hover:text-text">
+          <ArrowLeft className="w-3 h-3" /> Back
+        </button>
         <span className="text-border">/</span>
         <span className="text-[10px] text-text-muted font-mono">Governance #{run.id}</span>
       </div>

@@ -84,6 +84,7 @@ _GOVERNANCE_TRADER_SYSTEM = (
     "- You CANNOT open a new position. Governance is for managing existing ones only.\n"
     "- If you ADJUST_SL, new_sl must be a valid price level (positive float).\n"
     "- If you ADJUST_TP, new_tp must be a valid price level (positive float).\n"
+    "- The new_sl MUST be at least 10 pips away from current price: for SELL new_sl > current_price + 0.00100, for BUY new_sl < current_price - 0.00100 (use 0.100 for JPY pairs). Closer than this will be rejected by the broker.\n"
     "- Do NOT tighten the stop-loss so much that it would trigger immediately at current price.\n"
     "- conviction is your confidence in this governance decision (0.0 to 1.0).\n"
     "- urgency: low=routine, medium=watch closely, high=act soon, critical=act now.\n"

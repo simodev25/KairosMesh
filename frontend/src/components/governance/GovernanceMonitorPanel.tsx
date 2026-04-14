@@ -224,12 +224,6 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
           <span className="text-text-muted">SUPERVISED_MODE</span>
         </div>
         <span className="text-border">|</span>
-        <span className="text-text-muted">Interval: <strong className="text-text">60s</strong></span>
-        <span className="text-border">|</span>
-        <span className="text-text-muted">
-          Pending approval: <strong className={pendingCount > 0 ? 'text-yellow-400' : 'text-text'}>{pendingCount}</strong>
-        </span>
-        <span className="text-border">|</span>
         <span className={`flex items-center gap-1 ${wsConnected ? 'text-green-400' : 'text-text-muted'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-text-muted'}`} />
           {wsConnected ? 'WS live' : 'WS offline'}

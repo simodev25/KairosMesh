@@ -403,6 +403,45 @@ async def _async_execute_governance(db: Any, gov_run_id: int, approved_by: str) 
     account_id = str(account.account_id) if account else None
     region = (account.region if account else None) or settings.metaapi_region
 
+    # Pre-flight: validate SL/TP distance from current price before sending to broker.
+    # Most brokers require a minimum stop distance (typically 3-10 pips).
+    # We use 10 pips as a safe minimum: 0.00100 for non-JPY, 0.100 for JPY pairs.
+    if action in ("ADJUST_SL", "ADJUST_TP", "ADJUST_SL_TP"):
+        trace = gov_run.trace or {}
+        pos_ctx = trace.get("position_context", {})
+        current_price: float | None = None
+        try:
+            current_price = float(pos_ctx.get("current_price") or 0) or None
+        except (TypeError, ValueError):
+            pass
+        if current_price:
+            symbol_upper = str(gov_run.symbol or "").upper()
+            min_dist = 0.100 if "JPY" in symbol_upper else 0.00100  # 10 pips
+            side = str(gov_run.side or "").upper()
+            if gov_run.new_sl is not None:
+                if side == "SELL" and (gov_run.new_sl - current_price) < min_dist:
+                    err = (
+                        f"SL too close to current price: new_sl={gov_run.new_sl:.5f} "
+                        f"current={current_price:.5f} min_dist={min_dist:.5f} (SELL requires SL above price)"
+                    )
+                    logger.warning("governance preflight rejected: %s", err)
+                    gov_run.execution_error = err
+                    gov_run.updated_at = datetime.now(timezone.utc)
+                    db.add(gov_run)
+                    db.commit()
+                    return {"executed": False, "action": action, "execution_error": err}
+                if side == "BUY" and (current_price - gov_run.new_sl) < min_dist:
+                    err = (
+                        f"SL too close to current price: new_sl={gov_run.new_sl:.5f} "
+                        f"current={current_price:.5f} min_dist={min_dist:.5f} (BUY requires SL below price)"
+                    )
+                    logger.warning("governance preflight rejected: %s", err)
+                    gov_run.execution_error = err
+                    gov_run.updated_at = datetime.now(timezone.utc)
+                    db.add(gov_run)
+                    db.commit()
+                    return {"executed": False, "action": action, "execution_error": err}
+
     client = MetaApiClient()
     result: dict = {}
 
