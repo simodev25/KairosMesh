@@ -250,6 +250,8 @@ export const api = {
     request(`/governance/${id}/approve`, { method: 'POST' }, token),
   rejectGovernanceRun: (token: string, id: number) =>
     request(`/governance/${id}/reject`, { method: 'POST' }, token),
+  forceGovernance: (token: string) =>
+    request('/governance/force', { method: 'POST' }, token),
   getGovernanceConfig: (token: string) =>
     request('/governance/config', {}, token),
 };

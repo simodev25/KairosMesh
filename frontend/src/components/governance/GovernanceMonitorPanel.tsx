@@ -78,6 +78,7 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
   const [actionStates, setActionStates] = useState<Record<number, 'approving' | 'rejecting' | null>>({});
   const [pendingCount, setPendingCount] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
+  const [forcing, setForcing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   // ── Fetch recommendations ────────────────────────────────────────────────
@@ -170,6 +171,26 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
     }
   }, [token, fetchRuns]);
 
+  const forceGovernance = useCallback(async () => {
+    setForcing(true);
+    setError(null);
+    try {
+      const res = await fetch(`${BASE_URL}/governance/force`, {
+        method: 'POST',
+        headers: authHeaders(token),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      setTimeout(() => void fetchRuns(), 2000);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setForcing(false);
+    }
+  }, [token, fetchRuns]);
+
   const rejectRun = useCallback(async (id: number) => {
     setActionStates((prev) => ({ ...prev, [id]: 'rejecting' }));
     try {
@@ -213,7 +234,16 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
           <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-text-muted'}`} />
           {wsConnected ? 'WS live' : 'WS offline'}
         </span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void forceGovernance()}
+            disabled={forcing || loading}
+            title="Force immediate governance evaluation (bypasses cooldown)"
+            className="text-[10px] font-mono text-yellow-400 border border-yellow-400/40 px-2 py-0.5 rounded hover:bg-yellow-400/10 disabled:opacity-40"
+          >
+            {forcing ? 'Forcing…' : 'Force'}
+          </button>
           <button
             type="button"
             onClick={() => void fetchRuns()}

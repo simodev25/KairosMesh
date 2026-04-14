@@ -85,6 +85,16 @@ def _wrap_mcp_tool(tool_id: str, original_fn, force_kwargs: dict | None = None) 
     @functools.wraps(original_fn)
     async def tool_fn(*args: Any, **kwargs: Any) -> ToolResponse:
         try:
+            # Drop any kwargs the LLM hallucinated that don't exist in the real signature.
+            valid_params = set(sig.parameters)
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            if not has_var_keyword:
+                unknown = [k for k in kwargs if k not in valid_params]
+                if unknown:
+                    logger.debug("Tool %s: dropping unknown kwargs %s", tool_id, unknown)
+                    kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
             # Bind positional args to parameter names
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()

@@ -86,7 +86,36 @@ def run_governance_loop() -> None:
         db.close()
 
 
-async def _async_governance_loop(db: Any) -> None:
+@celery_app.task(
+    name='app.tasks.governance_task.force_governance_loop',
+    soft_time_limit=240,
+    time_limit=250,
+)
+def force_governance_loop() -> None:
+    """Manually triggered governance evaluation — bypasses timeframe cooldown."""
+    logger.info("governance_loop: forced evaluation triggered via API")
+    db = SessionLocal()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_async_governance_loop(db, force=True))
+    except Exception as exc:
+        logger.error("governance_loop (forced) failed: %s", exc, exc_info=True)
+    finally:
+        try:
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                for task in pending:
+                    task.cancel()
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
+        finally:
+            loop.close()
+        db.close()
+
+
+async def _async_governance_loop(db: Any, force: bool = False) -> None:
     """Async inner loop — can use await for MetaAPI and pipeline calls."""
     from app.core.config import get_settings
     from app.services.trading.metaapi_client import MetaApiClient
@@ -130,7 +159,7 @@ async def _async_governance_loop(db: Any) -> None:
     # Process positions sequentially (each runs a full LLM pipeline — don't parallel)
     for raw_pos in positions:
         try:
-            await _evaluate_position(db, raw_pos, account_id=account_id, region=region)
+            await _evaluate_position(db, raw_pos, account_id=account_id, region=region, force=force)
         except Exception as exc:
             ticket = raw_pos.get("id", "?")
             logger.error("governance_loop: failed to evaluate position ticket=%s: %s", ticket, exc, exc_info=True)
@@ -142,6 +171,7 @@ async def _evaluate_position(
     *,
     account_id: str | None,
     region: str | None,
+    force: bool = False,
 ) -> None:
     """Evaluate a single open position through the governance pipeline."""
     from app.db.models.governance_run import GovernanceRun
@@ -193,7 +223,10 @@ async def _evaluate_position(
         pass
 
     # Timeframe cooldown: skip if the last completed run is too recent for this position's timeframe.
+    # Bypassed when force=True (manual trigger from API).
     # The last completed run carries origin_run.timeframe via the ORM relationship.
+    if force:
+        logger.info("governance_loop: forced evaluation for ticket=%s, skipping cooldown", ticket)
     try:
         last_completed = (
             db.query(GovernanceRun)
@@ -214,7 +247,7 @@ async def _evaluate_position(
             if lc_ts.tzinfo is None:
                 lc_ts = lc_ts.replace(tzinfo=timezone.utc)
             elapsed = (datetime.now(timezone.utc) - lc_ts).total_seconds()
-            if elapsed < cooldown:
+            if elapsed < cooldown and not force:
                 logger.debug(
                     "governance_loop: skipping ticket=%s tf=%s cooldown=%ds elapsed=%ds",
                     ticket, tf or "?", cooldown, int(elapsed),

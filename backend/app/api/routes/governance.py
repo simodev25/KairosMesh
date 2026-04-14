@@ -170,6 +170,22 @@ def reject_recommendation(
     return {"rejected": True, "gov_run_id": gov_run_id, "rejected_by": user.email}
 
 
+@router.post('/force')
+def force_governance(
+    _user: User = Depends(get_current_user),
+    __=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> dict:
+    """Manually trigger an immediate governance evaluation, bypassing timeframe cooldown."""
+    from app.tasks.governance_task import force_governance_loop
+    try:
+        force_governance_loop.delay()
+    except Exception as exc:
+        logger.error("force_governance: failed to dispatch task: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to dispatch governance task")
+    logger.info("governance force-triggered via API")
+    return {"triggered": True}
+
+
 @router.get('/config')
 def get_governance_config(
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
