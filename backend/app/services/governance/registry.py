@@ -55,22 +55,39 @@ _GOVERNANCE_TRADER_SYSTEM = (
     "  ADJUST_TP   — move the take-profit only (e.g. extend target)\n"
     "  ADJUST_SL_TP — move both stop-loss and take-profit\n"
     "  CLOSE       — close the position immediately\n\n"
-    "DECISION FRAMEWORK:\n"
-    "1. Is the original thesis still valid? (check Phase 1 analysis vs original reasoning)\n"
-    "2. Has price moved significantly in favor (MFE > 1%)? → Consider trailing the stop-loss.\n"
-    "3. Has price moved against the position (MAE > 1.5%)? → Check if thesis is broken.\n"
-    "4. Is the urgency factor high? (e.g. a key level just breached) → CLOSE or ADJUST_SL.\n"
-    "5. If the position is clearly profitable and thesis holds → HOLD or ADJUST_SL to trail.\n"
-    "6. If the thesis is invalidated OR a large adverse move occurred → CLOSE.\n\n"
+    "DECISION FRAMEWORK (apply in order — stop at the first rule that fits):\n\n"
+    "Step 1 — Assess thesis validity:\n"
+    "  - Compare Phase 1 current analysis with the original entry reasoning.\n"
+    "  - 'Thesis intact' = key signals still point in the trade direction.\n"
+    "  - 'Thesis challenged' = some signals contradict but no decisive reversal.\n"
+    "  - 'Thesis broken' = majority of signals invalidate the original rationale.\n\n"
+    "Step 2 — Check proximity of current SL:\n"
+    "  - If current price is already within 20% of the distance to the stop-loss,\n"
+    "    the SL will do its job soon → prefer HOLD over CLOSE (let the SL execute).\n\n"
+    "Step 3 — Protect captured profit when MFE was significant:\n"
+    "  - If MFE ≥ 1% and the position has retraced back toward entry or into loss,\n"
+    "    consider ADJUST_SL to break-even or trail at a level that locks in partial gain.\n"
+    "  - Prefer ADJUST_SL over CLOSE in this case — there is still a recovery path.\n\n"
+    "Step 4 — Extend target when momentum is strong:\n"
+    "  - If thesis is intact, MFE ≥ 1.5%, and price still has technical room to run,\n"
+    "    consider ADJUST_TP to a higher target, or ADJUST_SL_TP to do both at once.\n\n"
+    "Step 5 — HOLD when in doubt and thesis is not broken:\n"
+    "  - If the thesis is intact or only challenged, and no adjustment is clearly needed,\n"
+    "    HOLD is a valid and often correct choice. Overtrading is a risk.\n\n"
+    "Step 6 — CLOSE only as a last resort:\n"
+    "  - Reserve CLOSE for: thesis fully broken AND current SL cannot adequately reduce\n"
+    "    further downside AND position would need a significant recovery to be worthwhile.\n"
+    "  - Do NOT use CLOSE just because the position is slightly adverse. Use ADJUST_SL or HOLD.\n\n"
+    "PRIORITY ORDER: HOLD ≥ ADJUST_SL ≥ ADJUST_SL_TP ≥ ADJUST_TP >> CLOSE\n"
+    "CLOSE should be rare — only when the trade thesis is comprehensively invalidated.\n\n"
     "Rules:\n"
     "- You CANNOT open a new position. Governance is for managing existing ones only.\n"
     "- If you ADJUST_SL, new_sl must be a valid price level (positive float).\n"
     "- If you ADJUST_TP, new_tp must be a valid price level (positive float).\n"
-    "- Do NOT tighten the stop-loss in a way that would make the position immediately stop out.\n"
+    "- Do NOT tighten the stop-loss so much that it would trigger immediately at current price.\n"
     "- conviction is your confidence in this governance decision (0.0 to 1.0).\n"
     "- urgency: low=routine, medium=watch closely, high=act soon, critical=act now.\n"
-    "- Your reasoning must reference specific evidence from the position context.\n"
-    "- Be decisive. When a position is clearly working, hold or trail. When it's not, close.\n"
+    "- Your reasoning must reference specific evidence from the position context and Phase 1 analysis.\n"
 )
 
 _GOVERNANCE_TRADER_USER = (
@@ -188,12 +205,18 @@ class GovernanceRegistry:
             # ── Build toolkits ───────────────────────────────────────────────
             phase1_agents_names = ["technical-analyst", "news-analyst", "market-context-analyst"]
             toolkits: dict[str, Any] = {}
-            for name in phase1_agents_names + ["trader-agent"]:
+            for name in phase1_agents_names:
                 agent_skills = selector.resolve_skills(db, name)
                 toolkits[name] = await build_toolkit(
                     name, ohlc=ohlc, news=news, skills=agent_skills,
                     snapshot=snapshot, decision_mode="governance", execution_mode="governance",
                 )
+            # Governance trader: resolve skills under its own name "governance-trader"
+            gov_trader_skills = selector.resolve_skills(db, "governance-trader")
+            toolkits["trader-agent"] = await build_toolkit(
+                "governance-trader", ohlc=ohlc, news=news, skills=gov_trader_skills,
+                snapshot=snapshot, decision_mode="governance", execution_mode="governance",
+            )
 
             # ── Build agents ─────────────────────────────────────────────────
             # Phase 1: reuse default system prompts
@@ -330,7 +353,7 @@ class GovernanceRegistry:
                 except Exception:
                     pass
 
-            return {
+            result = {
                 "action": governance_decision.action,
                 "new_sl": governance_decision.new_sl,
                 "new_tp": governance_decision.new_tp,
@@ -341,6 +364,18 @@ class GovernanceRegistry:
                 "trace": trace,
                 "elapsed_seconds": elapsed,
             }
+
+            # Write debug trace (same format/setting as AgentScopeRegistry)
+            self._write_debug_trace(
+                gov_run=gov_run,
+                position_context=position_context,
+                market_data=market_data,
+                analysis_outputs=analysis_outputs,
+                governance_decision=governance_decision,
+                elapsed=elapsed,
+            )
+
+            return result
 
         except Exception as exc:
             logger.exception("GovernanceRegistry: pipeline failed for ticket=%s: %s", gov_run.position_ticket, exc)
@@ -540,6 +575,183 @@ class GovernanceRegistry:
             elif out.get("degraded"):
                 lines.append(f"{label}: [degraded — no output]")
         return "\n".join(lines) if lines else "No current analysis available."
+
+    def _write_debug_trace(
+        self,
+        gov_run: Any,
+        position_context: Any,
+        market_data: dict,
+        analysis_outputs: dict,
+        governance_decision: Any,
+        elapsed: float,
+    ) -> None:
+        """Write governance debug trace JSON — same format/setting as AgentScopeRegistry."""
+        import json
+        import os
+        from datetime import datetime, timezone
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        if not settings.debug_trade_json_enabled:
+            return
+
+        try:
+            trace_dir = os.path.join(
+                os.path.dirname(settings.debug_trade_json_dir or "./debug-traces"),
+                "debug-governance",
+            )
+            os.makedirs(trace_dir, exist_ok=True)
+
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            filename = f"gov-{gov_run.id}-{ts}.json"
+            filepath = os.path.join(trace_dir, filename)
+
+            snapshot = market_data.get("snapshot", {})
+            ohlc = market_data.get("ohlc", {})
+            news = market_data.get("news", {})
+
+            # Price history (same format as AgentScopeRegistry)
+            price_history = []
+            if settings.debug_trade_json_include_price_history:
+                limit = settings.debug_trade_json_price_history_limit
+                closes = ohlc.get("closes", [])[-limit:]
+                opens = ohlc.get("opens", [])[-limit:]
+                highs = ohlc.get("highs", [])[-limit:]
+                lows = ohlc.get("lows", [])[-limit:]
+                for i in range(len(closes)):
+                    price_history.append({
+                        "open": opens[i] if i < len(opens) else 0,
+                        "high": highs[i] if i < len(highs) else 0,
+                        "low": lows[i] if i < len(lows) else 0,
+                        "close": closes[i] if i < len(closes) else 0,
+                        "volume": None,
+                    })
+
+            # Agent steps — Phase 1 + governance trader
+            workflow = ["technical-analyst", "news-analyst", "market-context-analyst", "governance-trader"]
+            agent_steps = []
+            for agent_name in workflow:
+                out = analysis_outputs.get(agent_name, {})
+                step_output = {**out.get("metadata", {})}
+                step_output["llm_enabled"] = out.get("llm_enabled", True)
+                step_output.setdefault("degraded", out.get("degraded", False))
+                if out.get("text"):
+                    step_output.setdefault("reasoning", out["text"][:2000])
+                agent_steps.append({
+                    "agent_name": agent_name,
+                    "status": "completed" if not out.get("degraded") else "degraded",
+                    "llm_enabled": out.get("llm_enabled", True),
+                    "input_payload": {
+                        "symbol": gov_run.symbol,
+                        "timeframe": getattr(position_context, "origin_timeframe", None) or "1h",
+                        "position_ticket": gov_run.position_ticket,
+                    },
+                    "output_payload": step_output,
+                    "output_text": out.get("text", "")[:2000],
+                })
+
+            # Governance trader output
+            gov_step_output = {
+                "action": governance_decision.action,
+                "new_sl": governance_decision.new_sl,
+                "new_tp": governance_decision.new_tp,
+                "conviction": governance_decision.conviction,
+                "urgency": governance_decision.urgency,
+                "reasoning": governance_decision.reasoning,
+                "degraded": governance_decision.degraded,
+            }
+            # Replace placeholder governance-trader step with real output
+            for step in agent_steps:
+                if step["agent_name"] == "governance-trader":
+                    step["output_payload"] = gov_step_output
+                    step["output_text"] = governance_decision.reasoning or ""
+                    break
+
+            # Analysis bundle
+            def _bundle(key: str) -> dict:
+                out = analysis_outputs.get(key, {})
+                meta = out.get("metadata", {})
+                if not meta and out.get("text"):
+                    meta = {"summary": out["text"][:1000]}
+                return meta
+
+            analysis_bundle = {
+                "analysis_outputs": {
+                    k: _bundle(k)
+                    for k in ("technical-analyst", "news-analyst", "market-context-analyst")
+                },
+                "governance_decision": gov_step_output,
+            }
+
+            # Position context snapshot
+            pos_ctx: dict = {}
+            if position_context is not None:
+                pos_ctx = {
+                    "ticket": getattr(position_context, "ticket", gov_run.position_ticket),
+                    "symbol": getattr(position_context, "symbol", gov_run.symbol),
+                    "side": getattr(position_context, "side", gov_run.side),
+                    "volume": getattr(position_context, "volume", None),
+                    "entry_price": getattr(position_context, "entry_price", None),
+                    "current_price": getattr(position_context, "current_price", None),
+                    "unrealized_pnl": getattr(position_context, "unrealized_pnl", None),
+                    "stop_loss": getattr(position_context, "stop_loss", None),
+                    "take_profit": getattr(position_context, "take_profit", None),
+                    "open_time": getattr(position_context, "open_time", None),
+                    "mfe_pct": getattr(position_context, "mfe_pct", None),
+                    "mae_pct": getattr(position_context, "mae_pct", None),
+                    "bars_since_entry": getattr(position_context, "bars_since_entry", None),
+                    "origin_run_id": getattr(position_context, "origin_run_id", gov_run.origin_run_id),
+                    "origin_pair": getattr(position_context, "origin_pair", None),
+                    "origin_timeframe": getattr(position_context, "origin_timeframe", None),
+                }
+
+            payload = {
+                "schema_version": 2,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "runtime_engine": "governance_v1",
+                "gov_run": {
+                    "id": gov_run.id,
+                    "position_ticket": gov_run.position_ticket,
+                    "symbol": gov_run.symbol,
+                    "side": gov_run.side,
+                    "origin_run_id": gov_run.origin_run_id,
+                    "status": gov_run.status,
+                    "action": governance_decision.action,
+                    "new_sl": governance_decision.new_sl,
+                    "new_tp": governance_decision.new_tp,
+                    "conviction": governance_decision.conviction,
+                    "urgency": governance_decision.urgency,
+                    "created_at": str(getattr(gov_run, "created_at", "")),
+                    "updated_at": str(getattr(gov_run, "updated_at", "")),
+                },
+                "position_context": pos_ctx,
+                "context": {
+                    "market_snapshot": snapshot,
+                    "price_history": price_history,
+                    "news_context": news,
+                },
+                "workflow": workflow,
+                "agent_steps": agent_steps,
+                "analysis_bundle": analysis_bundle,
+                "final_decision": {
+                    "action": governance_decision.action,
+                    "new_sl": governance_decision.new_sl,
+                    "new_tp": governance_decision.new_tp,
+                    "conviction": governance_decision.conviction,
+                    "urgency": governance_decision.urgency,
+                    "reasoning": governance_decision.reasoning,
+                    "degraded": governance_decision.degraded,
+                },
+                "elapsed_seconds": round(elapsed, 1),
+            }
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+
+            logger.info("Governance debug trace written: %s", filepath)
+
+        except Exception as exc:
+            logger.warning("GovernanceRegistry: failed to write debug trace: %s", exc)
 
     @staticmethod
     def _msg_to_dict(msg: Any) -> dict[str, Any]:

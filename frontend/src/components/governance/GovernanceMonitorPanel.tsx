@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle, Clock, Shield, ShieldAlert, TrendingUp, XCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, CheckCircle, Clock, ExternalLink, Shield, ShieldAlert, TrendingUp, XCircle } from 'lucide-react';
 import { wsGovernanceUrl } from '../../api/client';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -231,67 +232,6 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
         </div>
       )}
 
-      {/* Pending approvals — highlighted */}
-      {pendingRuns.length > 0 && (
-        <div className="space-y-2">
-          <span className="text-[10px] font-semibold tracking-widest text-yellow-400 uppercase block">
-            PENDING_APPROVAL ({pendingRuns.length})
-          </span>
-          {pendingRuns.map((run) => {
-            const badge = actionBadge(run.action);
-            const isActing = actionStates[run.id] != null;
-            return (
-              <div key={run.id} className="border border-yellow-500/40 bg-yellow-500/5 rounded p-3 space-y-2">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <ShieldAlert className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
-                  <span className="text-[11px] font-bold text-text">{run.symbol}</span>
-                  <span className="text-[10px] font-mono text-text-muted">{run.side}</span>
-                  <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 ${badge.cls}`}>{badge.label}</span>
-                  <span className={`text-[10px] font-mono ${urgencyColor(run.urgency)}`}>
-                    urgency: {run.urgency ?? '-'}
-                  </span>
-                  <span className="text-[10px] font-mono text-text-muted">
-                    conviction: {run.conviction != null ? `${(run.conviction * 100).toFixed(0)}%` : '-'}
-                  </span>
-                  {run.new_sl != null && (
-                    <span className="text-[10px] font-mono text-text-muted">SL→{run.new_sl.toFixed(5)}</span>
-                  )}
-                  {run.new_tp != null && (
-                    <span className="text-[10px] font-mono text-text-muted">TP→{run.new_tp.toFixed(5)}</span>
-                  )}
-                  <span className="text-[9px] text-text-muted ml-auto">{formatDateTime(run.created_at)}</span>
-                </div>
-                {run.reasoning && (
-                  <p className="text-[10px] text-text-muted leading-relaxed pl-5 border-l border-yellow-500/20">
-                    {run.reasoning.slice(0, 300)}{run.reasoning.length > 300 ? '…' : ''}
-                  </p>
-                )}
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => void approveRun(run.id)}
-                    disabled={isActing}
-                    className="flex items-center gap-1.5 text-[10px] font-semibold font-mono px-3 py-1 rounded border border-green-500/50 text-green-400 bg-green-500/10 hover:bg-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <CheckCircle className="w-3 h-3" />
-                    {actionStates[run.id] === 'approving' ? 'Approving…' : 'Approve'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void rejectRun(run.id)}
-                    disabled={isActing}
-                    className="flex items-center gap-1.5 text-[10px] font-semibold font-mono px-3 py-1 rounded border border-red-500/50 text-red-400 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <XCircle className="w-3 h-3" />
-                    {actionStates[run.id] === 'rejecting' ? 'Rejecting…' : 'Reject'}
-                  </button>
-                  <span className="text-[9px] text-text-muted">ticket: {run.position_ticket}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* History table */}
       {recentRuns.length === 0 && !loading && (
@@ -308,6 +248,8 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-1.5 pr-3 text-text-muted font-medium">ID</th>
+                  <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Ticket</th>
+                  <th className="text-left py-1.5 pr-3 text-text-muted font-medium">#Run</th>
                   <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Symbol</th>
                   <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Side</th>
                   <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Action</th>
@@ -315,7 +257,8 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
                   <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Conv.</th>
                   <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Approval</th>
                   <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Exec.</th>
-                  <th className="text-left py-1.5 text-text-muted font-medium">Created</th>
+                  <th className="text-left py-1.5 pr-3 text-text-muted font-medium">Created</th>
+                  <th className="text-left py-1.5 text-text-muted font-medium"></th>
                 </tr>
               </thead>
               <tbody>
@@ -324,6 +267,8 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
                   return (
                     <tr key={run.id} className="border-b border-border/40 hover:bg-surface-alt/30">
                       <td className="py-1.5 pr-3 text-text-muted">#{run.id}</td>
+                      <td className="py-1.5 pr-3 font-mono text-text-muted text-[9px]">{run.position_ticket || '-'}</td>
+                      <td className="py-1.5 pr-3 text-text-muted">{run.origin_run_id != null ? `#${run.origin_run_id}` : '-'}</td>
                       <td className="py-1.5 pr-3 text-text font-semibold">{run.symbol}</td>
                       <td className={`py-1.5 pr-3 ${run.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{run.side}</td>
                       <td className="py-1.5 pr-3">
@@ -355,7 +300,16 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
                           <span className="text-text-muted">-</span>
                         )}
                       </td>
-                      <td className="py-1.5 text-text-muted">{formatDateTime(run.created_at)}</td>
+                      <td className="py-1.5 pr-3 text-text-muted">{formatDateTime(run.created_at)}</td>
+                      <td className="py-1.5">
+                        <Link
+                          to={`/governance/${run.id}`}
+                          className="flex items-center gap-1 text-[9px] text-accent hover:text-accent/80"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          detail
+                        </Link>
+                      </td>
                     </tr>
                   );
                 })}

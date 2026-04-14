@@ -27,6 +27,18 @@ logger = logging.getLogger(__name__)
 
 _LOCK_TTL_SECONDS = 240  # Match soft_time_limit — prevents Beat from spawning a second run
 
+# Minimum interval between governance evaluations per timeframe.
+# The Beat fires every 60s, but each position is only re-evaluated once its
+# timeframe candle has closed (M5 position → evaluate every 5 min, H1 → every hour).
+_TIMEFRAME_COOLDOWN: dict[str, int] = {
+    'M1': 60, 'M2': 120, 'M3': 180, 'M4': 240, 'M5': 300,
+    'M10': 600, 'M15': 900, 'M30': 1800,
+    'H1': 3600, 'H2': 7200, 'H3': 10800, 'H4': 14400,
+    'H6': 21600, 'H8': 28800, 'H12': 43200,
+    'D1': 86400, 'W1': 604800,
+}
+_DEFAULT_COOLDOWN = 300  # fallback when timeframe unknown
+
 
 def _acquire_governance_lock() -> bool:
     """Acquire a Redis lock to prevent parallel governance executions."""
@@ -180,6 +192,37 @@ async def _evaluate_position(
     except Exception:
         pass
 
+    # Timeframe cooldown: skip if the last completed run is too recent for this position's timeframe.
+    # The last completed run carries origin_run.timeframe via the ORM relationship.
+    try:
+        last_completed = (
+            db.query(GovernanceRun)
+            .filter(GovernanceRun.position_ticket == ticket)
+            .filter(GovernanceRun.status == "completed")
+            .order_by(GovernanceRun.created_at.desc())
+            .first()
+        )
+        if last_completed is not None:
+            tf: str | None = None
+            try:
+                if last_completed.origin_run is not None:
+                    tf = str(last_completed.origin_run.timeframe or "")
+            except Exception:
+                pass
+            cooldown = _TIMEFRAME_COOLDOWN.get((tf or "").upper().strip(), _DEFAULT_COOLDOWN)
+            lc_ts = last_completed.created_at
+            if lc_ts.tzinfo is None:
+                lc_ts = lc_ts.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - lc_ts).total_seconds()
+            if elapsed < cooldown:
+                logger.debug(
+                    "governance_loop: skipping ticket=%s tf=%s cooldown=%ds elapsed=%ds",
+                    ticket, tf or "?", cooldown, int(elapsed),
+                )
+                return
+    except Exception:
+        pass
+
     # Build OpenPosition dataclass from raw MetaAPI position
     raw_open_time = raw_pos.get("time") or raw_pos.get("openTime")
     open_time_iso: str | None = None
@@ -277,8 +320,8 @@ async def _evaluate_position(
 
 @celery_app.task(
     name='app.tasks.governance_task.approve_and_execute_governance',
-    soft_time_limit=30,
-    time_limit=40,
+    soft_time_limit=90,
+    time_limit=110,
 )
 def approve_and_execute_governance(gov_run_id: int, approved_by: str) -> dict:
     """Execute a pre-approved governance action against the broker.

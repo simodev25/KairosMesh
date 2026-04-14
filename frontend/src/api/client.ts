@@ -33,7 +33,8 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   me: (token: string) => request('/auth/me', {}, token),
-  listRuns: (token: string) => request('/runs', {}, token),
+  listRuns: (token: string, includeGovernance = true) =>
+    request(`/runs${includeGovernance ? '?include_governance=true' : ''}`, {}, token),
   createRun: (
     token: string,
     payload: {

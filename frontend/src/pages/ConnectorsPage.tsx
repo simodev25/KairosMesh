@@ -23,6 +23,7 @@ const ORCHESTRATION_AGENTS = [
   'trader-agent',
   'risk-manager',
   'execution-manager',
+  'governance-trader',
   'strategy-designer',
 ];
 const MODEL_EDIT_AGENTS = [...ORCHESTRATION_AGENTS];
@@ -39,6 +40,7 @@ const DEFAULT_AGENT_LLM_ENABLED: Record<string, boolean> = {
   'trader-agent': false,
   'risk-manager': false,
   'execution-manager': false,
+  'governance-trader': true,
   'strategy-designer': true,
 };
 const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> = {
@@ -91,6 +93,16 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
       + 'Risk accepted: {risk_accepted}\nSuggested volume: {suggested_volume}\n'
       + 'Stop loss: {stop_loss}\nTake profit: {take_profit}\n'
       + 'Expected return: BUY, SELL or HOLD followed by concise justification.'
+    ),
+  },
+  'governance-trader': {
+    system: "You are the trader agent operating in GOVERNANCE MODE. Evaluate an existing open position and decide: HOLD, ADJUST_SL, ADJUST_TP, ADJUST_SL_TP, or CLOSE.",
+    user: (
+      'Symbol: {position_symbol} | Side: {position_side} | Entry: {position_entry_price} | Current: {position_current_price}\n'
+      + 'Stop-loss: {position_stop_loss} | Take-profit: {position_take_profit}\n'
+      + 'MFE: {mfe_pct}% | MAE: {mae_pct}%\n'
+      + 'Current analysis: {current_analysis_summary}\n'
+      + 'Decide what to do with this position.'
     ),
   },
   'strategy-designer': {
