@@ -166,7 +166,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <header className="h-11 shrink-0 border-b border-border bg-surface flex items-center justify-between px-5">
           <div className="flex items-center gap-4">
             <span className="text-[11px] font-bold tracking-[0.14em] text-accent uppercase">
-              AGENT_TERMINAL_v4.2
+              AGENT_TERMINAL
             </span>
             <div className="h-4 w-px bg-border" />
             <div className="flex items-center gap-2">
@@ -202,7 +202,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </span>
           </div>
           <span className="text-[8px] text-text-dim tracking-[0.14em] uppercase">
-            KAIROS_MESH // v2.0.0
+            KAIROS_MESH // v1.0.0
           </span>
         </footer>
       </div>

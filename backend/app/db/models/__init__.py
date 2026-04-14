@@ -7,6 +7,7 @@ from app.db.models.backtest_run import BacktestRun
 from app.db.models.backtest_trade import BacktestTrade
 from app.db.models.connector_config import ConnectorConfig
 from app.db.models.execution_order import ExecutionOrder
+from app.db.models.governance_run import GovernanceRun
 from app.db.models.llm_call_log import LlmCallLog
 from app.db.models.metaapi_account import MetaApiAccount
 from app.db.models.portfolio_snapshot import PortfolioSnapshot
@@ -34,4 +35,5 @@ __all__ = [
     'LlmCallLog',
     'Strategy',
     'TradingConfigVersion',
+    'GovernanceRun',
 ]

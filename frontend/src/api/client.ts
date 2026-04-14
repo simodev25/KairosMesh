@@ -233,6 +233,24 @@ export const api = {
     }, token),
   stopMonitoring: (token: string, id: number) =>
     request(`/strategies/${id}/stop-monitoring`, { method: 'POST' }, token),
+  // Governance
+  listGovernanceRecommendations: (token: string, params: { limit?: number; symbol?: string; status?: string; approval_status?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.limit != null) search.set('limit', String(params.limit));
+    if (params.symbol) search.set('symbol', params.symbol);
+    if (params.status) search.set('status', params.status);
+    if (params.approval_status) search.set('approval_status', params.approval_status);
+    const suffix = search.toString();
+    return request(`/governance/recommendations${suffix ? `?${suffix}` : ''}`, {}, token);
+  },
+  getGovernanceRecommendation: (token: string, id: number) =>
+    request(`/governance/recommendations/${id}`, {}, token),
+  approveGovernanceRun: (token: string, id: number) =>
+    request(`/governance/${id}/approve`, { method: 'POST' }, token),
+  rejectGovernanceRun: (token: string, id: number) =>
+    request(`/governance/${id}/reject`, { method: 'POST' }, token),
+  getGovernanceConfig: (token: string) =>
+    request('/governance/config', {}, token),
 };
 
 export function wsRunUrl(runId: number, token?: string): string {
@@ -259,6 +277,16 @@ export function wsPortfolioUrl(token?: string): string {
   const apiBase = BASE_URL.replace('/api/v1', '');
   const wsBase = apiBase.replace('http://', 'ws://').replace('https://', 'wss://');
   const url = `${wsBase}/ws/portfolio`;
+  if (token) {
+    return `${url}?token=${encodeURIComponent(token)}`;
+  }
+  return url;
+}
+
+export function wsGovernanceUrl(token?: string): string {
+  const apiBase = BASE_URL.replace('/api/v1', '');
+  const wsBase = apiBase.replace('http://', 'ws://').replace('https://', 'wss://');
+  const url = `${wsBase}/ws/governance`;
   if (token) {
     return `${url}?token=${encodeURIComponent(token)}`;
   }

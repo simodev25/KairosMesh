@@ -490,6 +490,71 @@ async def portfolio_stream_socket(websocket: WebSocket) -> None:
         pass
 
 
+@app.websocket('/ws/governance')
+async def governance_stream_socket(websocket: WebSocket) -> None:
+    """Stream real-time governance recommendation updates every 5 seconds."""
+    if not await _authorize_websocket(websocket):
+        return
+    await websocket.accept()
+
+    last_gov_run_id: int | None = None
+    try:
+        while True:
+            db: Session = SessionLocal()
+            try:
+                from app.db.models.governance_run import GovernanceRun
+                # Send latest governance run and counts of pending approvals
+                latest = (
+                    db.query(GovernanceRun)
+                    .order_by(GovernanceRun.id.desc())
+                    .first()
+                )
+                pending_count = (
+                    db.query(GovernanceRun)
+                    .filter(GovernanceRun.approval_status == "pending")
+                    .filter(GovernanceRun.status == "completed")
+                    .count()
+                )
+                if latest and latest.id != last_gov_run_id:
+                    await websocket.send_json({
+                        "type": "governance_update",
+                        "latest": {
+                            "id": latest.id,
+                            "symbol": latest.symbol,
+                            "side": latest.side,
+                            "action": latest.action,
+                            "urgency": latest.urgency,
+                            "conviction": latest.conviction,
+                            "status": latest.status,
+                            "approval_status": latest.approval_status,
+                            "executed": latest.executed,
+                            "created_at": latest.created_at.isoformat() if latest.created_at else None,
+                        },
+                        "pending_approval_count": pending_count,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    last_gov_run_id = latest.id
+                elif last_gov_run_id is None:
+                    # First message: always send current state
+                    await websocket.send_json({
+                        "type": "governance_snapshot",
+                        "latest": None,
+                        "pending_approval_count": pending_count,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    last_gov_run_id = -1
+            except WebSocketDisconnect:
+                raise
+            except Exception as exc:
+                logger.warning("Governance WS update failed: %s", exc)
+            finally:
+                db.close()
+
+            await asyncio.sleep(5)
+    except WebSocketDisconnect:
+        pass
+
+
 @app.get('/')
 def root() -> dict[str, str]:
     return {'message': settings.app_name, 'version': '0.1.0'}

@@ -21,6 +21,8 @@ class OpenPosition:
     stop_loss: float | None = None
     take_profit: float | None = None
     risk_pct: float = 0.0   # Risk of this position in % of equity
+    ticket: str = ""         # Broker-assigned position ID (e.g. MetaAPI position id)
+    open_time: str | None = None  # ISO-8601 UTC timestamp when position was opened
 
 
 @dataclass
@@ -151,6 +153,17 @@ class PortfolioStateService:
                 raw_positions = pos_result.get("positions", [])
                 positions: list[OpenPosition] = []
                 for p in raw_positions:
+                    raw_open_time = p.get("time") or p.get("openTime")
+                    open_time_iso: str | None = None
+                    if raw_open_time:
+                        try:
+                            from datetime import datetime as _dt
+                            if isinstance(raw_open_time, str):
+                                open_time_iso = raw_open_time
+                            elif isinstance(raw_open_time, (int, float)):
+                                open_time_iso = _dt.fromtimestamp(raw_open_time / 1000, tz=timezone.utc).isoformat()
+                        except Exception:
+                            pass
                     op = OpenPosition(
                         symbol=p.get("symbol", ""),
                         side="BUY" if p.get("type", "").upper() in ("POSITION_TYPE_BUY", "BUY") else "SELL",
@@ -160,6 +173,8 @@ class PortfolioStateService:
                         unrealized_pnl=float(p.get("profit", 0)),
                         stop_loss=float(p.get("stopLoss", 0)) or None,
                         take_profit=float(p.get("takeProfit", 0)) or None,
+                        ticket=str(p.get("id") or p.get("positionId") or ""),
+                        open_time=open_time_iso,
                     )
                     positions.append(op)
                 state.open_positions = positions

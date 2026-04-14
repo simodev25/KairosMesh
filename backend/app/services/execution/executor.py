@@ -296,6 +296,19 @@ class ExecutionService:
                 response['idempotency_key'] = idempotency_key
                 order.status = ExecutionStatus.EXECUTED.value
                 order.response_payload = response
+                # Extract broker-assigned position ID for governance linkage.
+                # MetaAPI may return it under different keys depending on broker/SDK version.
+                raw_result = metaapi_response.get('result') or {}
+                if isinstance(raw_result, dict):
+                    position_id = (
+                        raw_result.get('positionId')
+                        or raw_result.get('position_id')
+                        or raw_result.get('orderId')
+                        or raw_result.get('tradeId')
+                    )
+                    if position_id:
+                        order.metaapi_position_id = str(position_id)
+                        response['metaapi_position_id'] = str(position_id)
                 self._safe_commit(db, order, 'broker_submitted')
                 return response
 

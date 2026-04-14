@@ -1,4 +1,5 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+// v2
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { ChartSkeleton, TableSkeleton, SectionSkeleton } from '../components/LoadingIndicators';
 import { runtimeConfig } from '../config/runtime';
@@ -8,6 +9,7 @@ import { useOpenOrdersMarketChart } from '../hooks/useOpenOrdersMarketChart';
 import { usePlatformOrders } from '../hooks/usePlatformOrders';
 import { DEFAULT_TIMEFRAMES } from '../constants/markets';
 import { ExpansionPanel } from '../components/ExpansionPanel';
+import { GovernanceMonitorPanel } from '../components/governance/GovernanceMonitorPanel';
 import { Palette, TrendingUp, Wifi, WifiOff } from 'lucide-react';
 
 
@@ -655,6 +657,10 @@ export function OrdersPage() {
           </div>
         </div>
       )}
+
+      <ExpansionPanel title="GOVERNANCE_MONITOR" id="orders-governance">
+        <GovernanceMonitorPanel token={token ?? ''} />
+      </ExpansionPanel>
 
       <ExpansionPanel title="REAL_TRADES // MT5_METAAPI" id="orders-metaapi">
             {metaFeatureDisabled ? (

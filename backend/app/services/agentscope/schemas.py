@@ -316,22 +316,85 @@ class ExecutionPlanResult(_SchemaBase):
     expected_slippage: Literal["low", "medium", "high"] = "medium"
     degraded: bool = False
 
+
+# ---------------------------------------------------------------------------
+# Governance — Position monitoring decision
+# ---------------------------------------------------------------------------
+
+_GOVERNANCE_ACTION_ALIASES = {
+    "hold": "HOLD",
+    "keep": "HOLD",
+    "maintain": "HOLD",
+    "adjust": "ADJUST_SL_TP",
+    "adjust_sl": "ADJUST_SL",
+    "adjust_tp": "ADJUST_TP",
+    "adjust_sl_tp": "ADJUST_SL_TP",
+    "trail": "ADJUST_SL",
+    "close": "CLOSE",
+    "exit": "CLOSE",
+    "close_position": "CLOSE",
+}
+
+
+class GovernanceDecision(_SchemaBase):
+    """Trader-agent governance output — decision on an existing open position.
+
+    The trader-agent uses this schema when running in governance mode (evaluating
+    a live position rather than seeking a new entry opportunity).
+
+    Actions:
+        HOLD        — keep position as-is, no changes
+        ADJUST_SL   — move stop-loss only (trail or widen)
+        ADJUST_TP   — move take-profit only
+        ADJUST_SL_TP — move both stop-loss and take-profit
+        CLOSE       — close the position immediately
+    """
+    action: Literal["HOLD", "ADJUST_SL", "ADJUST_TP", "ADJUST_SL_TP", "CLOSE"] = "HOLD"
+    new_sl: float | None = None
+    new_tp: float | None = None
+    conviction: float = Field(ge=0.0, le=1.0, default=0.5)
+    urgency: Literal["low", "medium", "high", "critical"] = "low"
+    reasoning: str = Field(min_length=1)
+    degraded: bool = False
+
     @model_validator(mode="before")
     @classmethod
-    def normalize_fields(cls, data: Any) -> Any:
+    def normalize_governance_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            for field, valid_set in [
-                ("order_type", {"market", "limit", "stop_limit"}),
-                ("timing", {"immediate", "wait_pullback", "wait_session"}),
-                ("expected_slippage", {"low", "medium", "high"}),
-            ]:
-                if field in data:
-                    val = str(data[field]).strip().lower().replace(" ", "_").replace("-", "_")
-                    if val not in valid_set:
-                        # Use first value as default
-                        val = next(iter(valid_set))
-                    data[field] = val
-            # Legacy compat: map old decision/should_execute/volume fields
-            if "decision" in data and "order_type" not in data:
-                pass  # Ignore legacy decision field
+            # Normalize action
+            if "action" in data:
+                raw = str(data["action"]).strip().lower().replace(" ", "_").replace("-", "_")
+                data["action"] = _GOVERNANCE_ACTION_ALIASES.get(raw, raw.upper())
+                valid_actions = {"HOLD", "ADJUST_SL", "ADJUST_TP", "ADJUST_SL_TP", "CLOSE"}
+                if data["action"] not in valid_actions:
+                    data["action"] = "HOLD"
+            # Normalize conviction
+            if "conviction" in data:
+                try:
+                    data["conviction"] = max(0.0, min(1.0, float(data["conviction"])))
+                except (TypeError, ValueError):
+                    data["conviction"] = 0.5
+            # Normalize urgency
+            if "urgency" in data:
+                urg = str(data["urgency"]).strip().lower()
+                if urg not in {"low", "medium", "high", "critical"}:
+                    urg = "low"
+                data["urgency"] = urg
+            # Coerce new_sl / new_tp to float or None
+            for price_field in ("new_sl", "new_tp"):
+                if price_field in data and data[price_field] is not None:
+                    try:
+                        val = float(data[price_field])
+                        data[price_field] = val if math.isfinite(val) and val > 0 else None
+                    except (TypeError, ValueError):
+                        data[price_field] = None
+            # If action requires levels but none provided, downgrade to HOLD
+            if data.get("action") in {"ADJUST_SL", "ADJUST_SL_TP"} and not data.get("new_sl"):
+                data["action"] = "HOLD"
+            if data.get("action") in {"ADJUST_TP", "ADJUST_SL_TP"} and not data.get("new_tp"):
+                if data.get("action") == "ADJUST_SL_TP":
+                    data["action"] = "ADJUST_SL"
+                else:
+                    data["action"] = "HOLD"
         return data
+
