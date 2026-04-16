@@ -454,10 +454,30 @@ async def _async_execute_governance(db: Any, gov_run_id: int, approved_by: str) 
                 region=region,
             )
         elif action in ("ADJUST_SL", "ADJUST_TP", "ADJUST_SL_TP"):
+            # Resolve the values to send: for ADJUST_SL only, preserve the existing TP
+            # (passing None to the broker removes it). Same logic for ADJUST_TP.
+            trace = gov_run.trace or {}
+            pos_ctx = trace.get("position_context", {})
+            def _float_or_none(v: object) -> float | None:
+                try:
+                    f = float(v)  # type: ignore[arg-type]
+                    return f if f else None
+                except (TypeError, ValueError):
+                    return None
+
+            send_sl: float | None = gov_run.new_sl
+            send_tp: float | None = gov_run.new_tp
+            if action == "ADJUST_SL":
+                # Keep existing TP to avoid erasing it
+                send_tp = _float_or_none(pos_ctx.get("take_profit"))
+            elif action == "ADJUST_TP":
+                # Keep existing SL to avoid erasing it
+                send_sl = _float_or_none(pos_ctx.get("stop_loss"))
+
             result = await client.modify_position(
                 position_id=gov_run.position_ticket,
-                stop_loss=gov_run.new_sl,
-                take_profit=gov_run.new_tp,
+                stop_loss=send_sl,
+                take_profit=send_tp,
                 account_id=account_id,
                 region=region,
             )
