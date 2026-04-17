@@ -186,19 +186,51 @@ def force_governance(
     return {"triggered": True}
 
 
+def _get_governance_connector(db: Session) -> "ConnectorConfig":
+    """Return (or create) the governance ConnectorConfig row."""
+    from app.db.models.connector_config import ConnectorConfig as CC
+    row = db.query(CC).filter(CC.connector_name == "governance").first()
+    if not row:
+        row = CC(connector_name="governance", enabled=True, settings={"auto_approve": False})
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return row
+
+
 @router.get('/config')
 def get_governance_config(
+    db: Session = Depends(get_db),
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR, Role.ANALYST, Role.VIEWER)),
 ) -> dict:
     """Return current governance configuration."""
     from app.core.config import get_settings
     settings = get_settings()
+    row = _get_governance_connector(db)
+    auto_approve = bool((row.settings or {}).get("auto_approve", False))
     return {
         "enabled": True,
-        "loop_interval_seconds": 60,
-        "supervised_mode": True,  # Always supervised — human approval required
+        "auto_approve": auto_approve,
         "paper_trading_enabled": settings.enable_paper_execution,
         "live_trading_enabled": settings.allow_live_trading,
         "actions_available": ["HOLD", "ADJUST_SL", "ADJUST_TP", "ADJUST_SL_TP", "CLOSE"],
         "approval_roles": ["super_admin", "admin", "trader_operator"],
     }
+
+
+@router.put('/config')
+def update_governance_config(
+    payload: dict,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    __=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> dict:
+    """Update governance configuration (e.g. auto_approve toggle)."""
+    row = _get_governance_connector(db)
+    current = dict(row.settings or {})
+    if "auto_approve" in payload:
+        current["auto_approve"] = bool(payload["auto_approve"])
+    row.settings = current
+    db.add(row)
+    db.commit()
+    return {"auto_approve": current.get("auto_approve", False)}

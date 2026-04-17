@@ -281,13 +281,23 @@ async def _evaluate_position(
         open_time=open_time_iso,
     )
 
+    # Read auto_approve setting from DB
+    auto_approve = False
+    try:
+        from app.db.models.connector_config import ConnectorConfig
+        gov_cfg = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == "governance").first()
+        if gov_cfg:
+            auto_approve = bool((gov_cfg.settings or {}).get("auto_approve", False))
+    except Exception:
+        pass
+
     # Create GovernanceRun record
     gov_run = GovernanceRun(
         position_ticket=ticket,
         symbol=symbol,
         side=side,
         status="pending",
-        requires_approval=True,  # Supervised mode by default
+        requires_approval=not auto_approve,
         approval_status="pending",
         executed=False,
         created_at=datetime.now(timezone.utc),
@@ -346,9 +356,21 @@ async def _evaluate_position(
         result.get("urgency", "low"),
     )
 
-    # Auto-execution: if requires_approval=False, execute immediately
-    # Currently always supervised — execution happens via API approval endpoint
-    # (auto-execution can be enabled by setting gov_run.requires_approval=False above)
+    # Auto-execution: if auto_approve=True, approve and execute immediately (skip human review)
+    action = result.get("action", "HOLD")
+    if auto_approve and action != "HOLD":
+        try:
+            from app.tasks.governance_task import approve_and_execute_governance
+            gov_run.approval_status = "approved"
+            gov_run.approved_by = "auto"
+            gov_run.approved_at = datetime.now(timezone.utc)
+            gov_run.updated_at = datetime.now(timezone.utc)
+            db.add(gov_run)
+            db.commit()
+            approve_and_execute_governance.delay(gov_run.id, "auto")
+            logger.info("governance auto-approved and dispatched for execution: ticket=%s action=%s", ticket, action)
+        except Exception as exc:
+            logger.error("governance auto-execute dispatch failed: %s", exc)
 
 
 @celery_app.task(
@@ -486,7 +508,14 @@ async def _async_execute_governance(db: Any, gov_run_id: int, approved_by: str) 
             gov_run.executed = True
             gov_run.executed_at = datetime.now(timezone.utc)
         else:
-            gov_run.execution_error = str(result.get("reason") or result.get("error") or "Unknown broker error")
+            reason = str(result.get("reason") or result.get("error") or "Unknown broker error")
+            # Position closed between governance evaluation and approval — not a real error
+            if "not found" in reason.lower() or "position not found" in reason.lower():
+                gov_run.execution_error = "position already closed"
+                gov_run.executed = True  # treat as done — nothing left to do
+                gov_run.executed_at = datetime.now(timezone.utc)
+            else:
+                gov_run.execution_error = reason
 
     except Exception as exc:
         gov_run.execution_error = str(exc)[:500]

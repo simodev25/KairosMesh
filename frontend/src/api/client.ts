@@ -253,7 +253,9 @@ export const api = {
   forceGovernance: (token: string) =>
     request('/governance/force', { method: 'POST' }, token),
   getGovernanceConfig: (token: string) =>
-    request('/governance/config', {}, token),
+    request<{ auto_approve: boolean }>('/governance/config', {}, token),
+  updateGovernanceConfig: (token: string, payload: { auto_approve: boolean }) =>
+    request<{ auto_approve: boolean }>('/governance/config', { method: 'PUT', body: JSON.stringify(payload) }, token),
 };
 
 export function wsRunUrl(runId: number, token?: string): string {

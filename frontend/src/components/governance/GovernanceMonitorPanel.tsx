@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle, Clock, ExternalLink, Shield, ShieldAlert, TrendingUp, XCircle } from 'lucide-react';
-import { wsGovernanceUrl } from '../../api/client';
+import { api, wsGovernanceUrl } from '../../api/client';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,6 +79,8 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
   const [pendingCount, setPendingCount] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
   const [forcing, setForcing] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [autoApproveLoading, setAutoApproveLoading] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   // ── Fetch recommendations ────────────────────────────────────────────────
@@ -143,6 +145,7 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
 
     connect();
     void fetchRuns();
+    void api.getGovernanceConfig(token).then((cfg) => setAutoApprove(cfg.auto_approve)).catch(() => {});
 
     return () => {
       clearTimeout(reconnectTimer);
@@ -170,6 +173,18 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
       setActionStates((prev) => ({ ...prev, [id]: null }));
     }
   }, [token, fetchRuns]);
+
+  const toggleAutoApprove = useCallback(async (value: boolean) => {
+    setAutoApproveLoading(true);
+    try {
+      const res = await api.updateGovernanceConfig(token, { auto_approve: value });
+      setAutoApprove(res.auto_approve);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setAutoApproveLoading(false);
+    }
+  }, [token]);
 
   const forceGovernance = useCallback(async () => {
     setForcing(true);
@@ -228,7 +243,21 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
           <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-green-400' : 'bg-text-muted'}`} />
           {wsConnected ? 'WS live' : 'WS offline'}
         </span>
-        <div className="ml-auto flex items-center gap-2">
+        {/* Auto-approve toggle */}
+        <div className="flex items-center gap-2 ml-auto">
+          <span className="text-text-muted">Auto-approve</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoApprove}
+            disabled={autoApproveLoading}
+            onClick={() => void toggleAutoApprove(!autoApprove)}
+            className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:opacity-40 ${autoApprove ? 'bg-yellow-400' : 'bg-border'}`}
+          >
+            <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${autoApprove ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => void forceGovernance()}
@@ -314,12 +343,19 @@ export function GovernanceMonitorPanel({ token }: GovernanceMonitorPanelProps) {
                         />
                       </td>
                       <td className="py-1.5 pr-3">
-                        {run.executed ? (
+                        {run.executed && !run.execution_error ? (
                           <span className="text-green-400 flex items-center gap-1">
                             <TrendingUp className="w-2.5 h-2.5" />done
                           </span>
+                        ) : run.executed && run.execution_error === 'position already closed' ? (
+                          <span className="text-text-muted" title="Position was already closed when approval was executed">closed</span>
                         ) : run.execution_error ? (
-                          <span className="text-red-400">err</span>
+                          <span className="relative group inline-block">
+                            <span className="text-red-400">err</span>
+                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max max-w-[240px] rounded bg-surface-alt border border-border px-2 py-1 text-[9px] text-text-muted font-mono leading-snug opacity-0 group-hover:opacity-100 transition-opacity z-50 whitespace-pre-wrap break-words">
+                              {run.execution_error}
+                            </span>
+                          </span>
                         ) : (
                           <span className="text-text-muted">-</span>
                         )}
