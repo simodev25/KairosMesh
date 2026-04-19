@@ -230,6 +230,35 @@ export interface MetaApiOpenOrder {
   [key: string]: unknown;
 }
 
+export interface ExternalMcpTool {
+  tool_id: string;
+  label: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  discovery_status: 'ok' | 'error';
+}
+
+export interface ExternalMcpConfig {
+  id: string;
+  name: string;
+  url: string;
+  headers: Record<string, string>;
+  assigned_agents: string[];
+  discovered_tools: ExternalMcpTool[];
+  discovery_status: 'ok' | 'error' | 'pending';
+  last_discovery_at: string | null;
+}
+
+export interface ExternalMcpDiscoverResult {
+  status: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>;
+  count: number;
+}
+
 export interface ConnectorConfig {
   id: number;
   connector_name: string;

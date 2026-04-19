@@ -68,6 +68,35 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }, token),
+  discoverExternalMcp: (
+    token: string,
+    url: string,
+    headers: Record<string, string>,
+  ) =>
+    request<{ status: string; tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; count: number }>(
+      '/connectors/external-mcp/discover',
+      { method: 'POST', body: JSON.stringify({ url, headers }) },
+      token,
+    ),
+  saveExternalMcp: (
+    token: string,
+    payload: {
+      id?: string;
+      name: string;
+      url: string;
+      headers: Record<string, string>;
+      assigned_agents: string[];
+      discovered_tools: Array<{ tool_id: string; label: string; description: string; input_schema: Record<string, unknown>; discovery_status: string }>;
+    },
+  ) =>
+    request<{ status: string; id: string }>('/connectors/external-mcp', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, token),
+  deleteExternalMcp: (token: string, mcpId: string, agentName: string) =>
+    request<{ status: string }>(`/connectors/external-mcp/${mcpId}?agent_name=${encodeURIComponent(agentName)}`, {
+      method: 'DELETE',
+    }, token),
   getTradingConfigVersions: (token: string, limit?: number) =>
     request<{ count: number; versions: Array<Record<string, unknown>> }>(
       `/connectors/trading-config/versions?limit=${limit || 20}`, {}, token,
