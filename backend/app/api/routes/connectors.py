@@ -435,7 +435,7 @@ def save_external_mcp(
 @router.delete('/external-mcp/{mcp_id}')
 def delete_external_mcp(
     mcp_id: str,
-    agent_name: str,
+    agent_name: str = Query(...),
     db: Session = Depends(get_db),
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
 ) -> dict:
