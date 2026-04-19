@@ -283,7 +283,13 @@ def _normalize_tools_for_agent(raw_value: object, *, allowed_tools: tuple[str, .
     normalized = dict(defaults)
     for raw_tool_id, raw_tool_payload in raw_value.items():
         tool_id = str(raw_tool_id or '').strip()
-        if not tool_id or tool_id not in defaults:
+        if not tool_id:
+            continue
+        if tool_id.startswith('ext__'):
+            # External MCP tools are stored alongside internal tools — always preserve them
+            normalized[tool_id] = _extract_tool_enabled_value(raw_tool_payload, fallback=False)
+            continue
+        if tool_id not in defaults:
             continue
         normalized[tool_id] = _extract_tool_enabled_value(raw_tool_payload, fallback=defaults[tool_id])
     return normalized

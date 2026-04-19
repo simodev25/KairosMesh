@@ -338,3 +338,21 @@ def test_get_external_tools_for_agent_excludes_other_agents():
     }
     tools = get_external_tools_for_agent("technical-analyst", settings)
     assert tools == []
+
+
+def test_normalize_agent_tools_preserves_ext_tool_ids():
+    """normalize_agent_tools_settings must keep ext__ tool IDs alongside internal tools."""
+    from app.services.llm.model_selector import normalize_agent_tools_settings
+
+    raw = {
+        "technical-analyst": {
+            "indicator_bundle": True,
+            "ext__test-finance-mcp__get_earnings": False,
+            "ext__test-finance-mcp__get_analyst_rating": True,
+        }
+    }
+    result = normalize_agent_tools_settings(raw)
+    ta = result.get("technical-analyst", {})
+    assert "ext__test-finance-mcp__get_earnings" in ta, "ext__ tool must be preserved"
+    assert ta["ext__test-finance-mcp__get_earnings"] is False
+    assert ta["ext__test-finance-mcp__get_analyst_rating"] is True
