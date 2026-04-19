@@ -1454,10 +1454,10 @@ def portfolio_risk_evaluation(
     proposed = ProposedTrade(
         decision=decision,
         pair=resolved_pair,
-        entry_price=trader_decision.get("entry", 0.0),
-        stop_loss=trader_decision.get("stop_loss"),
-        take_profit=trader_decision.get("take_profit"),
-        risk_percent=risk_percent,
+        entry_price=trader_decision.get("entry") or 0.0,
+        stop_loss=trader_decision.get("stop_loss") or None,
+        take_profit=trader_decision.get("take_profit") or None,
+        risk_percent=trader_decision.get("risk_percent") or risk_percent,
         mode=resolved_mode,
         asset_class=trader_decision.get("asset_class"),
     )

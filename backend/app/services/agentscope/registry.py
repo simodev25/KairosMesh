@@ -381,6 +381,25 @@ class AgentScopeRegistry:
                 raw_facts_lines.append(f"- {key.replace('_', ' ').title()}: {val} [tool:indicator_bundle]")
         raw_facts_block = "\n".join(raw_facts_lines) if raw_facts_lines else "No raw facts available."
 
+        # Pre-compute deterministic score breakdown so technical-analyst receives
+        # authoritative numbers instead of returning UNAVAILABLE_RUNTIME_SCORE_BREAKDOWN.
+        _runtime_score_breakdown: dict = {}
+        try:
+            from app.services.mcp.trading_server import technical_scoring as _ts
+            _ts_result = _ts(
+                trend=snapshot.get("trend", "neutral"),
+                rsi=float(snapshot.get("rsi") or 50.0),
+                macd_diff=float(snapshot.get("macd_diff") or 0.0),
+                atr=float(snapshot.get("atr") or 0.0),
+                ema_fast_above_slow=bool(
+                    float(snapshot.get("ema_fast") or 0) > float(snapshot.get("ema_slow") or 0)
+                ),
+                change_pct=float(snapshot.get("change_pct") or 0.0),
+            )
+            _runtime_score_breakdown = _ts_result.get("components", {})
+        except Exception:
+            pass
+
         variables = {
             "pair": pair,
             "asset_class": asset_class,
@@ -396,6 +415,8 @@ class AgentScopeRegistry:
             "decision_mode_description": "",
             "mode": "simulation",
             "risk_percent": "1.0",
+            # Pre-computed deterministic score breakdown — prevents UNAVAILABLE_RUNTIME_SCORE_BREAKDOWN
+            "runtime_score_breakdown": _runtime_score_breakdown,
         }
 
         # Debate variables (LLM-First: use winner/conviction/key_argument/weakness)
@@ -1648,10 +1669,23 @@ class AgentScopeRegistry:
                     if not _trader_decision_is_hold:
                         # Get trade_sizing result for entry/SL/TP
                         _sizing_data = agent_tool_invocations.get("trader-agent", {}).get("trade_sizing", {}).get("data", {})
+                        # Snapshot-based fallback when trade_sizing didn't produce values
+                        _snap_price = float(snapshot.get("last_price") or 0.0)
+                        _snap_atr = float(snapshot.get("atr") or 0.0) or _snap_price * 0.001
+                        _side_for_sizing = str(meta.get("decision") or d.get("decision", "SELL")).upper()
+                        _sl_snap = (
+                            round(_snap_price + _snap_atr * 1.5, 5) if _side_for_sizing == "SELL"
+                            else round(_snap_price - _snap_atr * 1.5, 5)
+                        ) if _snap_price > 0 else None
+                        _tp_snap = (
+                            round(_snap_price - _snap_atr * 2.0, 5) if _side_for_sizing == "SELL"
+                            else round(_snap_price + _snap_atr * 2.0, 5)
+                        ) if _snap_price > 0 else None
                         # Build complete trader decision dict from all sources:
                         # - meta (structured metadata from LLM, may be empty)
                         # - d top-level (flat output from _msg_to_dict)
                         # - _sizing_data (entry/SL/TP from trade_sizing tool)
+                        # - snapshot fallback (last resort so portfolio_risk_evaluation never gets entry=0)
                         _trader_decision_for_risk = {
                             "decision": meta.get("decision") or d.get("decision", "HOLD"),
                             "conviction": meta.get("conviction") or d.get("conviction", 0.0),
@@ -1661,9 +1695,10 @@ class AgentScopeRegistry:
                             "decision_mode": _resolved_decision_mode,
                             "asset_class": base_vars.get("asset_class"),
                             "key_level": meta.get("key_level") or d.get("key_level"),
-                            "entry": _sizing_data.get("entry") or meta.get("entry") or d.get("entry"),
-                            "stop_loss": _sizing_data.get("stop_loss") or meta.get("stop_loss") or d.get("stop_loss"),
-                            "take_profit": _sizing_data.get("take_profit") or meta.get("take_profit") or d.get("take_profit"),
+                            "entry": (_sizing_data.get("entry") or meta.get("entry") or d.get("entry") or _snap_price or 0.0),
+                            "stop_loss": (_sizing_data.get("stop_loss") or meta.get("stop_loss") or d.get("stop_loss") or _sl_snap),
+                            "take_profit": (_sizing_data.get("take_profit") or meta.get("take_profit") or d.get("take_profit") or _tp_snap),
+                            "risk_percent": risk_percent,
                         }
                         d["metadata"] = _trader_decision_for_risk
                         analysis_outputs["trader-agent"] = d
@@ -1689,6 +1724,7 @@ class AgentScopeRegistry:
                 elif name == "risk-manager":
                     # If the tool returned accepted=true but the LLM overrode with
                     # "missing params", trust the tool — it has the real data via force_kwargs.
+                    _HALLUCINATED_FLAGS = {"missing_volume", "missing_risk_budget", "missing_trade_parameters"}
                     _risk_tool_inv = agent_tool_invocations.get("risk-manager", {}).get("portfolio_risk_evaluation", {})
                     _risk_tool_result = _risk_tool_inv.get("data", {}) if isinstance(_risk_tool_inv, dict) else {}
                     _risk_tool_accepted = _risk_tool_result.get("accepted", False)
@@ -1707,7 +1743,28 @@ class AgentScopeRegistry:
                         d.setdefault("metadata", {})["accepted"] = True
                         d.setdefault("metadata", {})["suggested_volume"] = _tool_vol
                         d.setdefault("metadata", {})["adjusted_volume"] = _tool_vol
-                        d["risk_flags"] = _risk_tool_result.get("reasons", []) + ["LLM_OVERRIDDEN_BY_TOOL"]
+                        real_flags = [f for f in _risk_tool_result.get("reasons", []) if f not in _HALLUCINATED_FLAGS]
+                        d["risk_flags"] = real_flags + ["LLM_OVERRIDDEN_BY_TOOL"]
+                    elif _risk_tool_accepted and _llm_approved and _risk_tool_result.get("suggested_volume", 0) > 0:
+                        # Tool accepted AND LLM approved — but LLM may have hallucinated flags
+                        # like missing_volume when the tool actually computed a volume.
+                        _tool_vol = _risk_tool_result.get("suggested_volume", 0)
+                        _existing_flags = d.get("risk_flags") or (d.get("metadata", {}) or {}).get("risk_flags") or []
+                        _hallucinated = [f for f in _existing_flags if f.lower().replace("-", "_") in _HALLUCINATED_FLAGS]
+                        if _hallucinated:
+                            logger.warning(
+                                "Risk-manager LLM approved but emitted hallucinated flags %s — cleaning up",
+                                _hallucinated,
+                            )
+                            clean_flags = [f for f in _existing_flags if f.lower().replace("-", "_") not in _HALLUCINATED_FLAGS]
+                            d["risk_flags"] = clean_flags
+                            d.setdefault("metadata", {})["risk_flags"] = clean_flags
+                        # Ensure volume is always taken from tool when it computed one
+                        if not (d.get("adjusted_volume") or (d.get("metadata", {}) or {}).get("adjusted_volume")):
+                            d["adjusted_volume"] = _tool_vol
+                            d["suggested_volume"] = _tool_vol
+                            d.setdefault("metadata", {})["adjusted_volume"] = _tool_vol
+                            d.setdefault("metadata", {})["suggested_volume"] = _tool_vol
 
                     base_vars["risk_result"] = d.get("text", "")[:500]
                 elif name == "execution-manager":

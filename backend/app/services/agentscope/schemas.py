@@ -281,6 +281,10 @@ class TraderDecisionDraft(_SchemaBase):
                     data["conviction"] = max(0.0, min(1.0, float(data["confidence"])))
                 except (TypeError, ValueError):
                     data["conviction"] = 0.0
+            # Floor conviction for directional decisions: conviction=0.0 with BUY/SELL is
+            # contradictory — the LLM often outputs 0.0 when it means "weak" (~0.3).
+            if data.get("decision") in ("BUY", "SELL") and data.get("conviction", 0.0) < 0.3:
+                data["conviction"] = 0.3
         return data
 
 
