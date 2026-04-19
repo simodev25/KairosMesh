@@ -1,4 +1,5 @@
 import json
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -383,8 +384,6 @@ def save_external_mcp(
     _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
 ) -> dict:
     """Save or update an external MCP server config for the ollama connector."""
-    import uuid as _uuid
-
     conn = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'ollama').first()
     if not conn:
         conn = ConnectorConfig(connector_name='ollama', enabled=True, settings={})
@@ -395,7 +394,9 @@ def save_external_mcp(
     agent_tools: dict = dict(settings.get('agent_tools') or {})
 
     # Build the MCP entry
-    mcp_id = payload.id or str(_uuid.uuid4())
+    mcp_id = payload.id or str(uuid.uuid4())
+    idx = next((i for i, m in enumerate(external_mcps) if m.get('id') == mcp_id), None)
+    old_entry = external_mcps[idx] if idx is not None else {}
     entry = {
         'id': mcp_id,
         'name': payload.name,
@@ -404,11 +405,10 @@ def save_external_mcp(
         'assigned_agents': payload.assigned_agents,
         'discovered_tools': payload.discovered_tools,
         'discovery_status': 'ok' if payload.discovered_tools else 'pending',
-        'last_discovery_at': None,
+        'last_discovery_at': old_entry.get('last_discovery_at'),
     }
 
     # Replace or insert
-    idx = next((i for i, m in enumerate(external_mcps) if m.get('id') == mcp_id), None)
     if idx is not None:
         external_mcps[idx] = entry
     else:
@@ -457,7 +457,10 @@ def delete_external_mcp(
 
     # Remove ext__ tool IDs from this agent's tool state
     if agent_name in agent_tools and isinstance(agent_tools[agent_name], dict):
-        tool_ids_to_remove = {t.get('tool_id') for t in entry.get('discovered_tools', [])}
+        tool_ids_to_remove = {
+            t.get('tool_id') for t in entry.get('discovered_tools', [])
+            if t.get('tool_id')
+        }
         agent_tools[agent_name] = {
             k: v for k, v in agent_tools[agent_name].items()
             if k not in tool_ids_to_remove

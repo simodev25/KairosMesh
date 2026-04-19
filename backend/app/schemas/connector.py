@@ -52,8 +52,3 @@ class ExternalMcpSaveRequest(BaseModel):
     headers: dict[str, str] = {}
     assigned_agents: list[str] = []
     discovered_tools: list[dict] = []
-
-
-class ExternalMcpDeleteRequest(BaseModel):
-    id: str
-    agent_name: str
