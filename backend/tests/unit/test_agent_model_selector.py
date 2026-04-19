@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models.connector_config import ConnectorConfig
-from app.services.llm.model_selector import AgentModelSelector
+from app.services.llm.model_selector import (
+    AgentModelSelector,
+    get_external_tools_for_agent,
+    normalize_external_mcps,
+    validate_agent_tools_payload,
+)
 
 
 def test_agent_model_selector_prefers_agent_specific_and_default() -> None:
@@ -258,12 +263,6 @@ def test_agent_model_selector_resolves_agent_tools_overrides() -> None:
 
 
 # --- External MCP tool ID tests ---
-
-from app.services.llm.model_selector import (
-    get_external_tools_for_agent,
-    normalize_external_mcps,
-    validate_agent_tools_payload,
-)
 
 
 def test_validate_agent_tools_allows_ext_prefix():
