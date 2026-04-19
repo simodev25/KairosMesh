@@ -610,6 +610,11 @@ class AgentModelSelector:
                 enabled_tools.append(tool_id)
         return enabled_tools
 
+    def resolve_external_mcp_tools(self, db: Session | None, agent_name: str) -> list[dict[str, Any]]:
+        """Return enabled external MCP tool descriptors for an agent."""
+        settings = self._load_llm_settings(db)
+        return get_external_tools_for_agent(agent_name, settings)
+
     def resolve_decision_mode(self, db: Session | None) -> str:
         fallback = normalize_decision_mode(getattr(self.settings, 'decision_mode', DEFAULT_DECISION_MODE))
         settings = self._load_llm_settings(db)

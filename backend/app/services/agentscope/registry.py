@@ -1144,6 +1144,7 @@ class AgentScopeRegistry:
                     snapshot=snapshot,
                     decision_mode=_resolved_decision_mode,
                     execution_mode=_resolved_execution_mode,
+                    external_mcp_tools=model_selector.resolve_external_mcp_tools(db, name),
                 )
 
             # Build prompt variables for context injection
@@ -1312,6 +1313,7 @@ class AgentScopeRegistry:
                     snapshot=snapshot,
                     decision_mode=_resolved_decision_mode,
                     execution_mode=_resolved_execution_mode,
+                    external_mcp_tools=model_selector.resolve_external_mcp_tools(db, rname),
                 )
                 if rname in agents:
                     agents[rname] = ALL_AGENT_FACTORIES[rname](
@@ -1713,6 +1715,7 @@ class AgentScopeRegistry:
                             decision_mode=_resolved_decision_mode,
                             execution_mode=_resolved_execution_mode,
                             portfolio_state=_portfolio_state,
+                            external_mcp_tools=model_selector.resolve_external_mcp_tools(db, "risk-manager"),
                         )
                         if "risk-manager" in agents:
                             agents["risk-manager"] = ALL_AGENT_FACTORIES["risk-manager"](
@@ -2092,6 +2095,7 @@ class AgentScopeRegistry:
                     snapshot=snapshot,
                     decision_mode=base_vars.get("decision_mode", "balanced"),
                     execution_mode="simulation",
+                    external_mcp_tools=model_selector.resolve_external_mcp_tools(db, name),
                 )
                 is_debate = name in ("bullish-researcher", "bearish-researcher", "trader-agent")
                 agents[name] = factory(

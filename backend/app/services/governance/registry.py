@@ -208,12 +208,14 @@ class GovernanceRegistry:
                 toolkits[name] = await build_toolkit(
                     name, ohlc=ohlc, news=news, skills=agent_skills,
                     snapshot=snapshot, decision_mode="governance", execution_mode="governance",
+                    external_mcp_tools=selector.resolve_external_mcp_tools(db, name),
                 )
             # Governance trader: resolve skills under its own name "governance-trader"
             gov_trader_skills = selector.resolve_skills(db, "governance-trader")
             toolkits["trader-agent"] = await build_toolkit(
                 "governance-trader", ohlc=ohlc, news=news, skills=gov_trader_skills,
                 snapshot=snapshot, decision_mode="governance", execution_mode="governance",
+                external_mcp_tools=selector.resolve_external_mcp_tools(db, "governance-trader"),
             )
 
             # ── Build agents ─────────────────────────────────────────────────
