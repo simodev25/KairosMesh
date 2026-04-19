@@ -10,6 +10,8 @@ from app.db.session import get_db
 from app.schemas.connector import (
     ConnectorConfigOut,
     ConnectorConfigUpdate,
+    ExternalMcpDiscoverRequest,
+    ExternalMcpSaveRequest,
     MarketSymbolsOut,
     MarketSymbolsUpdate,
     TradingConfigScopedUpdate,
@@ -25,8 +27,10 @@ from app.services.llm.model_selector import (
     normalize_agent_tools_settings,
     normalize_agent_name,
     normalize_decision_mode,
+    normalize_external_mcps,
     validate_agent_tools_payload,
 )
+from app.services.mcp.external_client import ExternalMCPClient, ExternalMCPUnavailableError
 from app.services.llm.provider_client import LlmClient
 from app.services.market.symbols import get_market_symbols_config, save_market_symbols_config
 from app.services.market.news_provider import MarketProvider
@@ -158,6 +162,9 @@ def _sanitize_ollama_settings(raw_settings: dict) -> dict:
     normalized_agent_tools = normalize_agent_tools_settings(settings.get('agent_tools'))
     settings['agent_tools'] = normalized_agent_tools
     settings['agent_tools_catalog'] = build_agent_tools_catalog(normalized_agent_tools)
+
+    # Preserve and normalize external MCP server configs
+    settings['external_mcps'] = normalize_external_mcps(settings.get('external_mcps'))
     return settings
 
 
@@ -353,6 +360,119 @@ def update_trading_config(
         'decision_mode': decision_mode,
         'execution_mode': execution_mode,
     }
+
+
+@router.post('/external-mcp/discover')
+async def discover_external_mcp(
+    payload: ExternalMcpDiscoverRequest,
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
+) -> dict:
+    """Query an external MCP server and return its tool list."""
+    client = ExternalMCPClient()
+    try:
+        tools = await client.discover_tools(payload.url, payload.headers)
+    except ExternalMCPUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=f"MCP server unavailable: {exc}")
+    return {"status": "ok", "tools": tools, "count": len(tools)}
+
+
+@router.put('/external-mcp')
+def save_external_mcp(
+    payload: ExternalMcpSaveRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
+) -> dict:
+    """Save or update an external MCP server config for the ollama connector."""
+    import uuid as _uuid
+
+    conn = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'ollama').first()
+    if not conn:
+        conn = ConnectorConfig(connector_name='ollama', enabled=True, settings={})
+        db.add(conn)
+
+    settings = dict(conn.settings or {})
+    external_mcps: list[dict] = list(settings.get('external_mcps') or [])
+    agent_tools: dict = dict(settings.get('agent_tools') or {})
+
+    # Build the MCP entry
+    mcp_id = payload.id or str(_uuid.uuid4())
+    entry = {
+        'id': mcp_id,
+        'name': payload.name,
+        'url': payload.url,
+        'headers': payload.headers,
+        'assigned_agents': payload.assigned_agents,
+        'discovered_tools': payload.discovered_tools,
+        'discovery_status': 'ok' if payload.discovered_tools else 'pending',
+        'last_discovery_at': None,
+    }
+
+    # Replace or insert
+    idx = next((i for i, m in enumerate(external_mcps) if m.get('id') == mcp_id), None)
+    if idx is not None:
+        external_mcps[idx] = entry
+    else:
+        external_mcps.append(entry)
+
+    # Merge ext__ tool IDs into agent_tools (disabled by default)
+    for agent_name in payload.assigned_agents:
+        if agent_name not in agent_tools:
+            agent_tools[agent_name] = {}
+        for tool in payload.discovered_tools:
+            tool_id = str(tool.get('tool_id') or '')
+            if tool_id and tool_id not in agent_tools[agent_name]:
+                agent_tools[agent_name][tool_id] = False  # off by default
+
+    settings['external_mcps'] = external_mcps
+    settings['agent_tools'] = agent_tools
+    conn.settings = _sanitize_ollama_settings(settings)
+    db.commit()
+    db.refresh(conn)
+    AgentModelSelector.clear_cache()
+    return {'status': 'ok', 'id': mcp_id}
+
+
+@router.delete('/external-mcp/{mcp_id}')
+def delete_external_mcp(
+    mcp_id: str,
+    agent_name: str,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN)),
+) -> dict:
+    """Remove an external MCP server from an agent (or entirely if no agents remain)."""
+    conn = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'ollama').first()
+    if not conn:
+        raise HTTPException(status_code=404, detail='Ollama connector not found')
+
+    settings = dict(conn.settings or {})
+    external_mcps: list[dict] = list(settings.get('external_mcps') or [])
+    agent_tools: dict = dict(settings.get('agent_tools') or {})
+
+    entry = next((m for m in external_mcps if m.get('id') == mcp_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f'External MCP {mcp_id} not found')
+
+    # Remove agent from assigned_agents
+    entry['assigned_agents'] = [a for a in entry.get('assigned_agents', []) if a != agent_name]
+
+    # Remove ext__ tool IDs from this agent's tool state
+    if agent_name in agent_tools and isinstance(agent_tools[agent_name], dict):
+        tool_ids_to_remove = {t.get('tool_id') for t in entry.get('discovered_tools', [])}
+        agent_tools[agent_name] = {
+            k: v for k, v in agent_tools[agent_name].items()
+            if k not in tool_ids_to_remove
+        }
+
+    # If no agents left, remove the MCP entry entirely
+    if not entry['assigned_agents']:
+        external_mcps = [m for m in external_mcps if m.get('id') != mcp_id]
+
+    settings['external_mcps'] = external_mcps
+    settings['agent_tools'] = agent_tools
+    conn.settings = _sanitize_ollama_settings(settings)
+    db.commit()
+    AgentModelSelector.clear_cache()
+    return {'status': 'ok'}
 
 
 @router.put('/{connector_name}', response_model=ConnectorConfigOut)

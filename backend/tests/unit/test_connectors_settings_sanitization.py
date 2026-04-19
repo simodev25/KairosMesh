@@ -266,3 +266,76 @@ def test_list_connectors_bootstraps_ollama_agent_skills_on_first_load(tmp_path) 
         settings.agent_skills_bootstrap_file = previous_values['agent_skills_bootstrap_file']
         settings.agent_skills_bootstrap_mode = previous_values['agent_skills_bootstrap_mode']
         settings.agent_skills_bootstrap_apply_once = previous_values['agent_skills_bootstrap_apply_once']
+
+
+# --- External MCP tests ---
+
+def test_sanitize_ollama_settings_preserves_external_mcps():
+    settings = {
+        'provider': 'ollama',
+        'external_mcps': [
+            {
+                'id': 'test-id',
+                'name': 'Finance MCP',
+                'url': 'http://localhost:8001',
+                'headers': {},
+                'assigned_agents': ['technical-analyst'],
+                'discovered_tools': [],
+                'discovery_status': 'ok',
+            }
+        ],
+    }
+    result = _sanitize_ollama_settings(settings)
+    assert 'external_mcps' in result
+    assert len(result['external_mcps']) == 1
+    assert result['external_mcps'][0]['name'] == 'Finance MCP'
+
+
+def test_sanitize_ollama_settings_filters_invalid_external_mcps():
+    settings = {
+        'provider': 'ollama',
+        'external_mcps': [
+            {'name': 'no url'},  # invalid
+            {'url': 'http://localhost:8001', 'name': 'valid', 'assigned_agents': [], 'headers': {}, 'discovered_tools': [], 'id': 'x'},
+        ],
+    }
+    result = _sanitize_ollama_settings(settings)
+    assert len(result['external_mcps']) == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_external_mcp_endpoint_returns_tools():
+    from unittest.mock import AsyncMock, patch
+    from app.api.routes.connectors import discover_external_mcp
+    from app.schemas.connector import ExternalMcpDiscoverRequest
+
+    mock_tools = [
+        {'name': 'get_earnings', 'description': 'Fetch earnings', 'inputSchema': {'type': 'object', 'properties': {}}}
+    ]
+    with patch('app.api.routes.connectors.ExternalMCPClient') as MockClient:
+        instance = MockClient.return_value
+        instance.discover_tools = AsyncMock(return_value=mock_tools)
+
+        req = ExternalMcpDiscoverRequest(url='http://localhost:8001', headers={})
+        result = await discover_external_mcp(req)
+
+    assert result['status'] == 'ok'
+    assert len(result['tools']) == 1
+    assert result['tools'][0]['name'] == 'get_earnings'
+
+
+@pytest.mark.asyncio
+async def test_discover_external_mcp_endpoint_raises_502_on_unavailable():
+    from unittest.mock import AsyncMock, patch
+    from app.api.routes.connectors import discover_external_mcp
+    from app.schemas.connector import ExternalMcpDiscoverRequest
+    from app.services.mcp.external_client import ExternalMCPUnavailableError
+
+    with patch('app.api.routes.connectors.ExternalMCPClient') as MockClient:
+        instance = MockClient.return_value
+        instance.discover_tools = AsyncMock(side_effect=ExternalMCPUnavailableError('Connection refused'))
+
+        req = ExternalMcpDiscoverRequest(url='http://bad-host:9999', headers={})
+        with pytest.raises(HTTPException) as exc_info:
+            await discover_external_mcp(req)
+        assert exc_info.value.status_code == 502

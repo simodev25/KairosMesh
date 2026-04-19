@@ -38,3 +38,22 @@ class ConnectorConfigOut(BaseModel):
     settings: dict
 
     model_config = {'from_attributes': True}
+
+
+class ExternalMcpDiscoverRequest(BaseModel):
+    url: str
+    headers: dict[str, str] = {}
+
+
+class ExternalMcpSaveRequest(BaseModel):
+    id: str | None = None          # None = new server
+    name: str
+    url: str
+    headers: dict[str, str] = {}
+    assigned_agents: list[str] = []
+    discovered_tools: list[dict] = []
+
+
+class ExternalMcpDeleteRequest(BaseModel):
+    id: str
+    agent_name: str
