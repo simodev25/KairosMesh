@@ -354,11 +354,73 @@ def validate_agent_tools_payload(raw_agent_tools: object) -> list[str]:
                 continue
             if tool_id in allowed_tools:
                 continue
+            if tool_id.startswith("ext__"):
+                continue  # External MCP tools are always allowed
             if _extract_tool_enabled_value(raw_tool_payload, fallback=False):
                 issues.append(
                     f"Tool '{tool_id}' is not allowed for agent '{agent_name}'."
                 )
     return issues
+
+
+def normalize_external_mcps(raw: object) -> list[dict]:
+    """Validate and return list of well-formed external MCP server configs."""
+    if not isinstance(raw, list):
+        return []
+    result = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("url") or not item.get("name"):
+            continue
+        result.append({
+            "id": str(item.get("id") or ""),
+            "name": str(item["name"]),
+            "url": str(item["url"]),
+            "headers": dict(item.get("headers") or {}),
+            "assigned_agents": [str(a) for a in (item.get("assigned_agents") or []) if a],
+            "discovered_tools": list(item.get("discovered_tools") or []),
+            "discovery_status": str(item.get("discovery_status") or "pending"),
+            "last_discovery_at": item.get("last_discovery_at"),
+        })
+    return result
+
+
+def get_external_tools_for_agent(agent_name: str, settings: dict) -> list[dict]:
+    """Return external tool descriptors for an agent (enabled + disabled).
+
+    Each returned dict has: tool_id, label, description, input_schema,
+    url, headers, enabled (bool).
+    """
+    external_mcps = normalize_external_mcps(settings.get("external_mcps"))
+    agent_tool_state: dict[str, bool] = {}
+    raw_agent_tools = settings.get("agent_tools")
+    if isinstance(raw_agent_tools, dict):
+        raw_for_agent = raw_agent_tools.get(agent_name, {})
+        if isinstance(raw_for_agent, dict):
+            agent_tool_state = {k: bool(v) for k, v in raw_for_agent.items() if k.startswith("ext__")}
+
+    result = []
+    for mcp in external_mcps:
+        if agent_name not in mcp["assigned_agents"]:
+            continue
+        for tool in mcp["discovered_tools"]:
+            if not isinstance(tool, dict):
+                continue
+            tool_id = str(tool.get("tool_id") or "")
+            if not tool_id:
+                continue
+            enabled = agent_tool_state.get(tool_id, False)
+            result.append({
+                "tool_id": tool_id,
+                "label": str(tool.get("label") or tool_id),
+                "description": str(tool.get("description") or ""),
+                "input_schema": tool.get("input_schema") or {},
+                "url": mcp["url"],
+                "headers": mcp["headers"],
+                "enabled": enabled,
+            })
+    return result
 
 
 class AgentModelSelector:
