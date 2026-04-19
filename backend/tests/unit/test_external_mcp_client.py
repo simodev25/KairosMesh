@@ -93,3 +93,18 @@ async def test_call_tool_returns_error_dict_on_unavailable():
 
     assert "error" in result
     assert "unavailable" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_discover_tools_raises_on_jsonrpc_error():
+    mock_response = {"error": {"code": -32601, "message": "Method not found"}}
+    with patch("httpx.AsyncClient") as MockClient:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value=mock_response)
+        MockClient.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_resp)
+
+        client = ExternalMCPClient()
+        with pytest.raises(ExternalMCPUnavailableError) as exc_info:
+            await client.discover_tools("http://localhost:8001", {})
+        assert "Method not found" in str(exc_info.value)

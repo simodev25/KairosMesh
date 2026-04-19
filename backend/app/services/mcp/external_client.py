@@ -65,6 +65,11 @@ class ExternalMCPClient:
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError) as exc:
             raise ExternalMCPUnavailableError(f"Cannot reach MCP server at {base}: {exc}") from exc
 
+        if "error" in data:
+            err = data.get("error", {})
+            msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            raise ExternalMCPUnavailableError(f"MCP server returned JSON-RPC error: {msg}")
+
         result = data.get("result", {})
         tools = result.get("tools", [])
         if not isinstance(tools, list):
@@ -77,7 +82,7 @@ class ExternalMCPClient:
         headers: dict[str, str],
         tool_name: str,
         kwargs: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Call a tool on the MCP server. Returns parsed result dict.
 
         On connection failure returns {"error": "..."} instead of raising,
