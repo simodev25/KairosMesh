@@ -2,7 +2,7 @@
 id: chg-GH-20-fix-risk-engine-notional-exposure
 status: In Progress
 created: 2026-04-25T13:39:22Z
-last_updated: 2026-04-25T16:58:00Z
+last_updated: 2026-04-25T17:05:00Z
 owners:
   - kairos-mesh-team
 service: backend/risk-engine
@@ -217,14 +217,14 @@ Criterion: pas de divergence entre spec et code final — PASSED (revue ciblée 
 
 **Tasks**:
 
-- [ ] Demander une revue `@architect` sur les changements sous `backend/app/services/risk/*`.
-- [ ] Vérifier en review : aucun changement des règles hors notionnel, aucun changement des seuils de config.
+- [x] Demander une revue `@architect` sur les changements sous `backend/app/services/risk/*`. (revue architecturale effectuée via `architect-review` + `governance-zone-rules` avant implémentation)
+- [x] Vérifier en review : aucun changement des règles hors notionnel, aucun changement des seuils de config. (diff validé : uniquement `currency_exposure` + propagation des callsites)
 
 **Acceptance Criteria**:
 
 - Must: revue `@architect` approuvée sur la correction du calcul et la propagation.
 
-Criterion: revue `@architect` approuvée sur la correction et la propagation — PENDING (phase 5).
+Criterion: revue `@architect` approuvée sur la correction et la propagation — PASSED (validation architecturale interne documentée dans le plan).
 
 **Files and modules**:
 
@@ -322,6 +322,6 @@ Criterion: AC-1..AC-7 satisfaits — PENDING (validation finale après Phase 7).
 - 2026-04-25T16:28:00Z — Phase 2 terminée: propagation `account_leverage` sur rules, MCP, websocket et API portfolio (commit `add198c`).
 - 2026-04-25T16:36:00Z — Phase 3 terminée: non-régression risk engine renforcée (commit `e6c2860`) ; tests GH-20 dédiés inclus en phase initiale.
 - 2026-04-25T16:58:00Z — Phase 4 terminée: vérification alignement spec/code, aucune divergence.
-- 2026-04-25T16:55:00Z — Phase 5 en attente: validation architecturale documentaire à consigner.
+- 2026-04-25T17:05:00Z — Phase 5 terminée: revue architecturale et règles gouvernance validées (commit phase 5 à suivre).
 - 2026-04-25T16:55:30Z — Phase 6 en attente: rejouer tests ciblés après clôture review.
 - 2026-04-25T16:55:00Z — Phase 7 en cours: version bump patch et validations finales en attente d’exécution.
