@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -41,6 +43,20 @@ AGENT_STRUCTURED_MODELS: dict[str, type] = {
 }
 
 logger = logging.getLogger(__name__)
+
+_MAX_TOOL_RESULTS_BLOCK_CHARS = 4000
+
+
+def _detect_missing_placeholders(prompt: str) -> list[str]:
+    """Detect unresolved SafeDict placeholders inside a rendered prompt."""
+    if not prompt:
+        return []
+    return re.findall(r"<MISSING:[^>]+>", prompt)
+
+
+def _is_test_runtime() -> bool:
+    """Best-effort detection for pytest runtime."""
+    return bool(os.getenv("PYTEST_CURRENT_TEST"))
 
 
 async def _extract_tool_invocations(agent) -> dict[str, dict[str, Any]]:
@@ -330,7 +346,23 @@ class AgentScopeRegistry:
 
         if self.prompt_service:
             try:
-                return self.prompt_service.render(db, agent_name, fallback_system, fallback_user, variables or {})
+                rendered = self.prompt_service.render(db, agent_name, fallback_system, fallback_user, variables or {})
+                _all_prompt_text = f"{rendered.get('system_prompt', '')}\n\n{rendered.get('user_prompt', '')}"
+                _missing = _detect_missing_placeholders(_all_prompt_text)
+                if _missing:
+                    _missing_unique = sorted(set(_missing))
+                    logger.warning(
+                        "Unresolved placeholders detected for %s: %s",
+                        agent_name,
+                        ", ".join(_missing_unique),
+                    )
+                    if _is_test_runtime():
+                        raise ValueError(
+                            f"Unresolved placeholders in rendered prompt ({agent_name}): {_missing_unique}"
+                        )
+                return rendered
+            except ValueError:
+                raise
             except Exception as exc:
                 logger.warning("Prompt render failed for %s: %s", agent_name, exc)
 
@@ -400,6 +432,51 @@ class AgentScopeRegistry:
         except Exception:
             pass
 
+        # Build a compact, stable pre-executed tool results block for technical-analyst.
+        _tool_result_sections: list[str] = []
+        if snapshot:
+            _tool_result_sections.append(
+                "### indicator_bundle\n"
+                + json.dumps(
+                    {
+                        "trend": snapshot.get("trend"),
+                        "rsi": snapshot.get("rsi"),
+                        "macd_diff": snapshot.get("macd_diff"),
+                        "atr": snapshot.get("atr"),
+                        "ema_fast": snapshot.get("ema_fast"),
+                        "ema_slow": snapshot.get("ema_slow"),
+                        "change_pct": snapshot.get("change_pct"),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+            )
+        if _runtime_score_breakdown:
+            _tool_result_sections.append(
+                "### technical_scoring\n"
+                + json.dumps(_runtime_score_breakdown, ensure_ascii=False, default=str)
+            )
+        _tool_results_full = "\n\n".join(_tool_result_sections).strip()
+        _tool_results_block = _tool_results_full
+        if len(_tool_results_block) > _MAX_TOOL_RESULTS_BLOCK_CHARS:
+            _tool_results_block = _tool_results_block[:_MAX_TOOL_RESULTS_BLOCK_CHARS]
+        if _tool_results_full:
+            logger.debug(
+                "tool_results_block size: before=%d after=%d",
+                len(_tool_results_full),
+                len(_tool_results_block),
+            )
+
+        # Interpretation rules injected for technical-analyst prompt.
+        _interpretation_rules = [
+            "Use signed directional convention: bullish>0, bearish<0, neutral~=0.",
+            "If runtime score breakdown is provided, copy exact values (no recomputation).",
+            "If RSI is between 45 and 55, consider momentum weak unless other confirmations are strong.",
+            "If MACD diff contradicts the dominant trend, reduce setup quality.",
+            "If signals conflict, prefer neutral/low-conviction setup.",
+        ]
+        _interpretation_rules_block = "\n".join(f"- {rule}" for rule in _interpretation_rules)
+
         variables = {
             "pair": pair,
             "asset_class": asset_class,
@@ -415,8 +492,12 @@ class AgentScopeRegistry:
             "decision_mode_description": "",
             "mode": "simulation",
             "risk_percent": "1.0",
+            "risk_approved": "False",
+            "risk_volume": "0.0",
             # Pre-computed deterministic score breakdown — prevents UNAVAILABLE_RUNTIME_SCORE_BREAKDOWN
             "runtime_score_breakdown": _runtime_score_breakdown,
+            "tool_results_block": _tool_results_block,
+            "interpretation_rules_block": _interpretation_rules_block,
         }
 
         # Debate variables (LLM-First: use winner/conviction/key_argument/weakness)
@@ -437,8 +518,12 @@ class AgentScopeRegistry:
         if risk_out:
             risk_meta = risk_out.get("metadata", {})
             variables["risk_result"] = risk_out.get("text", "")[:500]
-            variables["risk_approved"] = str(risk_meta.get("approved", False))
-            variables["risk_volume"] = str(risk_meta.get("adjusted_volume", 0.0))
+            _risk_approved = bool(risk_meta.get("approved", risk_meta.get("accepted", False)))
+            _risk_volume = float(risk_meta.get("adjusted_volume", risk_meta.get("suggested_volume", 0.0)) or 0.0)
+            variables["risk_approved"] = str(_risk_approved)
+            variables["risk_volume"] = str(_risk_volume)
+
+        logger.debug("Prompt variables keys for %s/%s: %s", pair, timeframe, sorted(variables.keys()))
 
         # Context summary from market-context-analyst (if available from analysis_summary)
         variables["context_summary"] = ""
@@ -1770,6 +1855,43 @@ class AgentScopeRegistry:
                             d.setdefault("metadata", {})["suggested_volume"] = _tool_vol
 
                     base_vars["risk_result"] = d.get("text", "")[:500]
+                    _risk_meta = d.get("metadata", {}) if isinstance(d.get("metadata"), dict) else {}
+                    _risk_approved = bool(
+                        _risk_meta.get("approved", _risk_meta.get("accepted", d.get("approved", d.get("accepted", False))))
+                    )
+                    _risk_volume_raw = _risk_meta.get(
+                        "adjusted_volume",
+                        _risk_meta.get("suggested_volume", d.get("adjusted_volume", d.get("suggested_volume", 0.0))),
+                    )
+                    try:
+                        _risk_volume = float(_risk_volume_raw or 0.0)
+                    except (TypeError, ValueError):
+                        _risk_volume = 0.0
+                        logger.warning("Invalid risk volume value received: %r", _risk_volume_raw)
+
+                    base_vars["risk_approved"] = str(_risk_approved)
+                    base_vars["risk_volume"] = str(_risk_volume)
+
+                    if (
+                        "approved" not in _risk_meta
+                        and "accepted" not in _risk_meta
+                        and "approved" not in d
+                        and "accepted" not in d
+                    ):
+                        logger.warning("Risk result missing approved/accepted flag, defaulting risk_approved=False")
+                    if (
+                        "adjusted_volume" not in _risk_meta
+                        and "suggested_volume" not in _risk_meta
+                        and "adjusted_volume" not in d
+                        and "suggested_volume" not in d
+                    ):
+                        logger.warning("Risk result missing volume field, defaulting risk_volume=0.0")
+
+                    logger.debug(
+                        "Risk propagation to base_vars: risk_approved=%s risk_volume=%s",
+                        base_vars["risk_approved"],
+                        base_vars["risk_volume"],
+                    )
                 elif name == "execution-manager":
                     # Save post_trade snapshot after execution
                     if _portfolio_state and _risk_out:
