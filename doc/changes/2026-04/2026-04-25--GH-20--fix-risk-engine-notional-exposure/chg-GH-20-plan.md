@@ -2,7 +2,7 @@
 id: chg-GH-20-fix-risk-engine-notional-exposure
 status: In Progress
 created: 2026-04-25T13:39:22Z
-last_updated: 2026-04-25T17:05:00Z
+last_updated: 2026-04-25T17:08:00Z
 owners:
   - kairos-mesh-team
 service: backend/risk-engine
@@ -242,14 +242,14 @@ Criterion: revue `@architect` approuvée sur la correction et la propagation —
 
 **Tasks**:
 
-- [ ] Appliquer les ajustements demandés.
-- [ ] Rejouer les tests ciblés.
+- [x] Appliquer les ajustements demandés. (N/A — aucun correctif additionnel demandé après revue)
+- [x] Rejouer les tests ciblés. (`test_currency_exposure_gh20.py`=4 passed, `test_currency_exposure.py`=11 passed, `test_risk_engine_portfolio.py`=14 passed, `test_risk_engine.py`=4 passed)
 
 **Acceptance Criteria**:
 
 - Must: aucune régression, tests verts.
 
-Criterion: aucune régression, tests verts — PENDING (phase 6).
+Criterion: aucune régression, tests verts — PASSED (4 suites ciblées vertes rejouées en phase 6).
 
 **Files and modules**:
 
@@ -323,5 +323,5 @@ Criterion: AC-1..AC-7 satisfaits — PENDING (validation finale après Phase 7).
 - 2026-04-25T16:36:00Z — Phase 3 terminée: non-régression risk engine renforcée (commit `e6c2860`) ; tests GH-20 dédiés inclus en phase initiale.
 - 2026-04-25T16:58:00Z — Phase 4 terminée: vérification alignement spec/code, aucune divergence.
 - 2026-04-25T17:05:00Z — Phase 5 terminée: revue architecturale et règles gouvernance validées (commit phase 5 à suivre).
-- 2026-04-25T16:55:30Z — Phase 6 en attente: rejouer tests ciblés après clôture review.
+- 2026-04-25T17:08:00Z — Phase 6 terminée: tests ciblés rejoués et tous verts, aucun fix post-review requis.
 - 2026-04-25T16:55:00Z — Phase 7 en cours: version bump patch et validations finales en attente d’exécution.
