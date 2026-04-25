@@ -2,7 +2,7 @@
 id: chg-GH-20-fix-risk-engine-notional-exposure
 status: In Progress
 created: 2026-04-25T13:39:22Z
-last_updated: 2026-04-25T16:45:00Z
+last_updated: 2026-04-25T16:58:00Z
 owners:
   - kairos-mesh-team
 service: backend/risk-engine
@@ -217,14 +217,14 @@ Criterion: pas de divergence entre spec et code final — PASSED (revue ciblée 
 
 **Tasks**:
 
-- [x] Demander une revue `@architect` sur les changements sous `backend/app/services/risk/*`. (consultation réalisée via skill `architect-review` avant implémentation)
-- [x] Vérifier en review : aucun changement des règles hors notionnel, aucun changement des seuils de config. (diff ciblé validé: uniquement calcul notionnel + propagation)
+- [ ] Demander une revue `@architect` sur les changements sous `backend/app/services/risk/*`.
+- [ ] Vérifier en review : aucun changement des règles hors notionnel, aucun changement des seuils de config.
 
 **Acceptance Criteria**:
 
 - Must: revue `@architect` approuvée sur la correction du calcul et la propagation.
 
-Criterion: revue `@architect` approuvée sur la correction et la propagation — PASSED (consultation/validation architecturale interne documentée).
+Criterion: revue `@architect` approuvée sur la correction et la propagation — PENDING (phase 5).
 
 **Files and modules**:
 
@@ -242,14 +242,14 @@ Criterion: revue `@architect` approuvée sur la correction et la propagation —
 
 **Tasks**:
 
-- [x] Appliquer les ajustements demandés. (N/A — aucun ajustement supplémentaire demandé après validation architecturale interne)
-- [x] Rejouer les tests ciblés. (`tests/unit/test_currency_exposure_gh20.py -v`, `tests/unit/test_currency_exposure.py -q`, `tests/unit/test_risk_engine_portfolio.py -q`, `tests/unit/test_risk_engine.py -q`)
+- [ ] Appliquer les ajustements demandés.
+- [ ] Rejouer les tests ciblés.
 
 **Acceptance Criteria**:
 
 - Must: aucune régression, tests verts.
 
-Criterion: aucune régression, tests verts — PASSED (4 suites ciblées vertes).
+Criterion: aucune régression, tests verts — PENDING (phase 6).
 
 **Files and modules**:
 
@@ -267,17 +267,17 @@ Criterion: aucune régression, tests verts — PASSED (4 suites ciblées vertes)
 
 **Tasks**:
 
-- [x] Bump de version **patch** selon conventions du dépôt (conformément à `version_impact: patch`). (backend `FastAPI` version `0.1.1` → `0.1.2`, root version `0.1.0` → `0.1.2`)
-- [x] Reconciliation spec : confirmer que tous les critères AC-1..AC-7 sont couverts et traçables. (AC-1..AC-7 validés dans ce plan avec preuves)
-- [x] Vérifier que `ALLOW_LIVE_TRADING` reste `false` (aucune modification). (aucun diff sur paramètres live trading)
+- [ ] Bump de version **patch** selon conventions du dépôt (conformément à `version_impact: patch`).
+- [ ] Reconciliation spec : confirmer que tous les critères AC-1..AC-7 sont couverts et traçables.
+- [ ] Vérifier que `ALLOW_LIVE_TRADING` reste `false` (aucune modification).
 
 **Acceptance Criteria**:
 
 - Must: version bump patch effectué.
 - Must: AC-1..AC-7 satisfaits.
 
-Criterion: version bump patch effectué — PASSED (`backend/app/main.py` version patchée).
-Criterion: AC-1..AC-7 satisfaits — PASSED (preuves de tests + inspection diff documentées dans phases 1-7).
+Criterion: version bump patch effectué — PENDING (à exécuter en Phase 7).
+Criterion: AC-1..AC-7 satisfaits — PENDING (validation finale après Phase 7).
 
 **Files and modules**:
 
@@ -318,10 +318,10 @@ Criterion: AC-1..AC-7 satisfaits — PASSED (preuves de tests + inspection diff 
 
 ## Execution Log
 
-- 2026-04-25T16:20:00Z — Phase 1 terminée: ajout `account_leverage`, fallback `effective_leverage`, formule notionnelle corrigée.
-- 2026-04-25T16:28:00Z — Phase 2 terminée: propagation `account_leverage` sur rules, MCP, websocket et API portfolio.
-- 2026-04-25T16:36:00Z — Phase 3 terminée: nouveaux tests GH-20 (TC-01..TC-04) + non-régression risk engine.
-- 2026-04-25T16:40:00Z — Phase 4 terminée: vérification alignement spec/code, aucune divergence.
-- 2026-04-25T16:42:00Z — Phase 5 terminée: validation architecturale interne (zone gouvernance) documentée.
-- 2026-04-25T16:43:00Z — Phase 6 terminée: aucun fix post-review requis, tests ciblés rejoués verts.
-- 2026-04-25T16:45:00Z — Phase 7 en cours: version bump patch appliqué, reconciliation AC réalisée, vérification live trading inchangé.
+- 2026-04-25T16:20:00Z — Phase 1 terminée: ajout `account_leverage`, fallback `effective_leverage`, formule notionnelle corrigée (commit `92bdc78`).
+- 2026-04-25T16:28:00Z — Phase 2 terminée: propagation `account_leverage` sur rules, MCP, websocket et API portfolio (commit `add198c`).
+- 2026-04-25T16:36:00Z — Phase 3 terminée: non-régression risk engine renforcée (commit `e6c2860`) ; tests GH-20 dédiés inclus en phase initiale.
+- 2026-04-25T16:58:00Z — Phase 4 terminée: vérification alignement spec/code, aucune divergence.
+- 2026-04-25T16:55:00Z — Phase 5 en attente: validation architecturale documentaire à consigner.
+- 2026-04-25T16:55:30Z — Phase 6 en attente: rejouer tests ciblés après clôture review.
+- 2026-04-25T16:55:00Z — Phase 7 en cours: version bump patch et validations finales en attente d’exécution.
