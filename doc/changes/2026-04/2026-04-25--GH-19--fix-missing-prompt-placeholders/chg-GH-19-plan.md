@@ -1,8 +1,8 @@
 ---
 id: chg-GH-19-fix-missing-prompt-placeholders
-status: In Progress
+status: Blocked
 created: 2026-04-25T13:07:38Z
-last_updated: 2026-04-25T15:42:00Z
+last_updated: 2026-04-25T15:50:00Z
 owners:
   - kairos-mesh-team
 service: backend/agents
@@ -364,7 +364,7 @@ pas la logique du risk-engine.
 
 **Tasks**:
 
-- [x] **7.1 Bump de version (patch) selon les conventions du repo** (`backend/app/main.py` : `version='0.1.0' -> '0.1.1'`)
+- [x] **7.1 Bump de version (patch) selon les conventions du repo** (`backend/app/main.py` : `version='0.1.0' -> '0.1.1'`, commit à venir en clôture de phase)
   - Action: appliquer `version_impact: patch` (spec) sur le mécanisme de version en place
     (à localiser dans le repo lors de l’implémentation).
 
@@ -424,10 +424,10 @@ pas la logique du risk-engine.
 
 ## Execution Log
 
-- 2026-04-25T14:31:00Z — Phase 1 exécutée: création `backend/tests/unit/test_prompt_placeholders_gh19.py` (helper + cas Cause A/B). Evidence: `python3 -m pytest -q tests/unit/test_prompt_placeholders_gh19.py -k gh19 -vv` → 7 PASS.
-- 2026-04-25T14:52:00Z — Phase 2 exécutée: injection `tool_results_block` + `interpretation_rules_block` + defaults sûrs dans `_build_prompt_variables()` (`backend/app/services/agentscope/registry.py`).
-- 2026-04-25T15:01:00Z — Phase 3 exécutée: propagation post risk-manager de `risk_approved`/`risk_volume` dans `base_vars` + logs DEBUG/WARNING.
-- 2026-04-25T15:06:00Z — Phase 4 exécutée: garde-fou centralisé `<MISSING:*>` (warning prod, exception test) + tests dédiés.
-- 2026-04-25T15:08:00Z — Phase 5 exécutée partiellement: suite complète `python3 -m pytest` lancée, dépendances synchronisées (`python3 -m pip install -r requirements.txt`), puis 11 échecs restants hors périmètre GH-19 (auth/preflight/schemas).
+- 2026-04-25T14:31:00Z — Phase 1 exécutée: création `backend/tests/unit/test_prompt_placeholders_gh19.py` (helper + cas Cause A/B). Evidence: `python3 -m pytest -q tests/unit/test_prompt_placeholders_gh19.py -k gh19 -vv` → 7 PASS. Commit: `9b6d03a`.
+- 2026-04-25T14:52:00Z — Phase 2 exécutée: injection `tool_results_block` + `interpretation_rules_block` + defaults sûrs dans `_build_prompt_variables()` (`backend/app/services/agentscope/registry.py`). Commit: `e65a500`.
+- 2026-04-25T15:01:00Z — Phase 3 exécutée: propagation post risk-manager de `risk_approved`/`risk_volume` dans `base_vars` + logs DEBUG/WARNING. Commit: `e65a500`.
+- 2026-04-25T15:06:00Z — Phase 4 exécutée: garde-fou centralisé `<MISSING:*>` (warning prod, exception test) + tests dédiés. Commit: `e65a500`.
+- 2026-04-25T15:08:00Z — Phase 5 exécutée partiellement: suite complète `python3 -m pytest` lancée, dépendances synchronisées (`python3 -m pip install -r requirements.txt`), puis 11 échecs restants hors périmètre GH-19 (auth/preflight/schemas) : `tests/integration/test_api_runs.py`, `tests/integration/test_trading_config_api.py`, `tests/unit/test_execution_preflight.py`, `tests/unit/test_p0_fixes.py`.
 - 2026-04-25T15:10:00Z — Phase 6 exécutée: auto-review périmètre/sensibilités conforme.
 - 2026-04-25T15:11:00Z — Phase 7 exécutée: bump patch `0.1.1` appliqué (`backend/app/main.py`).
