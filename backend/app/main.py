@@ -436,7 +436,11 @@ async def portfolio_stream_socket(websocket: WebSocket) -> None:
 
                 currency_exposure = {}
                 try:
-                    report = compute_currency_exposure(state.open_positions, equity)
+                    report = compute_currency_exposure(
+                        state.open_positions,
+                        equity,
+                        account_leverage=state.leverage,
+                    )
                     currency_exposure = serialize_currency_exposure_report(report)
                 except Exception:
                     pass

@@ -1491,7 +1491,11 @@ def portfolio_risk_evaluation(
             compute_currency_exposure,
             serialize_currency_exposure_report,
         )
-        curr_report = compute_currency_exposure(state.open_positions, equity)
+        curr_report = compute_currency_exposure(
+            state.open_positions,
+            equity,
+            account_leverage=state.leverage,
+        )
         currency_exposure_data = serialize_currency_exposure_report(curr_report)
         portfolio_summary["currency_exposure"] = currency_exposure_data
         portfolio_summary["currency_notional_exposure"] = {
