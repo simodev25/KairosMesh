@@ -39,3 +39,7 @@ frontend/test-results/
 # Internal docs
 MIGRATION_REPORT_EN.md
 backend/debug-governance/
+
+.samourai/
+.ai/local/bootstrapper-context.yaml
+.opencode

@@ -1,0 +1,93 @@
+version: 1
+policy: agent-permissions
+
+principles:
+  - least-privilege
+  - explicit-delegation
+  - traceable-side-effects
+
+agents:
+  pm:
+    may_write:
+      - "doc/changes/**/chg-*-pm-notes.yaml"
+    may_execute_commands: false
+    may_commit: false
+    may_open_pr: false
+    may_delegate_to:
+      - spec-writer
+      - test-plan-writer
+      - plan-writer
+      - coder
+      - reviewer
+      - runner
+      - fixer
+      - doc-syncer
+      - committer
+      - pr-manager
+
+  spec-writer:
+    may_write:
+      - "doc/changes/**/chg-*-spec.md"
+    may_execute_commands: false
+    may_commit: false
+
+  test-plan-writer:
+    may_write:
+      - "doc/changes/**/chg-*-test-plan.md"
+    may_execute_commands: false
+    may_commit: false
+
+  plan-writer:
+    may_write:
+      - "doc/changes/**/chg-*-plan.md"
+    may_execute_commands: false
+    may_commit: false
+
+  coder:
+    may_write:
+      - "**"
+    may_execute_commands: true
+    may_commit: false
+
+  reviewer:
+    may_write:
+      - "doc/changes/**/chg-*-plan.md"
+      - "doc/changes/**/code-review/**"
+    may_execute_commands: true
+    may_commit: false
+
+  runner:
+    may_write:
+      - "tmp/**"
+    may_execute_commands: true
+    may_commit: false
+
+  fixer:
+    may_write:
+      - "**"
+    may_execute_commands: true
+    may_commit: false
+
+  doc-syncer:
+    may_write:
+      - "doc/spec/**"
+      - "doc/contracts/**"
+      - "doc/domain/**"
+      - "doc/quality/**"
+      - "doc/ops/**"
+      - "doc/guides/**"
+    may_execute_commands: false
+    may_commit: false
+
+  committer:
+    may_write:
+      - "**"
+    may_execute_commands: true
+    may_commit: true
+
+  pr-manager:
+    may_write:
+      - "tmp/pr/**"
+    may_execute_commands: true
+    may_commit: false
+    may_open_pr: true

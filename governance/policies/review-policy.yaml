@@ -1,0 +1,43 @@
+version: 1
+policy: review
+
+objectives:
+  - enforce_spec_plan_alignment
+  - detect_behavioral_regressions
+  - verify_quality_gates
+
+severity:
+  major:
+    meaning: "Bloque la livraison"
+    examples:
+      - acceptance_criteria_not_met
+      - security_or_data_integrity_risk
+      - failing_required_tests
+  minor:
+    meaning: "Doit être traité avant clôture si impact fonctionnel"
+    examples:
+      - missing_test_coverage_on_changed_path
+      - incomplete_error_handling
+  nit:
+    meaning: "Amélioration non bloquante"
+    examples:
+      - naming_or_readability
+      - small_doc_gap
+
+required_checks:
+  - spec_consistency
+  - plan_task_consistency
+  - regression_risk_scan
+  - test_evidence
+  - docs_impact
+
+exit_criteria:
+  pass:
+    - no_open_major
+    - quality_gates_green
+  conditional_pass:
+    - only_nit_remaining
+    - explicit_followup_recorded
+  fail:
+    - any_major_open
+    - missing_verification_evidence

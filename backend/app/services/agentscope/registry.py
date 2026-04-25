@@ -475,7 +475,7 @@ class AgentScopeRegistry:
             f"Call indicator_bundle(), pattern_detector(), divergence_detector(), "
             f"support_resistance_detector() directly — they already have the price arrays."
         )
-        return Msg("system", content, "system")
+        return Msg("user", content, "user")
 
     def _record_step(self, db, run, agent_name: str, input_data: dict, output_data: dict,
                      status: str = "completed", error: str | None = None, elapsed_ms: float = 0) -> None:
@@ -1299,9 +1299,9 @@ class AgentScopeRegistry:
             analysis_summary = "\n\n".join(
                 f"[{msg.name}]\n{msg.get_text_content()}" for msg in phase1_results
             )
-            research_msg = Msg("system",
+            research_msg = Msg("user",
                 f"Analysis results from Phase 1:\n{analysis_summary}\n\n"
-                f"Original context:\n{context_msg.get_text_content()}", "system")
+                f"Original context:\n{context_msg.get_text_content()}", "user")
 
             # Rebuild researcher toolkits with Phase 1 outputs.
             # Researchers need analysis_outputs for evidence_query.
@@ -1491,7 +1491,7 @@ class AgentScopeRegistry:
                 f"Bearish thesis:\n{bearish_msg.get_text_content()}\n\n"
                 f"Phase 1 analysis:\n{analysis_summary}"
             )
-            current_msg = Msg("system", decision_context, "system")
+            current_msg = Msg("user", decision_context, "user")
             _trader_out: dict | None = None
             _risk_out: dict | None = None
             _trader_decision_is_hold = False

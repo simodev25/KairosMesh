@@ -869,8 +869,9 @@ export function ConnectorsPage() {
         assigned_agents: mcp.assigned_agents,
         discovered_tools: discovered,
       });
-      const connectors = await api.listConnectors(token);
-      const ollama = connectors.find((c) => c.connector_name === 'ollama');
+      const freshConnectors = await api.listConnectors(token);
+      setConnectors(freshConnectors);
+      const ollama = freshConnectors.find((c) => c.connector_name === 'ollama');
       if (ollama && Array.isArray(ollama.settings?.external_mcps)) {
         setExternalMcps(ollama.settings.external_mcps as ExternalMcpConfig[]);
       }
@@ -899,8 +900,9 @@ export function ConnectorsPage() {
   const handleMcpSaved = async (_mcpId: string) => {
     setMcpModal(null);
     try {
-      const connectors = await api.listConnectors(token);
-      const ollama = connectors.find((c) => c.connector_name === 'ollama');
+      const freshConnectors = await api.listConnectors(token);
+      setConnectors(freshConnectors);  // keep connectors state fresh so saveAgentModels sees updated settings
+      const ollama = freshConnectors.find((c) => c.connector_name === 'ollama');
       if (ollama && Array.isArray(ollama.settings?.external_mcps)) {
         setExternalMcps(ollama.settings.external_mcps as ExternalMcpConfig[]);
       }

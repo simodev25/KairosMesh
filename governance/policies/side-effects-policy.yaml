@@ -1,0 +1,45 @@
+version: 1
+policy: side-effects
+
+defaults:
+  require_work_item_ref_for_mutation: true
+  require_explicit_phase_context: true
+  forbid_hidden_background_processes: true
+
+file_mutations:
+  allowed:
+    - only_files_required_by_current_phase
+    - append_or_update_traceable_artifacts
+  forbidden:
+    - deleting_change_artifacts_without_explicit_instruction
+    - broad_unscoped_reformatting
+    - touching_unrelated_modules
+
+command_execution:
+  allowed:
+    - deterministic_repo_commands
+    - build_test_lint_quality_gates
+  required:
+    - capture_exit_code
+    - capture_command_line
+    - capture_log_path
+
+network_and_external_calls:
+  allowed_agents:
+    - pm
+    - reviewer
+    - pr-manager
+  constraints:
+    - use_tracker_or_pr_context_only
+    - no unrelated external research during delivery
+
+git_operations:
+  allowed:
+    - checkout_branch
+    - stage_changes
+    - commit_via_committer
+    - create_or_update_pr_via_pr-manager
+  forbidden:
+    - force_push_without_explicit_request
+    - reset_hard
+    - rewrite_history_without_explicit_request
