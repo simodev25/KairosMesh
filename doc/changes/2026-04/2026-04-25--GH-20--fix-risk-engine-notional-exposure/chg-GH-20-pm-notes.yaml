@@ -1,0 +1,28 @@
+change_id: GH-20
+title: "Bug : calcul d'exposition notionelle aberrant dans le risk engine (2047% vs limite 22%)"
+phases:
+  clarify_scope:     { started: "2026-04-25", completed: "2026-04-25" }
+  specification:     { started: "2026-04-25", completed: "2026-04-25" }
+  test_planning:     { started: "2026-04-25", completed: "2026-04-25" }
+  delivery_planning: { started: "2026-04-25", completed: "2026-04-25" }
+  delivery:          { started: "2026-04-25", completed: "2026-04-25" }
+  system_spec_update: { started: null, completed: null }
+  review_fix:        { started: null, completed: null }
+  quality_gates:     { started: null, completed: null }
+  dod_check:         { started: null, completed: null }
+  pr_creation:       { started: null, completed: null, url: null }
+
+decisions:
+  - text: "Root cause confirmée : notionnel brut (volume × contract_size) non divisé par le levier du compte dans compute_currency_exposure(). Correction = diviser base_units par account_leverage."
+    date: "2026-04-25"
+  - text: "Architect GO — 4 callsites prod identifiés (rules.py, services/mcp/trading_server.py, main.py, api/routes/portfolio.py). Tous doivent être corrigés pour cohérence risk engine + API + websocket."
+    date: "2026-04-25"
+
+open_questions: []
+
+blockers: []
+
+notes:
+  - text: "Run-101 : 9.81 lots USDCHF, equity=47914, leverage=100 → calcul retourne 2047.4% au lieu de ~20.5%. Trade bloqué à tort (20.5% < limite 22%)."
+    type: "info"
+    date: "2026-04-25"
