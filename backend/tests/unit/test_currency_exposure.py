@@ -23,7 +23,7 @@ def _pos(
 def test_buy_eurusd_decomposition() -> None:
     """BUY EURUSD -> +EUR, -USD."""
     positions = [_pos("EURUSD.PRO", "BUY", 0.5)]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     assert "EUR" in report.exposures
     assert "USD" in report.exposures
     assert report.exposures["EUR"].net_exposure_lots > 0  # Long EUR
@@ -33,7 +33,7 @@ def test_buy_eurusd_decomposition() -> None:
 def test_sell_gbpjpy_decomposition() -> None:
     """SELL GBPJPY -> -GBP, +JPY."""
     positions = [_pos("GBPJPY.PRO", "SELL", 0.3)]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     assert "GBP" in report.exposures
     assert "JPY" in report.exposures
     assert report.exposures["GBP"].net_exposure_lots < 0  # Short GBP
@@ -46,7 +46,7 @@ def test_net_exposure_cancellation() -> None:
         _pos("EURUSD.PRO", "BUY", 0.5),   # +EUR, -USD
         _pos("EURGBP.PRO", "SELL", 0.5),   # -EUR, +GBP
     ]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     # EUR exposure should be near zero (0.5 - 0.5 = 0)
     eur = report.exposures.get("EUR")
     assert eur is not None
@@ -60,7 +60,7 @@ def test_multi_position_usd_concentration() -> None:
         _pos("GBPUSD.PRO", "BUY", 0.3),
         _pos("XAUUSD", "BUY", 0.3),
     ]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     usd = report.exposures.get("USD")
     assert usd is not None
     assert usd.net_exposure_lots < 0  # Short USD from all 3 positions
@@ -74,7 +74,7 @@ def test_reject_currency_limit_exceeded() -> None:
         _pos("EURUSD.PRO", "BUY", 1.0),
         _pos("GBPUSD.PRO", "BUY", 1.0),
     ]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     usd = report.exposures.get("USD")
     assert usd is not None
     # With 2 lots short USD at 100k per lot, exposure = 200k / 10k = 2000%
@@ -84,7 +84,7 @@ def test_reject_currency_limit_exceeded() -> None:
 def test_crypto_exposure_uses_asset_specific_contract_size() -> None:
     """BTCUSD should use crypto contract size=1, not forex 100k."""
     positions = [_pos("BTCUSD", "BUY", 0.1, current_price=50000.0)]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     btc = report.exposures.get("BTC")
     usd = report.exposures.get("USD")
     assert btc is not None
@@ -96,7 +96,7 @@ def test_crypto_exposure_uses_asset_specific_contract_size() -> None:
 def test_forex_exposure_uses_price_to_value_currency_units() -> None:
     """EURUSD should convert the 10k EUR base leg via price to account currency."""
     positions = [_pos("EURUSD.PRO", "BUY", 0.1, current_price=1.2)]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     eur = report.exposures.get("EUR")
     usd = report.exposures.get("USD")
     assert eur is not None
@@ -127,7 +127,7 @@ def test_currency_open_risk_pct_is_exposed_separately() -> None:
             risk_pct=1.5,
         ),
     ]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     usd = report.exposures.get("USD")
     jpy = report.exposures.get("JPY")
     eur = report.exposures.get("EUR")
@@ -142,7 +142,7 @@ def test_currency_open_risk_pct_is_exposed_separately() -> None:
 def test_metal_usd_exposure() -> None:
     """XAUUSD contributes to USD exposure."""
     positions = [_pos("XAUUSD", "BUY", 0.1)]
-    report = compute_currency_exposure(positions, equity=10000.0)
+    report = compute_currency_exposure(positions, equity=10000.0, account_leverage=1.0)
     # XAU should decompose to XAU/USD
     if "USD" in report.exposures:
         assert report.exposures["USD"].net_exposure_lots < 0  # Short USD
@@ -152,12 +152,12 @@ def test_metal_usd_exposure() -> None:
 
 def test_empty_positions() -> None:
     """No positions -> empty report."""
-    report = compute_currency_exposure([], equity=10000.0)
+    report = compute_currency_exposure([], equity=10000.0, account_leverage=1.0)
     assert len(report.exposures) == 0
     assert report.dominant_currency == ""
 
 
 def test_zero_equity() -> None:
     """Zero equity -> returns with warning."""
-    report = compute_currency_exposure([], equity=0.0)
+    report = compute_currency_exposure([], equity=0.0, account_leverage=1.0)
     assert "equity_zero_or_negative" in report.warnings

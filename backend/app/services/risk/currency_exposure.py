@@ -109,6 +109,7 @@ def compute_currency_exposure(
     positions: list[OpenPosition],
     equity: float,
     account_currency: str = "USD",
+    account_leverage: float = 100.0,
 ) -> CurrencyExposureReport:
     """Compute net currency exposure from a list of open positions.
 
@@ -121,6 +122,8 @@ def compute_currency_exposure(
     """
     if equity <= 0:
         return CurrencyExposureReport(warnings=["equity_zero_or_negative"])
+
+    effective_leverage = account_leverage if account_leverage > 0 else 100.0
 
     # Accumulate exposure per currency
     exposure_lots: dict[str, float] = {}
@@ -137,7 +140,7 @@ def compute_currency_exposure(
         lots = pos.volume * sign
         contract_size = _get_contract_size(pos.symbol)
         price = pos.current_price or pos.entry_price or 0.0
-        base_units = pos.volume * contract_size * sign
+        base_units = pos.volume * contract_size * sign / effective_leverage
         quote_units = -(base_units * price)
 
         # Base currency: +lots if BUY, -lots if SELL
