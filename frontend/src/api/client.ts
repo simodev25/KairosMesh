@@ -33,7 +33,8 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   me: (token: string) => request('/auth/me', {}, token),
-  listRuns: (token: string) => request('/runs', {}, token),
+  listRuns: (token: string, includeGovernance = true) =>
+    request(`/runs${includeGovernance ? '?include_governance=true' : ''}`, {}, token),
   createRun: (
     token: string,
     payload: {
@@ -66,6 +67,35 @@ export const api = {
     request(`/connectors/${connector}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
+    }, token),
+  discoverExternalMcp: (
+    token: string,
+    url: string,
+    headers: Record<string, string>,
+  ) =>
+    request<{ status: string; tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; count: number }>(
+      '/connectors/external-mcp/discover',
+      { method: 'POST', body: JSON.stringify({ url, headers }) },
+      token,
+    ),
+  saveExternalMcp: (
+    token: string,
+    payload: {
+      id?: string;
+      name: string;
+      url: string;
+      headers: Record<string, string>;
+      assigned_agents: string[];
+      discovered_tools: Array<{ tool_id: string; label: string; description: string; input_schema: Record<string, unknown>; discovery_status: string }>;
+    },
+  ) =>
+    request<{ status: string; id: string }>('/connectors/external-mcp', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, token),
+  deleteExternalMcp: (token: string, mcpId: string, agentName: string) =>
+    request<{ status: string }>(`/connectors/external-mcp/${mcpId}?agent_name=${encodeURIComponent(agentName)}`, {
+      method: 'DELETE',
     }, token),
   getTradingConfigVersions: (token: string, limit?: number) =>
     request<{ count: number; versions: Array<Record<string, unknown>> }>(
@@ -233,6 +263,28 @@ export const api = {
     }, token),
   stopMonitoring: (token: string, id: number) =>
     request(`/strategies/${id}/stop-monitoring`, { method: 'POST' }, token),
+  // Governance
+  listGovernanceRecommendations: (token: string, params: { limit?: number; symbol?: string; status?: string; approval_status?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.limit != null) search.set('limit', String(params.limit));
+    if (params.symbol) search.set('symbol', params.symbol);
+    if (params.status) search.set('status', params.status);
+    if (params.approval_status) search.set('approval_status', params.approval_status);
+    const suffix = search.toString();
+    return request(`/governance/recommendations${suffix ? `?${suffix}` : ''}`, {}, token);
+  },
+  getGovernanceRecommendation: (token: string, id: number) =>
+    request(`/governance/recommendations/${id}`, {}, token),
+  approveGovernanceRun: (token: string, id: number) =>
+    request(`/governance/${id}/approve`, { method: 'POST' }, token),
+  rejectGovernanceRun: (token: string, id: number) =>
+    request(`/governance/${id}/reject`, { method: 'POST' }, token),
+  forceGovernance: (token: string) =>
+    request('/governance/force', { method: 'POST' }, token),
+  getGovernanceConfig: (token: string) =>
+    request<{ auto_approve: boolean }>('/governance/config', {}, token),
+  updateGovernanceConfig: (token: string, payload: { auto_approve: boolean }) =>
+    request<{ auto_approve: boolean }>('/governance/config', { method: 'PUT', body: JSON.stringify(payload) }, token),
 };
 
 export function wsRunUrl(runId: number, token?: string): string {
@@ -259,6 +311,16 @@ export function wsPortfolioUrl(token?: string): string {
   const apiBase = BASE_URL.replace('/api/v1', '');
   const wsBase = apiBase.replace('http://', 'ws://').replace('https://', 'wss://');
   const url = `${wsBase}/ws/portfolio`;
+  if (token) {
+    return `${url}?token=${encodeURIComponent(token)}`;
+  }
+  return url;
+}
+
+export function wsGovernanceUrl(token?: string): string {
+  const apiBase = BASE_URL.replace('/api/v1', '');
+  const wsBase = apiBase.replace('http://', 'ws://').replace('https://', 'wss://');
+  const url = `${wsBase}/ws/governance`;
   if (token) {
     return `${url}?token=${encodeURIComponent(token)}`;
   }

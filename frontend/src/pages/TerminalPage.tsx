@@ -136,7 +136,7 @@ export function TerminalPage() {
     if (!token || runsLoadingRef.current) return;
     runsLoadingRef.current = true;
     try {
-      const data = (await api.listRuns(token)) as Run[];
+      const data = (await api.listRuns(token, false)) as Run[];
       setRuns(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load runs');
@@ -629,16 +629,30 @@ export function TerminalPage() {
               )}
               {pagedRuns.map((run) => {
                 const trace = run.trace || {};
-                const isStrategy = trace.triggered_by === 'strategy_monitor';
+                const isGovernance = trace.source === 'governance';
+                const isStrategy = !isGovernance && trace.triggered_by === 'strategy_monitor';
                 const stratName = typeof trace.strategy_name === 'string' ? trace.strategy_name : null;
-                const signalSide = typeof trace.signal_side === 'string' ? trace.signal_side : null;
+                const signalSide = isGovernance
+                  ? (typeof trace.side === 'string' ? trace.side : null)
+                  : (typeof trace.signal_side === 'string' ? trace.signal_side : null);
                 const decision = asRecord(run.decision);
-                const confidence = decision?.confidence != null ? `${Math.round(Number(decision.confidence) * 100)}%` : '--';
+                const confidence = isGovernance
+                  ? (trace.conviction != null ? `${Math.round(Number(trace.conviction) * 100)}%` : '--')
+                  : (decision?.confidence != null ? `${Math.round(Number(decision.confidence) * 100)}%` : '--');
                 return (
                   <tr key={run.id} className={run.status === 'cancelled' ? 'opacity-40' : ''}>
-                    <td className="font-mono text-text-muted">{run.id}</td>
+                    <td className="font-mono text-text-muted">{isGovernance ? `G${run.id - 10_000_000}` : run.id}</td>
                     <td>
-                      {isStrategy ? (
+                      {isGovernance ? (
+                        <div>
+                          <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20">GOVERNANCE</span>
+                          {typeof trace.position_ticket === 'string' && trace.position_ticket && (
+                            <span className="text-[8px] font-mono text-text-muted block mt-0.5 truncate max-w-[120px]" title={trace.position_ticket}>
+                              {trace.position_ticket}
+                            </span>
+                          )}
+                        </div>
+                      ) : isStrategy ? (
                         <div>
                           <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">STRATEGY</span>
                           {stratName && (
@@ -680,13 +694,26 @@ export function TerminalPage() {
                     </td>
                     <td className="text-text-muted">{formatExecutionDate(run.created_at)}</td>
                     <td className="font-mono">{runElapsed(run, nowMs)}</td>
-                    <td>{formatRunDecisionSummary(run)}</td>
+                    <td>
+                      {isGovernance ? (
+                        <span className="text-[9px] font-mono text-text-muted">
+                          {typeof trace.action === 'string' ? trace.action : '--'}
+                          {typeof trace.urgency === 'string' ? ` · ${trace.urgency}` : ''}
+                        </span>
+                      ) : formatRunDecisionSummary(run)}
+                    </td>
                     <td className="font-mono">{confidence}</td>
                     <td className="flex items-center gap-1">
-                      <Link to={`/runs/${run.id}`} className="btn-ghost btn-small inline-flex items-center gap-1">
-                        Detail
-                      </Link>
-                      {!['completed', 'failed', 'cancelled'].includes(run.status) && <button
+                      {isGovernance ? (
+                        <Link to={`/governance/${run.id - 10_000_000}`} className="btn-ghost btn-small inline-flex items-center gap-1">
+                          Detail
+                        </Link>
+                      ) : (
+                        <Link to={`/runs/${run.id}`} className="btn-ghost btn-small inline-flex items-center gap-1">
+                          Detail
+                        </Link>
+                      )}
+                      {!isGovernance && !['completed', 'failed', 'cancelled'].includes(run.status) && <button
                         type="button"
                         className="btn-ghost btn-small text-red-400 hover:text-red-300 hover:bg-red-500/10"
                         title="Cancel this run"

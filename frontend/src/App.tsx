@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 const TerminalPage = lazy(() => import('./pages/TerminalPage').then((module) => ({ default: module.TerminalPage })));
 const BacktestsPage = lazy(() => import('./pages/BacktestsPage').then((module) => ({ default: module.BacktestsPage })));
 const RunDetailPage = lazy(() => import('./pages/RunDetailPage').then((module) => ({ default: module.RunDetailPage })));
+const GovernanceRunDetailPage = lazy(() => import('./pages/GovernanceRunDetailPage').then((module) => ({ default: module.GovernanceRunDetailPage })));
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then((module) => ({ default: module.OrdersPage })));
 const ConnectorsPage = lazy(() => import('./pages/ConnectorsPage').then((module) => ({ default: module.ConnectorsPage })));
 const StrategiesPage = lazy(() => import('./pages/StrategiesPage').then((module) => ({ default: module.StrategiesPage })));
@@ -87,6 +88,10 @@ function AppRoutes() {
       <Route
         path="/runs/:runId"
         element={withLayout(<RunDetailPage />)}
+      />
+      <Route
+        path="/governance/:id"
+        element={withLayout(<GovernanceRunDetailPage />)}
       />
       <Route
         path="/orders"

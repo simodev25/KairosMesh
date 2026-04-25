@@ -43,10 +43,12 @@ class PreflightResult:
 
 
 # Max spread as % of price, per mode
+# Forex typical spreads: EURUSD ~0.5-1 pip (~0.003-0.007%), GBPUSD ~1-2 pips (~0.007-0.015%)
+# Gold (XAUUSD) ~0.3-1 USD on 2000 (~0.015-0.05%), Crypto: up to 0.1%
 MAX_SPREAD_PCT: dict[str, float] = {
-    "simulation": 0.05,   # 5 bps
-    "paper": 0.02,        # 2 bps
-    "live": 0.01,         # 1 bp
+    "simulation": 0.10,   # 10 bps — permissive for testing
+    "paper": 0.05,        # 5 bps — normal live spread tolerance
+    "live": 0.05,         # 5 bps — was 1bp which blocked normal GBPUSD/XAUUSD spreads
 }
 
 

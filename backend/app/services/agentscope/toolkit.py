@@ -11,6 +11,7 @@ from agentscope.tool import Toolkit, ToolResponse
 from agentscope.message import TextBlock
 
 from app.services.mcp.client import get_mcp_client
+from app.services.mcp.external_client import ExternalMCPClient
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,16 @@ def _wrap_mcp_tool(tool_id: str, original_fn, force_kwargs: dict | None = None) 
     @functools.wraps(original_fn)
     async def tool_fn(*args: Any, **kwargs: Any) -> ToolResponse:
         try:
+            # Drop any kwargs the LLM hallucinated that don't exist in the real signature.
+            valid_params = set(sig.parameters)
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            if not has_var_keyword:
+                unknown = [k for k in kwargs if k not in valid_params]
+                if unknown:
+                    logger.debug("Tool %s: dropping unknown kwargs %s", tool_id, unknown)
+                    kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
             # Bind positional args to parameter names
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
@@ -108,6 +119,52 @@ def _wrap_mcp_tool(tool_id: str, original_fn, force_kwargs: dict | None = None) 
 
     # Override docstring with a clean Args section for AgentScope parsing
     tool_fn.__doc__ = _build_docstring(tool_id, original_fn)
+    return tool_fn
+
+
+def _wrap_external_mcp_tool(tool_descriptor: dict) -> Any:
+    """Create an async wrapper for a remote MCP tool.
+
+    Unlike internal tools, external tools have no local function signature.
+    We build a docstring from the MCP inputSchema and accept **kwargs.
+    """
+    tool_id = tool_descriptor['tool_id']
+    url = tool_descriptor['url']
+    headers = tool_descriptor['headers']
+    # Extract bare tool name (part after last __)
+    bare_name = tool_id.split('__')[-1] if '__' in tool_id else tool_id
+    description = tool_descriptor.get('description') or f'Call external MCP tool {bare_name}.'
+    input_schema = tool_descriptor.get('input_schema') or {}
+    properties = input_schema.get('properties') or {}
+    required = set(input_schema.get('required') or [])
+
+    # Build Args docstring for AgentScope
+    doc_lines = [description, '', 'Args:']
+    for param_name, param_meta in properties.items():
+        type_str = param_meta.get('type', 'Any')
+        param_desc = param_meta.get('description', '')
+        req_note = 'Required.' if param_name in required else 'Optional.'
+        doc_lines.append(f'    {param_name} ({type_str}):')
+        doc_lines.append(f'        {param_desc} {req_note}'.strip())
+    docstring = '\n'.join(doc_lines)
+
+    ext_client = ExternalMCPClient()
+
+    async def tool_fn(**kwargs: Any) -> ToolResponse:
+        try:
+            result = await ext_client.call_tool(url, headers, bare_name, kwargs)
+            return ToolResponse(
+                content=[TextBlock(type='text', text=json.dumps(result, default=str))],
+            )
+        except Exception as exc:
+            logger.warning('External MCP tool %s failed: %s', tool_id, exc, exc_info=True)
+            error_result = {'error': f'{type(exc).__name__}: {exc}', 'tool_id': tool_id}
+            return ToolResponse(
+                content=[TextBlock(type='text', text=json.dumps(error_result, default=str))],
+            )
+
+    tool_fn.__name__ = tool_id
+    tool_fn.__doc__ = docstring
     return tool_fn
 
 
@@ -151,6 +208,7 @@ async def build_toolkit(
     snapshot: dict | None = None,
     decision_mode: str | None = None,
     execution_mode: str | None = None,
+    external_mcp_tools: list[dict] | None = None,
 ) -> Toolkit:
     """Build a Toolkit with the MCP tools assigned to the given agent.
 
@@ -288,5 +346,16 @@ async def build_toolkit(
                 preset["trader_decision"] = trader_meta
 
         toolkit.register_tool_function(wrapped, preset_kwargs=preset if preset else None)
+
+    # Register external MCP tools (if any)
+    if external_mcp_tools:
+        for ext_tool in external_mcp_tools:
+            if not ext_tool.get('enabled'):
+                continue
+            try:
+                wrapped = _wrap_external_mcp_tool(ext_tool)
+                toolkit.register_tool_function(wrapped)
+            except Exception as exc:
+                logger.warning('Failed to register external MCP tool %s: %s', ext_tool.get('tool_id'), exc)
 
     return toolkit

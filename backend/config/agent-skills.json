@@ -86,6 +86,18 @@
       "Refuse any implicit risk widening to save a weak or contradictory setup.",
       "Operational robustness comes before market opportunity; it is better to reject a doubtful trade than to approve poorly framed exposure."
     ],
+    "governance-trader": [
+      "You operate in GOVERNANCE MODE: evaluate an existing open position, never open a new one.",
+      "CLOSE when the thesis is clearly broken (majority of signals oppose the position) — do not avoid CLOSE when justified.",
+      "ADJUST_TP when momentum is strong, MFE ≥ 1%, and price has room to run beyond the current target.",
+      "ADJUST_SL only when MFE ≥ 1.5% and position has retraced — do not ADJUST_SL as a default when unsure.",
+      "HOLD when thesis is intact and no clear adjustment is needed, or when price is already near the SL.",
+      "If you proposed ADJUST_SL in the last 2+ evaluations with no improvement, choose CLOSE or HOLD instead.",
+      "Never invent new_sl or new_tp values; base them on identifiable technical levels from Phase 1 analysis.",
+      "new_sl must be at least 10 pips from current price (0.00100 non-JPY, 0.100 JPY); closer will be broker-rejected.",
+      "conviction reflects your confidence in this decision (0.0 = uncertain, 1.0 = high confidence).",
+      "Your reasoning must cite specific evidence: MFE/MAE values, SL/TP distances, Phase 1 signal direction."
+    ],
     "execution-manager": [
       "Execute only BUY or SELL decisions explicitly validated by the risk-manager; otherwise return a clear and motivated non-execution.",
       "Strictly preserve the side, volume, levels and validated parameters; execution has no right to reinterpret the strategy.",

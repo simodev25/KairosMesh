@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -20,6 +20,9 @@ class ExecutionOrder(Base):
     response_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    # Broker-assigned position ID returned by MetaAPI after order execution.
+    # Used by the governance pipeline to link a live position back to the run that opened it.
+    metaapi_position_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     run = relationship('AnalysisRun', back_populates='orders')
 

@@ -80,6 +80,7 @@ services:
       AGENTSCOPE_TRACING_URL: http://tempo:4318/v1/traces
     volumes:
       - ./backend/debug-traces:/app/debug-traces
+      - ./backend/debug-governance:/app/debug-governance
       - ./backend/debug-strategy:/app/debug-strategy
     expose:
       - '${PROMETHEUS_WORKER_PORT:-9101}'
@@ -102,6 +103,12 @@ services:
       context: ./frontend
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
     ports:
       - '5173:5173'
     depends_on:

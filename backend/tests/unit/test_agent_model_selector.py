@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models.connector_config import ConnectorConfig
-from app.services.llm.model_selector import AgentModelSelector
+from app.services.llm.model_selector import (
+    AgentModelSelector,
+    get_external_tools_for_agent,
+    normalize_external_mcps,
+    validate_agent_tools_payload,
+)
 
 
 def test_agent_model_selector_prefers_agent_specific_and_default() -> None:
@@ -255,3 +260,99 @@ def test_agent_model_selector_resolves_agent_tools_overrides() -> None:
         enabled_tools = selector.resolve_enabled_tools(db, 'news-analyst')
         assert 'news_search' not in enabled_tools
         assert 'macro_calendar_or_event_feed' in enabled_tools
+
+
+# --- External MCP tool ID tests ---
+
+
+def test_validate_agent_tools_allows_ext_prefix():
+    """ext__ prefixed tool IDs must not trigger validation errors."""
+    payload = {
+        "technical-analyst": {
+            "indicator_bundle": True,
+            "ext__my-finance-mcp__get_earnings": False,
+        }
+    }
+    issues = validate_agent_tools_payload(payload)
+    assert issues == [], f"Unexpected issues: {issues}"
+
+
+def test_normalize_external_mcps_returns_empty_on_none():
+    result = normalize_external_mcps(None)
+    assert result == []
+
+
+def test_normalize_external_mcps_filters_invalid():
+    raw = [
+        {"id": "abc", "name": "Good MCP", "url": "http://localhost:8001", "headers": {}, "assigned_agents": ["technical-analyst"], "discovered_tools": []},
+        {"name": "missing url"},  # invalid — no url
+        "not a dict",
+    ]
+    result = normalize_external_mcps(raw)
+    assert len(result) == 1
+    assert result[0]["name"] == "Good MCP"
+
+
+def test_get_external_tools_for_agent_filters_by_assignment():
+    settings = {
+        "external_mcps": [
+            {
+                "id": "abc",
+                "name": "Finance MCP",
+                "url": "http://localhost:8001",
+                "headers": {},
+                "assigned_agents": ["technical-analyst"],
+                "discovered_tools": [
+                    {"tool_id": "ext__finance-mcp__get_earnings", "label": "Get Earnings", "description": "...", "input_schema": {}, "discovery_status": "ok"}
+                ],
+                "discovery_status": "ok",
+            }
+        ],
+        "agent_tools": {
+            "technical-analyst": {"ext__finance-mcp__get_earnings": True}
+        }
+    }
+    tools = get_external_tools_for_agent("technical-analyst", settings)
+    assert len(tools) == 1
+    assert tools[0]["tool_id"] == "ext__finance-mcp__get_earnings"
+    assert tools[0]["enabled"] is True
+    assert tools[0]["url"] == "http://localhost:8001"
+
+
+def test_get_external_tools_for_agent_excludes_other_agents():
+    settings = {
+        "external_mcps": [
+            {
+                "id": "abc",
+                "name": "Finance MCP",
+                "url": "http://localhost:8001",
+                "headers": {},
+                "assigned_agents": ["news-analyst"],  # NOT technical-analyst
+                "discovered_tools": [
+                    {"tool_id": "ext__finance-mcp__get_earnings", "label": "Get Earnings", "description": "...", "input_schema": {}, "discovery_status": "ok"}
+                ],
+                "discovery_status": "ok",
+            }
+        ],
+        "agent_tools": {}
+    }
+    tools = get_external_tools_for_agent("technical-analyst", settings)
+    assert tools == []
+
+
+def test_normalize_agent_tools_preserves_ext_tool_ids():
+    """normalize_agent_tools_settings must keep ext__ tool IDs alongside internal tools."""
+    from app.services.llm.model_selector import normalize_agent_tools_settings
+
+    raw = {
+        "technical-analyst": {
+            "indicator_bundle": True,
+            "ext__test-finance-mcp__get_earnings": False,
+            "ext__test-finance-mcp__get_analyst_rating": True,
+        }
+    }
+    result = normalize_agent_tools_settings(raw)
+    ta = result.get("technical-analyst", {})
+    assert "ext__test-finance-mcp__get_earnings" in ta, "ext__ tool must be preserved"
+    assert ta["ext__test-finance-mcp__get_earnings"] is False
+    assert ta["ext__test-finance-mcp__get_analyst_rating"] is True

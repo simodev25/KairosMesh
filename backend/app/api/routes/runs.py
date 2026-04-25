@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -49,9 +50,46 @@ def _serialize_run(
     return RunOut.model_validate(payload)
 
 
+def _governance_run_to_run_out(gov_run: Any) -> RunOut:
+    """Map a GovernanceRun to RunOut for unified EXECUTION_HISTORY display."""
+    status_map = {'pending': 'pending', 'running': 'running', 'completed': 'completed', 'failed': 'failed'}
+    return RunOut.model_validate({
+        'id': 10_000_000 + gov_run.id,
+        'pair': gov_run.symbol,
+        'timeframe': 'GOV',
+        'mode': 'governance',
+        'status': status_map.get(gov_run.status, gov_run.status),
+        'progress': 100 if gov_run.status == 'completed' else 0,
+        'decision': {
+            'action': gov_run.action,
+            'conviction': gov_run.conviction,
+            'urgency': gov_run.urgency,
+            'new_sl': gov_run.new_sl,
+            'new_tp': gov_run.new_tp,
+        },
+        'trace': {
+            'source': 'governance',
+            'position_ticket': gov_run.position_ticket,
+            'side': gov_run.side,
+            'action': gov_run.action,
+            'urgency': gov_run.urgency,
+            'conviction': gov_run.conviction,
+            'origin_run_id': gov_run.origin_run_id,
+            'approval_status': gov_run.approval_status,
+            'executed': gov_run.executed,
+        },
+        'error': gov_run.error,
+        'created_by_id': 0,
+        'created_at': gov_run.created_at,
+        'started_at': None,
+        'updated_at': gov_run.updated_at,
+    })
+
+
 @router.get('', response_model=list[RunOut])
 def list_runs(
     limit: int = Query(default=50, ge=1, le=200),
+    include_governance: bool = Query(default=False),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[RunOut]:
@@ -66,7 +104,22 @@ def list_runs(
         .limit(limit)
         .all()
     )
-    return [_serialize_run(run) for run in runs]
+    result: list[RunOut] = [_serialize_run(run) for run in runs]
+
+    if include_governance:
+        from app.db.models.governance_run import GovernanceRun
+        gov_runs = (
+            db.query(GovernanceRun)
+            .order_by(GovernanceRun.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        for gov_run in gov_runs:
+            result.append(_governance_run_to_run_out(gov_run))
+        result.sort(key=lambda r: r.created_at, reverse=True)
+        result = result[:limit]
+
+    return result
 
 
 @router.post('', response_model=RunOut)

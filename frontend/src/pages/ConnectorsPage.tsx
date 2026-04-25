@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import type {
   ConnectorConfig,
   ExecutionMode,
+  ExternalMcpConfig,
   LlmModelUsage,
   LlmSummary,
   MarketSymbolGroup,
@@ -13,6 +14,8 @@ import type {
   PromptTemplate,
 } from '../types';
 import { ExpansionPanel, ExpansionPanelAlt } from '../components/ExpansionPanel';
+import { ExternalMcpPanel } from '../components/ExternalMcpPanel';
+import { AddExternalMcpModal } from '../components/AddExternalMcpModal';
 
 const ORCHESTRATION_AGENTS = [
   'technical-analyst',
@@ -23,6 +26,7 @@ const ORCHESTRATION_AGENTS = [
   'trader-agent',
   'risk-manager',
   'execution-manager',
+  'governance-trader',
   'strategy-designer',
 ];
 const MODEL_EDIT_AGENTS = [...ORCHESTRATION_AGENTS];
@@ -39,6 +43,7 @@ const DEFAULT_AGENT_LLM_ENABLED: Record<string, boolean> = {
   'trader-agent': false,
   'risk-manager': false,
   'execution-manager': false,
+  'governance-trader': true,
   'strategy-designer': true,
 };
 const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> = {
@@ -91,6 +96,16 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
       + 'Risk accepted: {risk_accepted}\nSuggested volume: {suggested_volume}\n'
       + 'Stop loss: {stop_loss}\nTake profit: {take_profit}\n'
       + 'Expected return: BUY, SELL or HOLD followed by concise justification.'
+    ),
+  },
+  'governance-trader': {
+    system: "You are the trader agent operating in GOVERNANCE MODE. Evaluate an existing open position and decide: HOLD, ADJUST_SL, ADJUST_TP, ADJUST_SL_TP, or CLOSE.",
+    user: (
+      'Symbol: {position_symbol} | Side: {position_side} | Entry: {position_entry_price} | Current: {position_current_price}\n'
+      + 'Stop-loss: {position_stop_loss} | Take-profit: {position_take_profit}\n'
+      + 'MFE: {mfe_pct}% | MAE: {mae_pct}%\n'
+      + 'Current analysis: {current_analysis_summary}\n'
+      + 'Decide what to do with this position.'
     ),
   },
   'strategy-designer': {
@@ -385,6 +400,8 @@ export function ConnectorsPage() {
   const [agentTools, setAgentTools] = useState<Record<string, Record<string, boolean>>>(
     Object.fromEntries(MODEL_EDIT_AGENTS.map((agent) => [agent, {}])),
   );
+  const [externalMcps, setExternalMcps] = useState<ExternalMcpConfig[]>([]);
+  const [mcpModal, setMcpModal] = useState<{ agentName: string } | null>(null);
   const [modelChoices, setModelChoices] = useState<string[]>([]);
   const [modelSource, setModelSource] = useState<string>('');
   const modelChoicesRequestId = useRef(0);
@@ -622,6 +639,10 @@ export function ConnectorsPage() {
     setAgentLlmEnabled(nextEnabled);
     setAgentToolCatalog(nextToolCatalog);
     setAgentTools(nextTools);
+    const rawExternalMcps = settings.external_mcps;
+    if (Array.isArray(rawExternalMcps)) {
+      setExternalMcps(rawExternalMcps as ExternalMcpConfig[]);
+    }
     return provider;
   };
 
@@ -829,6 +850,77 @@ export function ConnectorsPage() {
     }
   };
 
+  const handleRefreshExternalMcp = async (mcp: ExternalMcpConfig) => {
+    try {
+      const result = await api.discoverExternalMcp(token, mcp.url, mcp.headers);
+      const mcpNameSlug = mcp.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const discovered = result.tools.map((t) => ({
+        tool_id: `ext__${mcpNameSlug}__${t.name}`,
+        label: t.name,
+        description: t.description,
+        input_schema: t.inputSchema,
+        discovery_status: 'ok' as const,
+      }));
+      await api.saveExternalMcp(token, {
+        id: mcp.id,
+        name: mcp.name,
+        url: mcp.url,
+        headers: mcp.headers,
+        assigned_agents: mcp.assigned_agents,
+        discovered_tools: discovered,
+      });
+      const freshConnectors = await api.listConnectors(token);
+      setConnectors(freshConnectors);
+      const ollama = freshConnectors.find((c) => c.connector_name === 'ollama');
+      if (ollama && Array.isArray(ollama.settings?.external_mcps)) {
+        setExternalMcps(ollama.settings.external_mcps as ExternalMcpConfig[]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Refresh failed');
+    }
+  };
+
+  const handleDeleteExternalMcp = async (mcpId: string, agentName: string) => {
+    try {
+      await api.deleteExternalMcp(token, mcpId, agentName);
+      setExternalMcps((prev) =>
+        prev
+          .map((m) =>
+            m.id === mcpId
+              ? { ...m, assigned_agents: m.assigned_agents.filter((a) => a !== agentName) }
+              : m,
+          )
+          .filter((m) => m.assigned_agents.length > 0),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
+    }
+  };
+
+  const handleMcpSaved = async (_mcpId: string) => {
+    setMcpModal(null);
+    try {
+      const freshConnectors = await api.listConnectors(token);
+      setConnectors(freshConnectors);  // keep connectors state fresh so saveAgentModels sees updated settings
+      const ollama = freshConnectors.find((c) => c.connector_name === 'ollama');
+      if (ollama && Array.isArray(ollama.settings?.external_mcps)) {
+        setExternalMcps(ollama.settings.external_mcps as ExternalMcpConfig[]);
+      }
+      if (ollama && typeof ollama.settings?.agent_tools === 'object' && ollama.settings.agent_tools) {
+        const rawTools = ollama.settings.agent_tools as Record<string, Record<string, boolean>>;
+        setAgentTools((prev) => {
+          const updated = { ...prev };
+          for (const [agent, tools] of Object.entries(rawTools)) {
+            updated[agent] = { ...(updated[agent] || {}), ...tools };
+          }
+          return updated;
+        });
+      }
+    } catch (_) {
+      // Non-critical
+    }
+  };
+
   const saveAgentModels = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
@@ -857,14 +949,18 @@ export function ConnectorsPage() {
       MODEL_EDIT_AGENTS
         .map((agentName) => {
           const rows = Array.isArray(agentToolCatalog[agentName]) ? agentToolCatalog[agentName] : [];
-          if (rows.length === 0) return [agentName, {}] as const;
           const states = Object.fromEntries(
             rows.map((row) => {
               const current = agentTools[agentName]?.[row.tool_id];
               return [row.tool_id, typeof current === 'boolean' ? current : row.enabled_current] as const;
             }),
           );
-          return [agentName, states] as const;
+          // Also persist ext__ prefixed tool toggle states (external MCPs)
+          const extStates = Object.fromEntries(
+            Object.entries(agentTools[agentName] ?? {}).filter(([k]) => k.startsWith('ext__')),
+          );
+          const merged = { ...states, ...extStates };
+          return [agentName, merged] as const;
         })
         .filter(([, toolMap]) => Object.keys(toolMap).length > 0),
     );
@@ -1467,6 +1563,20 @@ export function ConnectorsPage() {
                               </div>
                             );
                           })()}
+                          <ExternalMcpPanel
+                            agentName={agentName}
+                            mcps={externalMcps}
+                            agentTools={agentTools[agentName] || {}}
+                            onToggleTool={(toolId, enabled) =>
+                              setAgentTools((prev) => ({
+                                ...prev,
+                                [agentName]: { ...(prev[agentName] || {}), [toolId]: enabled },
+                              }))
+                            }
+                            onAddMcp={() => setMcpModal({ agentName })}
+                            onDeleteMcp={(mcpId) => handleDeleteExternalMcp(mcpId, agentName)}
+                            onRefreshMcp={handleRefreshExternalMcp}
+                          />
                         </td>
                         <td>
                           {NON_SWITCHABLE_LLM_AGENTS.has(agentName) ? <code>-</code> : <code>{effectiveModelFor(agentName)}</code>}
@@ -1989,6 +2099,14 @@ export function ConnectorsPage() {
           </div>
         )}
       </section>
+      {mcpModal && (
+        <AddExternalMcpModal
+          agentName={mcpModal.agentName}
+          token={token}
+          onClose={() => setMcpModal(null)}
+          onSaved={handleMcpSaved}
+        />
+      )}
     </div>
   );
 }

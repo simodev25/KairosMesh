@@ -741,12 +741,25 @@ class MetaApiClient:
                                 'result': result_payload,
                             }
                     return {'degraded': False, 'executed': True, 'result': result_payload, 'endpoint': url}
+                raw_body = response.text or ''
+                try:
+                    body_json = response.json()
+                    broker_msg = (
+                        body_json.get('message')
+                        or body_json.get('error')
+                        or body_json.get('reason')
+                        or body_json.get('description')
+                        or ''
+                    )
+                except Exception:
+                    broker_msg = ''
+                reason_str = broker_msg or raw_body[:200] or f'HTTP {response.status_code}'
                 return {
                     'degraded': True,
                     'executed': False,
-                    'reason': f'HTTP {response.status_code}',
+                    'reason': f'HTTP {response.status_code}: {reason_str}'.strip(': '),
                     'endpoint': url,
-                    'raw': response.text,
+                    'raw': raw_body,
                 }
         except Exception as exc:  # pragma: no cover
             logger.exception('metaapi rest post failure account_id=%s path=%s', account_id, path)
