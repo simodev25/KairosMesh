@@ -2,7 +2,7 @@
 id: chg-GH-20-fix-risk-engine-notional-exposure
 status: In Progress
 created: 2026-04-25T13:39:22Z
-last_updated: 2026-04-25T17:08:00Z
+last_updated: 2026-04-25T17:12:00Z
 owners:
   - kairos-mesh-team
 service: backend/risk-engine
@@ -267,17 +267,17 @@ Criterion: aucune régression, tests verts — PASSED (4 suites ciblées vertes 
 
 **Tasks**:
 
-- [ ] Bump de version **patch** selon conventions du dépôt (conformément à `version_impact: patch`).
-- [ ] Reconciliation spec : confirmer que tous les critères AC-1..AC-7 sont couverts et traçables.
-- [ ] Vérifier que `ALLOW_LIVE_TRADING` reste `false` (aucune modification).
+- [x] Bump de version **patch** selon conventions du dépôt (conformément à `version_impact: patch`). (backend `FastAPI` `0.1.1` → `0.1.2`, endpoint racine `0.1.0` → `0.1.2`)
+- [x] Reconciliation spec : confirmer que tous les critères AC-1..AC-7 sont couverts et traçables. (AC-1..AC-7 tracés en critères PASSED dans phases 1..6 + callsites + tests)
+- [x] Vérifier que `ALLOW_LIVE_TRADING` reste `false` (aucune modification). (aucun fichier de config/live trading modifié)
 
 **Acceptance Criteria**:
 
 - Must: version bump patch effectué.
 - Must: AC-1..AC-7 satisfaits.
 
-Criterion: version bump patch effectué — PENDING (à exécuter en Phase 7).
-Criterion: AC-1..AC-7 satisfaits — PENDING (validation finale après Phase 7).
+Criterion: version bump patch effectué — PASSED (`backend/app/main.py` version patchée à `0.1.2`).
+Criterion: AC-1..AC-7 satisfaits — PASSED (preuves consolidées dans le plan et résultats de tests).
 
 **Files and modules**:
 
@@ -324,4 +324,4 @@ Criterion: AC-1..AC-7 satisfaits — PENDING (validation finale après Phase 7).
 - 2026-04-25T16:58:00Z — Phase 4 terminée: vérification alignement spec/code, aucune divergence.
 - 2026-04-25T17:05:00Z — Phase 5 terminée: revue architecturale et règles gouvernance validées (commit phase 5 à suivre).
 - 2026-04-25T17:08:00Z — Phase 6 terminée: tests ciblés rejoués et tous verts, aucun fix post-review requis.
-- 2026-04-25T16:55:00Z — Phase 7 en cours: version bump patch et validations finales en attente d’exécution.
+- 2026-04-25T17:12:00Z — Phase 7 terminée: version patch appliquée, AC-1..AC-7 reconciliés, `ALLOW_LIVE_TRADING` inchangé.

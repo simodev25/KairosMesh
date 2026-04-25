@@ -138,7 +138,7 @@ async def lifespan(_: FastAPI):
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version='0.1.1', lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version='0.1.2', lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -561,4 +561,4 @@ async def governance_stream_socket(websocket: WebSocket) -> None:
 
 @app.get('/')
 def root() -> dict[str, str]:
-    return {'message': settings.app_name, 'version': '0.1.0'}
+    return {'message': settings.app_name, 'version': '0.1.2'}
