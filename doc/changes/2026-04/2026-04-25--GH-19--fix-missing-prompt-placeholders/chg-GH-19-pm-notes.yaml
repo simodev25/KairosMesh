@@ -1,0 +1,26 @@
+change_id: GH-19
+title: "Bug : placeholders <MISSING:*> non substitués dans les prompts LLM"
+phases:
+  clarify_scope:     { started: "2026-04-25", completed: "2026-04-25" }
+  specification:     { started: "2026-04-25", completed: "2026-04-25" }
+  test_planning:     { started: "2026-04-25", completed: "2026-04-25" }
+  delivery_planning: { started: "2026-04-25", completed: "2026-04-25" }
+  delivery:          { started: "2026-04-25", completed: "2026-04-25" }
+  system_spec_update: { started: null, completed: null }
+  review_fix:        { started: "2026-04-25", completed: "2026-04-25" }
+  quality_gates:     { started: "2026-04-25", completed: "2026-04-25" }
+  dod_check:         { started: "2026-04-25", completed: "2026-04-25" }
+  pr_creation:       { started: "2026-04-25", completed: "2026-04-25", url: "https://github.com/simodev25/MultiAgentTrading/pull/21" }
+
+decisions:
+  - text: "Deux causes distinctes identifiées : (A) tool_results_block/interpretation_rules_block jamais construits dans _build_prompt_variables ; (B) risk_approved/risk_volume non propagés dans base_vars après exécution du risk-manager (ligne 1772 registry.py)"
+    date: "2026-04-25"
+
+open_questions: []
+
+blockers: []
+
+notes:
+  - text: "9 tests échouant sur main avant GH-19 (test_execution_preflight, test_p0_fixes) — confirmés préexistants, aucune régression introduite par GH-19"
+    type: "info"
+    date: "2026-04-25"

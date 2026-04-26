@@ -657,7 +657,11 @@ class RiskEngine:
 
         try:
             from app.services.risk.currency_exposure import compute_currency_exposure
-            currency_report = compute_currency_exposure(portfolio.open_positions, equity)
+            currency_report = compute_currency_exposure(
+                portfolio.open_positions,
+                equity,
+                account_leverage=portfolio.leverage,
+            )
             for ce in currency_report.exposures.values():
                 if ce.currency_notional_exposure_pct >= limits.max_currency_notional_exposure_pct_block:
                     _add_breach(

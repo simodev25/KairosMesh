@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "branch": "fix/GH-19/fix-missing-prompt-placeholders",
+  "branchPath": "fix/GH-19/fix-missing-prompt-placeholders",
+  "platform": "github",
+  "baseBranch": "main",
+  "mergeBaseSha": "95f259c",
+  "lastReviewedHeadSha": "4d5c0a6",
+  "lastGeneratedHeadSha": "4d5c0a6",
+  "lastPrUrl": "https://github.com/simodev25/MultiAgentTrading/pull/21",
+  "ticketRefs": ["GH-19"],
+  "ticketContextFetchedAt": null,
+  "updatedAt": "2026-04-25T16:15:00Z"
+}

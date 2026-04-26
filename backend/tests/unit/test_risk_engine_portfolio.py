@@ -223,6 +223,7 @@ def test_high_currency_notional_exposure_is_collected_in_breached_limits_without
     portfolio = _make_portfolio(
         equity=50000.0,
         free_margin=40000.0,
+        leverage=1.0,
         open_positions=positions,
         open_position_count=1,
         open_risk_total_pct=1.0,

@@ -1,0 +1,23 @@
+active_change:
+  workItemRef: GH-20
+  branch: fix/GH-20/fix-risk-engine-notional-exposure
+  change_folder: doc/changes/2026-04/2026-04-25--GH-20--fix-risk-engine-notional-exposure
+  pr_url: "https://github.com/simodev25/MultiAgentTrading/pull/22"
+  status: "pr_open — en attente de review humaine"
+
+parked_changes: []
+
+recently_delivered:
+  - { workItemRef: GH-19, closed: "2026-04-25", pr_url: "https://github.com/simodev25/MultiAgentTrading/pull/21" }
+
+planning_sessions: []
+
+notes:
+  - text: "P0 identifiés depuis analyse debug-traces (76 runs, 20-25 avril 2026)"
+    type: "info"
+    workItemRef: null
+    date: "2026-04-25"
+  - text: "GH-20 — 4 callsites corrigés (rules.py, mcp/trading_server.py, main.py, api/routes/portfolio.py). Tests: 4 nouveaux + 14 portfolio verts."
+    type: "info"
+    workItemRef: "GH-20"
+    date: "2026-04-25"
