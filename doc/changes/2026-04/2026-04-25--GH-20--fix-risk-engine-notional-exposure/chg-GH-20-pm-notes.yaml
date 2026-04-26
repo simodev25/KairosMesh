@@ -7,10 +7,10 @@ phases:
   delivery_planning: { started: "2026-04-25", completed: "2026-04-25" }
   delivery:          { started: "2026-04-25", completed: "2026-04-25" }
   system_spec_update: { started: null, completed: null }
-  review_fix:        { started: null, completed: null }
-  quality_gates:     { started: null, completed: null }
-  dod_check:         { started: null, completed: null }
-  pr_creation:       { started: null, completed: null, url: null }
+  review_fix:        { started: "2026-04-25", completed: "2026-04-25" }
+  quality_gates:     { started: "2026-04-25", completed: "2026-04-25" }
+  dod_check:         { started: "2026-04-25", completed: "2026-04-25" }
+  pr_creation:       { started: "2026-04-25", completed: "2026-04-25", url: "https://github.com/simodev25/MultiAgentTrading/pull/22" }
 
 decisions:
   - text: "Root cause confirmée : notionnel brut (volume × contract_size) non divisé par le levier du compte dans compute_currency_exposure(). Correction = diviser base_units par account_leverage."
