@@ -28,6 +28,7 @@ celery_app.conf.task_routes = {
     'app.tasks.portfolio_tasks.*': {'queue': settings.celery_analysis_queue},
     'app.tasks.governance_task.*': {'queue': settings.celery_analysis_queue},
     'app.tasks.benchmark_task.*': {'queue': settings.celery_benchmark_queue},
+    'app.tasks.evolution.*': {'queue': settings.celery_evolution_queue},
 }
 celery_app.conf.task_default_queue = settings.celery_analysis_queue
 celery_app.conf.result_backend = backend_url
@@ -49,6 +50,7 @@ import app.tasks.strategy_monitor_task  # noqa: E402,F401
 import app.tasks.portfolio_tasks  # noqa: E402,F401
 import app.tasks.governance_task  # noqa: E402,F401
 import app.tasks.benchmark_task  # noqa: E402,F401
+import app.tasks.evolution  # noqa: E402,F401
 
 # Beat schedule: periodic strategy monitoring (every 30 seconds)
 celery_app.conf.beat_schedule = {
