@@ -30,8 +30,7 @@ from app.services.strategy.optimizer_adapter import build_evaluator, validate_pa
 from app.services.strategy.optimizer_bounds import clamp_params, get_bounds_for_template
 
 try:
-    from openevolve import run_evolution
-    from openevolve.evaluation_result import EvaluationResult
+    from openevolve.controller import OpenEvolve as _OEController  # noqa: F401
     OPENEVOLVE_AVAILABLE = True
 except ImportError:
     OPENEVOLVE_AVAILABLE = False
@@ -298,6 +297,105 @@ def _resolve_llm_config(db: Session) -> tuple[str, str, str, str]:
     return provider, model_name, base_url or '', api_key or ''
 
 
+def _build_evaluator_script(
+    template: str,
+    symbol: str,
+    timeframe: str,
+    db_url: str,
+) -> str:
+    """Build a standalone Python evaluator script for OpenEvolve subprocess.
+
+    OpenEvolve loads the evaluator via ``importlib`` in the same process,
+    so the script must be self-contained (no ORM closures).  It imports
+    application modules lazily so it works from the project ``/app`` root.
+    """
+    return f'''"""Auto-generated evaluator for OpenEvolve — strategy optimizer."""
+
+import json
+import sys
+import os
+
+# Ensure the backend package is importable inside the worker.
+sys.path.insert(0, '/app')
+os.environ.setdefault('DATABASE_URL', {db_url!r})
+
+
+def evaluate(file_path: str):
+    """Evaluate a candidate JSON program via back-test."""
+    from openevolve.evaluation_result import EvaluationResult
+
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+
+        candidate_data = json.loads(content)
+        candidate_params = candidate_data.get('params', candidate_data)
+
+        # LLM sometimes strips the wrapper — handle flat dicts
+        if 'template' not in candidate_data:
+            candidate_params = candidate_data
+
+        # Clamp parameters to template bounds
+        from app.services.strategy.optimizer_bounds import clamp_params
+        clamped = clamp_params({template!r}, candidate_params)
+
+        # Run the back-test
+        from app.services.backtest.engine import BacktestEngine
+        from app.services.strategy.lookback_windows import strategy_lookback_days
+        from app.services.strategy.generation_optimizer import compute_generation_candidate_score
+        from datetime import datetime, timedelta, timezone
+
+        lb_days = strategy_lookback_days({symbol!r})
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        start_date = (datetime.now(timezone.utc) - timedelta(days=lb_days)).strftime('%Y-%m-%d')
+
+        engine = BacktestEngine()
+        result = engine.run(
+            {symbol!r}, {timeframe!r},
+            start_date, end_date,
+            strategy={template!r},
+            db=None,
+            strategy_params=clamped,
+            run_id=None,
+        )
+
+        metrics = dict(result.metrics or {{}})
+        score = compute_generation_candidate_score(metrics)
+
+        win_rate = metrics.get('win_rate_pct', metrics.get('win_rate', 0))
+        pf = metrics.get('profit_factor', 0)
+        dd = metrics.get('max_drawdown_pct', metrics.get('max_drawdown', 0))
+        trades = metrics.get('total_trades', 0)
+
+        feedback = (
+            f"Score: {{score:.1f}}/100 | Win Rate: {{win_rate:.1f}}% | "
+            f"Profit Factor: {{pf:.2f}} | Max Drawdown: {{dd:.1f}}% | Trades: {{trades}}\\n"
+        )
+        if trades < 5:
+            feedback += "WARNING: Too few trades.\\n"
+        if float(dd) > 25:
+            feedback += "WARNING: Excessive drawdown.\\n"
+        if score > 60:
+            feedback += "GOOD: Above threshold.\\n"
+
+        return EvaluationResult(
+            metrics={{"combined_score": score, "performance": score, "drawdown": abs(float(dd))}},
+            artifacts={{"llm_feedback": feedback}},
+        )
+
+    except json.JSONDecodeError as e:
+        return EvaluationResult(
+            metrics={{"combined_score": -1.0, "performance": -1.0}},
+            artifacts={{"stderr": f"INVALID JSON: {{e}}"}},
+        )
+    except Exception as e:
+        return EvaluationResult(
+            metrics={{"combined_score": 0.0, "performance": 0.0}},
+            artifacts={{"stderr": f"Backtest error: {{str(e)[:200]}}"}},
+        )
+'''
+
+
 def _run_openevolve_loop(
     db: Session,
     campaign: StrategyOptimizerCampaign,
@@ -305,7 +403,13 @@ def _run_openevolve_loop(
     config: dict[str, Any],
     max_iterations: int,
 ) -> None:
-    """Run optimization using OpenEvolve with LLM-driven mutation."""
+    """Run optimization using OpenEvolve with LLM-driven mutation.
+
+    The evaluator runs inside OpenEvolve's own process via ``importlib``,
+    so it must be a **standalone .py file** — no closures over ORM objects.
+    """
+    import asyncio
+
     campaign_id = campaign.id
 
     # 0. Resolve LLM config from project settings
@@ -315,131 +419,46 @@ def _run_openevolve_loop(
         campaign_id, provider, model_name,
     )
 
-    # Set env vars for OpenEvolve's internal LLM client
-    if provider == 'openai':
-        if api_key:
-            os.environ.setdefault('OPENAI_API_KEY', api_key)
-        if base_url and base_url != 'https://api.openai.com/v1':
-            os.environ.setdefault('OPENAI_BASE_URL', base_url)
-    elif provider == 'mistral':
-        # Mistral is OpenAI-compatible
-        if api_key:
-            os.environ.setdefault('OPENAI_API_KEY', api_key)
-        if base_url:
-            os.environ.setdefault('OPENAI_BASE_URL', base_url)
-    else:  # ollama
-        os.environ.setdefault('OPENAI_API_KEY', api_key or 'ollama')
-        os.environ.setdefault('OPENAI_BASE_URL', f"{base_url.rstrip('/')}/v1")
+    # 1. Evaluate initial params directly (before OpenEvolve)
+    initial_eval = evaluator_direct(
+        strategy.template, strategy.symbol, strategy.timeframe,
+        dict(strategy.params or {}),
+    )
+    campaign.initial_score = initial_eval['score']
+    campaign.best_params = dict(strategy.params or {})
+    campaign.best_score = initial_eval['score']
+    campaign.best_metrics = initial_eval['metrics']
+    db.commit()
 
-    # 1. Initial program = JSON of params
-    initial_program = json.dumps({
+    # 2. Write the initial program JSON to a temp file
+    output_dir = tempfile.mkdtemp(prefix='openevolve_strategy_')
+    initial_program_path = os.path.join(output_dir, 'initial_program.json')
+    initial_data = json.dumps({
         'template': strategy.template,
         'symbol': strategy.symbol,
         'timeframe': strategy.timeframe,
         'params': dict(strategy.params or {}),
     }, indent=2)
 
-    # 2. Build evaluator for OpenEvolve (file-based interface)
-    bounds = get_bounds_for_template(strategy.template)
+    with open(initial_program_path, 'w') as f:
+        f.write(initial_data)
 
-    def openevolve_evaluator(file_path: str) -> 'EvaluationResult':
-        """Evaluate a candidate strategy by backtesting it."""
-        # Check cancellation
-        db.refresh(campaign)
-        if campaign.status == 'CANCELLED':
-            raise RuntimeError('Campaign cancelled')
+    # 3. Write standalone evaluator script to disk
+    settings = get_settings()
+    evaluator_code = _build_evaluator_script(
+        template=strategy.template,
+        symbol=strategy.symbol,
+        timeframe=strategy.timeframe,
+        db_url=settings.database_url,
+    )
+    evaluator_file_path = os.path.join(output_dir, 'evaluator.py')
+    with open(evaluator_file_path, 'w') as f:
+        f.write(evaluator_code)
 
-        try:
-            with open(file_path, 'r') as f:
-                content = f.read()
-
-            # Parse the JSON (LLM may produce varied formats)
-            candidate_data = json.loads(content)
-            candidate_params = candidate_data.get('params', candidate_data)
-
-            # If params is the top-level dict (LLM sometimes strips structure)
-            if 'template' not in candidate_data and all(
-                k in candidate_data for k in (strategy.params or {}).keys()
-            ):
-                candidate_params = candidate_data
-
-            # Clamp to bounds
-            clamped = clamp_params(strategy.template, candidate_params)
-
-            # Backtest
-            from app.services.backtest.engine import BacktestEngine
-
-            lb_days = strategy_lookback_days(strategy.symbol)
-            end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-            start_date = (datetime.now(timezone.utc) - timedelta(days=lb_days)).strftime('%Y-%m-%d')
-
-            engine = BacktestEngine()
-            result = engine.run(
-                strategy.symbol, strategy.timeframe,
-                start_date, end_date,
-                strategy=strategy.template,
-                db=None,
-                strategy_params=clamped,
-                run_id=None,
-            )
-
-            metrics = dict(result.metrics or {})
-            score = compute_generation_candidate_score(metrics)
-
-            # Store evaluation in DB
-            db.add(StrategyOptimizerEvaluation(
-                campaign_id=campaign_id,
-                iteration=campaign.current_iteration or 0,
-                params=clamped,
-                score=score,
-                metrics=metrics,
-            ))
-            campaign.current_iteration = (campaign.current_iteration or 0) + 1
-            if score > (campaign.best_score or 0.0):
-                campaign.best_score = score
-                campaign.best_params = clamped
-                campaign.best_metrics = metrics
-            db.commit()
-
-            # Return result with feedback for LLM
-            win_rate = metrics.get('win_rate_pct', metrics.get('win_rate', 0))
-            pf = metrics.get('profit_factor', 0)
-            dd = metrics.get('max_drawdown_pct', metrics.get('max_drawdown', 0))
-            trades = metrics.get('total_trades', 0)
-
-            feedback = (
-                f"Score: {score:.1f}/100 | Win Rate: {win_rate:.1f}% | "
-                f"Profit Factor: {pf:.2f} | Max Drawdown: {dd:.1f}% | Trades: {trades}\n"
-            )
-            if trades < 5:
-                feedback += "WARNING: Too few trades — parameters may be too restrictive.\n"
-            if float(dd) > 25:
-                feedback += "WARNING: Excessive drawdown — reduce risk exposure.\n"
-            if score > 60:
-                feedback += "GOOD: Above threshold. Try fine-tuning for higher profit factor.\n"
-
-            return EvaluationResult(
-                metrics={'performance': score, 'drawdown': abs(float(dd))},
-                artifacts={'llm_feedback': feedback},
-            )
-
-        except json.JSONDecodeError as e:
-            return EvaluationResult(
-                metrics={'performance': -1.0, 'drawdown': 100.0},
-                artifacts={'stderr': f'INVALID JSON: {e}. You MUST return valid JSON with the same structure.'},
-            )
-        except RuntimeError:
-            raise  # Re-raise cancellation
-        except Exception as e:
-            logger.warning('optimizer_evaluator_error: %s', str(e)[:200])
-            return EvaluationResult(
-                metrics={'performance': 0.0, 'drawdown': 100.0},
-                artifacts={'stderr': f'Backtest error: {str(e)[:200]}'},
-            )
-
-    # 3. Build OpenEvolve Config object (programmatic — not YAML)
+    # 4. Build OpenEvolve Config
     from openevolve.config import Config as OEConfig, LLMModelConfig
 
+    bounds = get_bounds_for_template(strategy.template)
     bounds_description = '\n'.join(
         f'  - {k}: min={lo}, max={hi}' for k, (lo, hi) in bounds.items()
     )
@@ -460,12 +479,17 @@ def _run_openevolve_loop(
     )
 
     # Ensure base_url ends with /v1 for OpenAI-compatible providers
-    llm_base_url = base_url.rstrip('/')
+    llm_base_url = (base_url or '').rstrip('/')
     if not llm_base_url.endswith('/v1'):
         llm_base_url += '/v1'
 
     oe_config = OEConfig()
     oe_config.max_iterations = max_iterations
+    oe_config.diff_based_evolution = False   # JSON, not code — disable diff mode
+    oe_config.language = 'json'
+    oe_config.database.num_islands = 1       # Simpler for trading optimisation
+    oe_config.database.in_memory = True
+    oe_config.llm = OEConfig().llm           # fresh LLMConfig to avoid __post_init__ issues
     oe_config.llm.models = [
         LLMModelConfig(
             name=model_name,
@@ -476,38 +500,41 @@ def _run_openevolve_loop(
         ),
     ]
 
-    # 4. Run OpenEvolve
-    output_dir = tempfile.mkdtemp(prefix='openevolve_strategy_')
-
+    # 5. Run OpenEvolve (async → sync bridge)
     try:
-        # Evaluate initial params first
-        initial_eval = evaluator_direct(
-            strategy.template, strategy.symbol, strategy.timeframe,
-            dict(strategy.params or {}),
-        )
-        campaign.initial_score = initial_eval['score']
-        campaign.best_params = dict(strategy.params or {})
-        campaign.best_score = initial_eval['score']
-        campaign.best_metrics = initial_eval['metrics']
-        db.commit()
+        from openevolve.controller import OpenEvolve as OEController
 
-        # Run OpenEvolve
-        result = run_evolution(
-            initial_program=initial_program,
-            evaluator=openevolve_evaluator,
-            iterations=max_iterations,
+        oe = OEController(
+            initial_program_path=initial_program_path,
+            evaluation_file=evaluator_file_path,
             config=oe_config,
             output_dir=output_dir,
         )
 
-        # Parse the best result
-        if result and hasattr(result, 'best_code') and result.best_code:
+        # Run the async evolution loop from a sync context.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Already inside an event loop (e.g. Celery with gevent/eventlet).
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(
+                    asyncio.run, oe.run(iterations=max_iterations),
+                ).result()
+        else:
+            result = asyncio.run(oe.run(iterations=max_iterations))
+
+        # 6. Parse the best result
+        if result and hasattr(result, 'code') and result.code:
             try:
-                best_data = json.loads(result.best_code)
+                best_data = json.loads(result.code)
                 best_params = best_data.get('params', best_data)
                 clamped_best = clamp_params(strategy.template, best_params)
 
-                # Final evaluation to confirm
+                # 7. Final confirmation evaluation
                 final_eval = evaluator_direct(
                     strategy.template, strategy.symbol, strategy.timeframe, clamped_best,
                 )
@@ -516,7 +543,13 @@ def _run_openevolve_loop(
                     campaign.best_score = final_eval['score']
                     campaign.best_metrics = final_eval['metrics']
             except (json.JSONDecodeError, KeyError):
-                pass  # Keep whatever best was found during evaluations
+                pass  # Keep whatever best was found during initial eval
+
+        # 8. Update campaign tracking from OpenEvolve result
+        if result and hasattr(result, 'iteration_found'):
+            campaign.current_iteration = result.iteration_found
+        else:
+            campaign.current_iteration = max_iterations
 
         campaign.status = 'COMPLETED'
     except Exception as exc:
@@ -524,7 +557,7 @@ def _run_openevolve_loop(
             'openevolve_run_failed campaign_id=%s: %s',
             campaign_id, str(exc)[:300], exc_info=True,
         )
-        # Fallback: if OpenEvolve fails, the best found during evaluations is still valid
+        # Fallback: if OpenEvolve fails, the initial eval is still valid
         if campaign.best_score and campaign.best_score > (campaign.initial_score or 0.0):
             campaign.status = 'COMPLETED'
         else:
@@ -533,7 +566,7 @@ def _run_openevolve_loop(
     finally:
         campaign.completed_at = datetime.now(timezone.utc)
         db.commit()
-        # Cleanup temp dir
+        # 9. Cleanup temp files
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
