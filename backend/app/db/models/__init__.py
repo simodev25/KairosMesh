@@ -11,6 +11,10 @@ from app.db.models.benchmark_case import BenchmarkCase
 from app.db.models.benchmark_fixture import BenchmarkFixture
 from app.db.models.benchmark_run import BenchmarkRun
 from app.db.models.connector_config import ConnectorConfig
+from app.db.models.evolution_campaign import EvolutionCampaign
+from app.db.models.evolution_candidate import EvolutionCandidate
+from app.db.models.evolution_candidate_evaluation import EvolutionCandidateEvaluation
+from app.db.models.evolution_promotion import EvolutionPromotion
 from app.db.models.execution_order import ExecutionOrder
 from app.db.models.governance_run import GovernanceRun
 from app.db.models.llm_call_log import LlmCallLog
@@ -25,6 +29,10 @@ from app.db.models.user import User
 __all__ = [
     'User',
     'ConnectorConfig',
+    'EvolutionCampaign',
+    'EvolutionCandidate',
+    'EvolutionCandidateEvaluation',
+    'EvolutionPromotion',
     'AnalysisRun',
     'AgentStep',
     'AgentRuntimeEvent',
