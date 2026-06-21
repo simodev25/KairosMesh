@@ -45,7 +45,10 @@ class OptimizerCampaignOut(BaseModel):
             elapsed = (campaign.completed_at - campaign.created_at).total_seconds()
         elif campaign.status == 'RUNNING' and campaign.created_at:
             from datetime import timezone
-            elapsed = (datetime.now(timezone.utc) - campaign.created_at).total_seconds()
+            created = campaign.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - created).total_seconds()
 
         return cls(
             id=campaign.id,
