@@ -9,7 +9,7 @@
 
   // Fallback model used by any agent without an explicit "model" in the "agent" section.
   // Format: "provider/model-id"
-  "model": "github-copilot/gpt-5.4",
+  "model": "github-copilot/gpt-5.2",
 
   // Lightweight model for non-critical utility tasks:
   // session title generation, short summaries, metadata.
@@ -429,7 +429,7 @@
 
     // @review-feedback-applier: applies review feedback after human validation.
     "review-feedback-applier": {
-      "model": "github-copilot/gpt-5.4-codex",
+      "model": "github-copilot/gpt-5.2-codex",
       "steps": 30
       // To enable GitHub MCP (read PR comments):
       // "tools": { "github*": true }
@@ -468,14 +468,14 @@
 
     // @test-plan-writer: writes the test plan (chg-xxx-test-plan.md).
     "test-plan-writer": {
-      "model": "github-copilot/gpt-5.4",
+      "model": "github-copilot/gpt-5.2",
       "steps": 25,
       "tools": { "socraticode*": true }  // find existing test patterns and coverage
     },
 
     // @plan-writer: writes the implementation plan (chg-xxx-plan.md).
     "plan-writer": {
-      "model": "github-copilot/gpt-5.4",
+      "model": "github-copilot/gpt-5.2",
       "steps": 50,
       "tools": { "socraticode*": true }  // understand codebase structure before planning
     },
@@ -542,7 +542,7 @@
 
     // @designer: UI/UX design, aligned with the design system.
     "designer": {
-      "model": "github-copilot/gpt-5",    // GPT-4o: vision + design
+      "model": "github-copilot/gpt-4o",    // GPT-4o: vision + design
       "steps": 20,
       "tools": { "puppeteer*": true }  // enables Puppeteer MCP for UI screenshots
     },

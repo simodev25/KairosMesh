@@ -18,18 +18,18 @@ change:
 
 ## Phase 1 — Modèle et schéma DB (effort : ~1h30)
 
-- [x] **1.1** Créer le modèle SQLAlchemy `AgentSkill` (ajout `backend/app/db/models/agent_skill.py`, contraintes+index implémentés)
+- [ ] **1.1** Créer le modèle SQLAlchemy `AgentSkill`
   - Fichier : `backend/app/db/models/agent_skill.py`
   - Colonnes : id, agent_name, version, is_active, skills (JSON), notes, created_by_id, created_at, updated_at
   - Contrainte unique : (agent_name, version)
   - Index : agent_name + is_active
   - Effort : 30 min
 
-- [x] **1.2** Enregistrer le modèle dans `__init__.py` (import + `__all__` mis à jour)
+- [ ] **1.2** Enregistrer le modèle dans `__init__.py`
   - Fichier : `backend/app/db/models/__init__.py`
   - Effort : 10 min
 
-- [x] **1.3** Créer les schemas Pydantic (ajout `backend/app/schemas/agent_skill.py`, validations max 12/max 500)
+- [ ] **1.3** Créer les schemas Pydantic
   - Fichier : `backend/app/schemas/agent_skill.py`
   - Schemas : `AgentSkillCreateRequest`, `AgentSkillOut`, `AgentSkillListOut`
   - Validation : max 12 skills, max 500 chars par skill

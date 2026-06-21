@@ -2,10 +2,10 @@ change_id: GH-29
 title: "Refactoring : versionner les skills des agents (table dédiée comme prompt_templates)"
 phases:
   clarify_scope: { started: "2026-06-21T14:10:00Z", completed: "2026-06-21T14:25:00Z" }
-  specification: { started: "2026-06-21T14:25:00Z", completed: "2026-06-21T14:35:00Z" }
-  test_planning: { started: "2026-06-21T14:25:00Z", completed: "2026-06-21T14:40:00Z" }
-  delivery_planning: { started: "2026-06-21T14:25:00Z", completed: "2026-06-21T14:40:00Z" }
-  delivery: { started: "2026-06-21T14:40:00Z", completed: null }
+  specification: { started: null, completed: null }
+  test_planning: { started: null, completed: null }
+  delivery_planning: { started: null, completed: null }
+  delivery: { started: null, completed: null }
   system_spec_update: { started: null, completed: null }
   review_fix: { started: null, completed: null }
   quality_gates: { started: null, completed: null }
