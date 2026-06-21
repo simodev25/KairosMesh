@@ -69,7 +69,7 @@ change:
 
 ## Phase 4 — API REST (effort : ~1h30)
 
-- [ ] **4.1** Créer les routes REST
+- [x] **4.1** Créer les routes REST (ajout `backend/app/api/routes/agent_skills.py`: GET/POST/activate + catalog)
   - Fichier : `backend/app/api/routes/agent_skills.py`
   - Endpoints :
     - `GET /api/v1/agents/{agent_name}/skills` — liste versions (filtre active_only)
@@ -78,11 +78,11 @@ change:
     - `GET /api/v1/agents/catalog` — liste agents avec info skills
   - Effort : 1h
 
-- [ ] **4.2** Enregistrer les routes dans le router
+- [x] **4.2** Enregistrer les routes dans le router (`backend/app/api/router.py` inclut `agent_skills.router`)
   - Fichier : `backend/app/api/router.py`
   - Effort : 10 min
 
-- [ ] **4.3** Écrire les tests API
+- [x] **4.3** Écrire les tests API (ajout `backend/tests/unit/test_agent_skills_api.py` sur routes directes)
   - Fichier : `backend/tests/unit/test_agent_skills_api.py`
   - Couvre : T-API-01 à T-API-08
   - Effort : 1h
@@ -91,14 +91,14 @@ change:
 
 ## Phase 5 — Adaptation de `resolve_skills()` (effort : ~1h30)
 
-- [ ] **5.1** Modifier `AgentModelSelector.resolve_skills()`
+- [x] **5.1** Modifier `AgentModelSelector.resolve_skills()` (source primaire table `agent_skills` active + fallback legacy `settings.agent_skills` + fallback `SKILL.md`; cache skills actif ajouté)
   - Fichier : `backend/app/services/llm/model_selector.py`
   - Changement : lire depuis table `agent_skills` au lieu de `settings.agent_skills`
   - Conserver le fallback SKILL.md si table vide pour l'agent
   - Adapter le cache (TTL séparé ou invalidation)
   - Effort : 1h
 
-- [ ] **5.2** Adapter les tests de `model_selector`
+- [x] **5.2** Adapter les tests de `model_selector` (priorité DB vs connector + fallback fichier validés, `python3 -m pytest -q tests/unit/test_agent_model_selector.py` PASS)
   - Fichier : `backend/tests/unit/test_agent_model_selector.py`
   - Mocker la nouvelle table au lieu de `settings.agent_skills`
   - Effort : 30 min
@@ -107,14 +107,14 @@ change:
 
 ## Phase 6 — Seed au startup (effort : ~1h)
 
-- [ ] **6.1** Modifier `main.py` : remplacer bootstrap par seed
+- [x] **6.1** Modifier `main.py` : remplacer bootstrap par seed (`bootstrap_agent_skills_into_settings()` retiré du startup, `AgentSkillsService().seed_defaults(db)` ajouté)
   - Fichier : `backend/app/main.py`
   - Supprimer l'appel à `bootstrap_agent_skills_into_settings()`
   - Ajouter `AgentSkillsService.seed_defaults(db)` au startup
   - Le seed lit les fichiers SKILL.md et crée version 1 si la table est vide pour l'agent
   - Effort : 30 min
 
-- [ ] **6.2** Écrire les tests de seed
+- [x] **6.2** Écrire les tests de seed (ajout `backend/tests/unit/test_agent_skills_seed.py`, seed initial + idempotence validés)
   - Fichier : `backend/tests/unit/test_agent_skills_seed.py`
   - Couvre : T-SEED-01, T-SEED-02
   - Effort : 30 min
@@ -123,13 +123,13 @@ change:
 
 ## Phase 7 — Backward compatibility connectors (effort : ~45 min)
 
-- [ ] **7.1** Adapter GET /connectors pour servir skills depuis nouvelle table
+- [x] **7.1** Adapter GET /connectors pour servir skills depuis nouvelle table (`backend/app/api/routes/connectors.py`: injection `settings.agent_skills` depuis `agent_skills` actives, bootstrap retiré)
   - Fichier : `backend/app/api/routes/connectors.py`
   - Dans le GET : lire les skills actives depuis `agent_skills` et les injecter dans `settings.agent_skills` de la réponse
   - Retirer la normalisation `_normalize_agent_skills()` et le bootstrap dans cette route
   - Effort : 30 min
 
-- [ ] **7.2** Adapter les tests connectors
+- [x] **7.2** Adapter les tests connectors (`backend/tests/unit/test_connectors_settings_sanitization.py` mis à jour, `python3 -m pytest -q tests/unit/test_connectors_settings_sanitization.py` PASS)
   - Fichier : `backend/tests/unit/test_connectors_settings_sanitization.py`
   - Retirer les assertions sur `agent_skills` dans settings comme source de vérité
   - Effort : 15 min
@@ -138,20 +138,20 @@ change:
 
 ## Phase 8 — Suppression du bootstrap (effort : ~45 min)
 
-- [ ] **8.1** Supprimer `skill_bootstrap.py`
+- [x] **8.1** Supprimer `skill_bootstrap.py` (fichier `backend/app/services/llm/skill_bootstrap.py` supprimé)
   - Fichier à supprimer : `backend/app/services/llm/skill_bootstrap.py`
   - Effort : 5 min
 
-- [ ] **8.2** Supprimer les variables d'env bootstrap
+- [x] **8.2** Supprimer les variables d'env bootstrap (`backend/app/core/config.py`, `backend/.env.example`, `.env.prod.example` nettoyés)
   - Fichiers : `backend/app/core/config.py`, `backend/.env`, `backend/.env.example`, `.env.prod.example`
   - Retirer : `AGENT_SKILLS_BOOTSTRAP_FILE`, `AGENT_SKILLS_BOOTSTRAP_MODE`, `AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE`
   - Effort : 15 min
 
-- [ ] **8.3** Supprimer/adapter les tests du bootstrap
+- [x] **8.3** Supprimer/adapter les tests du bootstrap (`backend/tests/unit/test_skill_bootstrap.py` supprimé, tests selector ajustés)
   - Fichier à supprimer : `backend/tests/unit/test_skill_bootstrap.py`
   - Effort : 5 min
 
-- [ ] **8.4** Nettoyer les imports et références
+- [x] **8.4** Nettoyer les imports et références (`model_selector.py` et `connectors.py` sans import bootstrap, `python3 -m pytest -q tests/unit/test_agent_model_selector.py tests/unit/test_connectors_settings_sanitization.py` PASS)
   - Fichiers : tout import de `skill_bootstrap` dans le codebase
   - Effort : 15 min
 

@@ -70,10 +70,6 @@ class Settings(BaseSettings):
     mistral_input_cost_per_1m_tokens: float = Field(default=0.0, alias='MISTRAL_INPUT_COST_PER_1M_TOKENS')
     mistral_output_cost_per_1m_tokens: float = Field(default=0.0, alias='MISTRAL_OUTPUT_COST_PER_1M_TOKENS')
     decision_mode: str = Field(default='balanced', alias='DECISION_MODE')
-    agent_skills_bootstrap_file: str = Field(default='', alias='AGENT_SKILLS_BOOTSTRAP_FILE')
-    agent_skills_bootstrap_mode: str = Field(default='merge', alias='AGENT_SKILLS_BOOTSTRAP_MODE')
-    agent_skills_bootstrap_apply_once: bool = Field(default=True, alias='AGENT_SKILLS_BOOTSTRAP_APPLY_ONCE')
-
     metaapi_token: str = Field(default='', alias='METAAPI_TOKEN')
     metaapi_account_id: str = Field(default='', alias='METAAPI_ACCOUNT_ID')
     metaapi_region: str = Field(default='new-york', alias='METAAPI_REGION')
