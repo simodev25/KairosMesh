@@ -209,6 +209,33 @@ export const api = {
       body: JSON.stringify(payload),
     }, token),
   listPrompts: (token: string) => request('/prompts', {}, token),
+  listAgentSkills: (token: string, agentName: string, activeOnly = false) =>
+    request(
+      `/agents/${encodeURIComponent(agentName)}/skills${activeOnly ? '?active_only=true' : ''}`,
+      {},
+      token,
+    ),
+  createAgentSkillVersion: (
+    token: string,
+    agentName: string,
+    payload: { skills: string[]; notes?: string; activate?: boolean },
+  ) =>
+    request(
+      `/agents/${encodeURIComponent(agentName)}/skills`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token,
+    ),
+  activateAgentSkillVersion: (token: string, agentName: string, skillId: number) =>
+    request(
+      `/agents/${encodeURIComponent(agentName)}/skills/${skillId}/activate`,
+      {
+        method: 'POST',
+      },
+      token,
+    ),
   createPrompt: (
     token: string,
     payload: { agent_name: string; system_prompt: string; user_prompt_template: string; notes?: string },

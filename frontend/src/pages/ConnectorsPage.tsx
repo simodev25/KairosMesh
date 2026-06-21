@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { CRYPTO_PAIRS, FOREX_PAIRS, TRADEABLE_PAIRS } from '../constants/markets';
 import { useAuth } from '../hooks/useAuth';
 import type {
+  AgentSkillVersion,
   ConnectorConfig,
   ExecutionMode,
   ExternalMcpConfig,
@@ -416,6 +417,10 @@ export function ConnectorsPage() {
   const [promptSystem, setPromptSystem] = useState(AGENT_PROMPT_FALLBACKS['news-analyst'].system);
   const [promptUser, setPromptUser] = useState(AGENT_PROMPT_FALLBACKS['news-analyst'].user);
   const [promptSaving, setPromptSaving] = useState(false);
+  const [skillsSaving, setSkillsSaving] = useState(false);
+  const [agentSkillVersions, setAgentSkillVersions] = useState<Record<string, AgentSkillVersion[]>>(
+    Object.fromEntries(MODEL_EDIT_AGENTS.map((agent) => [agent, []])),
+  );
 
   const [marketSymbols, setMarketSymbols] = useState<MarketSymbolsConfig>({
     forex_pairs: FOREX_PAIRS,
@@ -539,9 +544,6 @@ export function ConnectorsPage() {
     const rawMap = settings.agent_models && typeof settings.agent_models === 'object'
       ? (settings.agent_models as Record<string, unknown>)
       : {};
-    const rawSkills = settings.agent_skills && typeof settings.agent_skills === 'object'
-      ? (settings.agent_skills as Record<string, unknown>)
-      : {};
     const rawEnabled = settings.agent_llm_enabled && typeof settings.agent_llm_enabled === 'object'
       ? (settings.agent_llm_enabled as Record<string, unknown>)
       : {};
@@ -577,16 +579,7 @@ export function ConnectorsPage() {
     MODEL_EDIT_AGENTS.forEach((agentName) => {
       const value = legacyAwareValue(rawMap, agentName);
       next[agentName] = typeof value === 'string' ? value : '';
-      const skillsValue = legacyAwareValue(rawSkills, agentName);
-      if (NON_SWITCHABLE_LLM_AGENTS.has(agentName)) {
-        nextSkills[agentName] = [];
-      } else if (Array.isArray(skillsValue)) {
-        nextSkills[agentName] = skillsValue.map((item) => String(item).trim()).filter((item) => item.length > 0);
-      } else if (typeof skillsValue === 'string') {
-        nextSkills[agentName] = parseSkillsInput(skillsValue);
-      } else {
-        nextSkills[agentName] = [];
-      }
+      nextSkills[agentName] = [];
       if (!SWITCHABLE_LLM_AGENTS.has(agentName)) {
         nextEnabled[agentName] = false;
         return;
@@ -727,7 +720,7 @@ export function ConnectorsPage() {
   const loadAll = async () => {
     if (!token) return;
     try {
-      const [c, a, p, s, usage, symbols] = await Promise.all([
+      const [c, a, p, s, usage, symbols, skillsRows] = await Promise.all([
         api.listConnectors(token),
         api.listMetaApiAccounts(token),
         api.listPrompts(token),
@@ -740,6 +733,17 @@ export function ConnectorsPage() {
           tradeable_pairs: TRADEABLE_PAIRS,
           source: 'fallback',
         })),
+        Promise.all(
+          MODEL_EDIT_AGENTS.map(async (agentName) => {
+            if (NON_SWITCHABLE_LLM_AGENTS.has(agentName)) return [agentName, []] as const;
+            try {
+              const rows = (await api.listAgentSkills(token, agentName, false)) as AgentSkillVersion[];
+              return [agentName, Array.isArray(rows) ? rows : []] as const;
+            } catch {
+              return [agentName, []] as const;
+            }
+          }),
+        ),
       ]);
       const connectorRows = c as ConnectorConfig[];
       const accountRows = a as MetaApiAccount[];
@@ -761,6 +765,16 @@ export function ConnectorsPage() {
       setPrompts(p as PromptTemplate[]);
       setSummary(s as LlmSummary);
       setModelsUsage(usage as LlmModelUsage[]);
+      const byAgentSkills = Object.fromEntries(skillsRows) as Record<string, AgentSkillVersion[]>;
+      setAgentSkillVersions(byAgentSkills);
+      setAgentSkills(
+        Object.fromEntries(
+          MODEL_EDIT_AGENTS.map((agentName) => {
+            const active = (byAgentSkills[agentName] ?? []).find((row) => row.is_active);
+            return [agentName, active?.skills ?? []] as const;
+          }),
+        ),
+      );
       setMarketSymbols({
         forex_pairs: forexPairs,
         crypto_pairs: cryptoPairs,
@@ -821,15 +835,6 @@ export function ConnectorsPage() {
     setPromptAgent(PROMPT_EDITABLE_AGENTS[0] ?? 'news-analyst');
   }, [promptAgent]);
 
-  const toggleConnector = async (connector: ConnectorConfig) => {
-    if (!token) return;
-    await api.updateConnector(token, connector.connector_name, {
-      enabled: !connector.enabled,
-      settings: connector.settings,
-    });
-    await loadAll();
-  };
-
   const testConnector = async (name: string) => {
     if (!token) return;
     try {
@@ -851,6 +856,7 @@ export function ConnectorsPage() {
   };
 
   const handleRefreshExternalMcp = async (mcp: ExternalMcpConfig) => {
+    if (!token) return;
     try {
       const result = await api.discoverExternalMcp(token, mcp.url, mcp.headers);
       const mcpNameSlug = mcp.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -869,7 +875,7 @@ export function ConnectorsPage() {
         assigned_agents: mcp.assigned_agents,
         discovered_tools: discovered,
       });
-      const freshConnectors = await api.listConnectors(token);
+      const freshConnectors = await api.listConnectors(token) as ConnectorConfig[];
       setConnectors(freshConnectors);
       const ollama = freshConnectors.find((c) => c.connector_name === 'ollama');
       if (ollama && Array.isArray(ollama.settings?.external_mcps)) {
@@ -881,6 +887,7 @@ export function ConnectorsPage() {
   };
 
   const handleDeleteExternalMcp = async (mcpId: string, agentName: string) => {
+    if (!token) return;
     try {
       await api.deleteExternalMcp(token, mcpId, agentName);
       setExternalMcps((prev) =>
@@ -899,8 +906,9 @@ export function ConnectorsPage() {
 
   const handleMcpSaved = async (_mcpId: string) => {
     setMcpModal(null);
+    if (!token) return;
     try {
-      const freshConnectors = await api.listConnectors(token);
+      const freshConnectors = await api.listConnectors(token) as ConnectorConfig[];
       setConnectors(freshConnectors);  // keep connectors state fresh so saveAgentModels sees updated settings
       const ollama = freshConnectors.find((c) => c.connector_name === 'ollama');
       if (ollama && Array.isArray(ollama.settings?.external_mcps)) {
@@ -939,12 +947,6 @@ export function ConnectorsPage() {
     const cleanedEnabled = Object.fromEntries(
       MODEL_EDIT_AGENTS.map((agentName) => [agentName, SWITCHABLE_LLM_AGENTS.has(agentName) ? Boolean(agentLlmEnabled[agentName]) : false]),
     );
-    const cleanedSkills = Object.fromEntries(
-      Object.entries(agentSkills)
-        .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
-        .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
-        .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
-    );
     const cleanedAgentTools = Object.fromEntries(
       MODEL_EDIT_AGENTS
         .map((agentName) => {
@@ -977,7 +979,6 @@ export function ConnectorsPage() {
           default_model: defaultLlmModel.trim() || defaultModelForProvider(llmProvider),
           agent_models: cleanedModels,
           agent_llm_enabled: cleanedEnabled,
-          agent_skills: cleanedSkills,
           agent_tools: cleanedAgentTools,
         },
       });
@@ -1049,6 +1050,7 @@ export function ConnectorsPage() {
     if (!token) return;
     try {
       setPromptSaving(true);
+      setSkillsSaving(true);
       setError(null);
 
       // 1. Create + activate new prompt version
@@ -1059,22 +1061,13 @@ export function ConnectorsPage() {
       })) as PromptTemplate;
       await api.activatePrompt(token, created.id);
 
-      // 2. Save skills to connector settings (same atomic action)
-      const ollama = connectors.find((item) => item.connector_name === 'ollama');
-      if (ollama) {
-        const cleanedSkills = Object.fromEntries(
-          Object.entries(agentSkills)
-            .filter(([agentName]) => !NON_SWITCHABLE_LLM_AGENTS.has(agentName))
-            .map(([agentName, skills]) => [agentName, normalizeSkillsList(skills ?? [])] as const)
-            .filter(([, skills]) => Array.isArray(skills) && skills.length > 0),
-        );
-        const existingSettings = (ollama.settings ?? {}) as Record<string, unknown>;
-        await api.updateConnector(token, 'ollama', {
-          enabled: ollama.enabled,
-          settings: {
-            ...existingSettings,
-            agent_skills: cleanedSkills,
-          },
+      // 2. Create + activate new skills version via dedicated API
+      const nextSkills = normalizeSkillsList(agentSkills[promptAgent] ?? []);
+      if (nextSkills.length > 0) {
+        await api.createAgentSkillVersion(token, promptAgent, {
+          skills: nextSkills,
+          activate: true,
+          notes: 'Updated from ConnectorsPage prompt editor',
         });
       }
 
@@ -1083,6 +1076,21 @@ export function ConnectorsPage() {
       setError(err instanceof Error ? err.message : 'Cannot create prompt & skills');
     } finally {
       setPromptSaving(false);
+      setSkillsSaving(false);
+    }
+  };
+
+  const activateSkillVersion = async (agentName: string, skillId: number) => {
+    if (!token) return;
+    try {
+      setSkillsSaving(true);
+      setError(null);
+      await api.activateAgentSkillVersion(token, agentName, skillId);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Cannot activate skill version');
+    } finally {
+      setSkillsSaving(false);
     }
   };
 
@@ -1605,7 +1613,7 @@ export function ConnectorsPage() {
                   </tbody>
                 </table>
                 <p className="model-source">
-                  Skills are modified in the prompt editor below, then saved via "Save agent skills".
+                  Skills are versioned per agent via dedicated API and no longer saved in connector settings.
                 </p>
                 <p className="model-source">
                   Runtime tools per agent are saved with "Save models". All authorized tools are enabled by default.
@@ -1647,11 +1655,44 @@ export function ConnectorsPage() {
                     placeholder={'e.g.:\nPrioritize high-impact events for the analyzed instrument\nExplicitly flag uncertainties'}
                   />
                 </label>
-                <button className="btn-primary" disabled={promptSaving}>{promptSaving ? 'Saving...' : 'Create + activate prompt and skills version'}</button>
+                <button className="btn-primary" disabled={promptSaving || skillsSaving}>{(promptSaving || skillsSaving) ? 'Saving...' : 'Create + activate prompt and skills version'}</button>
               </form>
               <p className="model-source">
                 Selected agent: <code>{promptAgent}</code> | active version: <code>v{activePromptByAgent.get(promptAgent)?.version ?? 0}</code>
               </p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>Skills version</th>
+                    <th>Status</th>
+                    <th>Rules</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {MODEL_EDIT_AGENTS.flatMap((agentName) => (agentSkillVersions[agentName] ?? []).map((version) => (
+                    <tr key={`skill-${version.id}`}>
+                      <td>{agentName}</td>
+                      <td>v{version.version}</td>
+                      <td><span className={`badge ${version.is_active ? 'ok' : 'blocked'}`}>{version.is_active ? 'active' : 'inactive'}</span></td>
+                      <td><code>{(version.skills ?? []).length} rule(s)</code></td>
+                      <td>
+                        {!version.is_active && (
+                          <button
+                            className="btn-ghost btn-small"
+                            type="button"
+                            disabled={skillsSaving}
+                            onClick={() => void activateSkillVersion(agentName, version.id)}
+                          >
+                            Activate
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
               <table>
                 <thead>
                   <tr>
@@ -2102,7 +2143,7 @@ export function ConnectorsPage() {
       {mcpModal && (
         <AddExternalMcpModal
           agentName={mcpModal.agentName}
-          token={token}
+          token={token ?? ''}
           onClose={() => setMcpModal(null)}
           onSaved={handleMcpSaved}
         />

@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
 
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.db.models.agent_skill import AgentSkill
 from app.db.models.connector_config import ConnectorConfig
 
 DEFAULT_AGENT_LLM_ENABLED: dict[str, bool] = {
@@ -223,6 +225,79 @@ def _legacy_agent_aliases_for(agent_name: str) -> tuple[str, ...]:
     return ('macro-analyst', 'sentiment-agent')
 
 
+def _dedupe_and_limit_skills(raw_items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        cleaned = str(item or '').strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > MAX_AGENT_SKILL_LENGTH:
+            cleaned = cleaned[:MAX_AGENT_SKILL_LENGTH].rstrip()
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cleaned)
+        if len(deduped) >= MAX_AGENT_SKILLS_PER_AGENT:
+            break
+    return deduped
+
+
+def _coerce_skills_items(raw_value: object) -> list[str]:
+    if isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            return []
+        if text.startswith('['):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed]
+                return [text]
+            except json.JSONDecodeError:
+                return [part.strip() for part in text.splitlines()]
+        if '\n' in text:
+            return [part.strip() for part in text.splitlines()]
+        if '||' in text:
+            return [part.strip() for part in text.split('||')]
+        if ';' in text:
+            return [part.strip() for part in text.split(';')]
+        return [text]
+    if isinstance(raw_value, (list, tuple, set)):
+        return [str(item).strip() for item in raw_value]
+    return []
+
+
+def _resolve_skill_file_candidates(agent_name: str) -> list[Path]:
+    backend_root = Path(__file__).resolve().parents[3]
+    candidates = [agent_name, *_legacy_agent_aliases_for(agent_name)]
+    return [backend_root / 'config' / 'skills' / name / 'SKILL.md' for name in candidates if name]
+
+
+def _load_skills_from_markdown(file_path: Path) -> list[str]:
+    try:
+        raw = file_path.read_text(encoding='utf-8')
+    except OSError:
+        return []
+
+    rows: list[str] = []
+    for line in raw.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        if cleaned.startswith('---'):
+            continue
+        if cleaned.startswith('name:') or cleaned.startswith('description:'):
+            continue
+        if cleaned.startswith('# '):
+            continue
+        if cleaned[0].isdigit() and '. ' in cleaned[:5]:
+            cleaned = cleaned.split('. ', 1)[1].strip()
+        rows.append(cleaned)
+    return _dedupe_and_limit_skills(rows)
+
+
 def normalize_llm_provider(value: str | None, fallback: str = 'ollama') -> str:
     normalized = str(value or '').strip().lower()
     if normalized in SUPPORTED_LLM_PROVIDERS:
@@ -434,6 +509,7 @@ class AgentModelSelector:
 
     _cache_ttl_seconds = 5.0
     _settings_cache = WeakKeyDictionary()
+    _active_skills_cache = WeakKeyDictionary()
     _cache_lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -442,6 +518,7 @@ class AgentModelSelector:
     @classmethod
     def clear_cache(cls) -> None:
         cls._settings_cache = WeakKeyDictionary()
+        cls._active_skills_cache = WeakKeyDictionary()
 
     @classmethod
     def _load_llm_settings(cls, db: Session | None) -> dict:
@@ -465,22 +542,6 @@ class AgentModelSelector:
             if 'provider' not in settings:
                 settings['provider'] = normalize_llm_provider(runtime_settings.llm_provider, fallback='ollama')
 
-            # Docker first-start path: Celery workers can resolve agent settings before
-            # the FastAPI startup seeded connector configs into the database.
-            # Synthesize bootstrap skills from env/config so the first analysis run
-            # sees the expected agent_skills even when the connector row is not yet persisted.
-            if runtime_settings.agent_skills_bootstrap_file:
-                from app.services.llm.skill_bootstrap import bootstrap_agent_skills_into_settings
-
-                synthesized_settings, _changed, _status = bootstrap_agent_skills_into_settings(
-                    current_settings=settings,
-                    bootstrap_file=runtime_settings.agent_skills_bootstrap_file,
-                    mode=runtime_settings.agent_skills_bootstrap_mode,
-                    apply_once=runtime_settings.agent_skills_bootstrap_apply_once,
-                )
-                if isinstance(synthesized_settings, dict):
-                    settings = synthesized_settings
-
             cls._settings_cache[db] = (now, settings)
 
             if len(cls._settings_cache) > 128:
@@ -495,6 +556,30 @@ class AgentModelSelector:
     def _load_ollama_settings(cls, db: Session | None) -> dict:
         # Backward-compatible alias kept for historical callsites/tests.
         return cls._load_llm_settings(db)
+
+    @classmethod
+    def _load_active_skills_map(cls, db: Session | None) -> dict[str, list[str]]:
+        if db is None:
+            return {}
+
+        now = time.monotonic()
+        with cls._cache_lock:
+            cached = cls._active_skills_cache.get(db)
+            if cached and now - cached[0] <= cls._cache_ttl_seconds:
+                return cached[1]
+
+            rows = db.query(AgentSkill).filter(AgentSkill.is_active.is_(True)).all()
+            skills_map: dict[str, list[str]] = {}
+            for row in rows:
+                agent_name = normalize_agent_name(row.agent_name)
+                if not agent_name:
+                    continue
+                normalized = _dedupe_and_limit_skills(list(row.skills or []))
+                if normalized:
+                    skills_map[agent_name] = normalized
+
+            cls._active_skills_cache[db] = (now, skills_map)
+            return skills_map
 
     def resolve_provider(self, db: Session | None) -> str:
         default_provider = normalize_llm_provider(self.settings.llm_provider, fallback='ollama')
@@ -544,61 +629,37 @@ class AgentModelSelector:
 
     def resolve_skills(self, db: Session | None, agent_name: str) -> list[str]:
         normalized_agent_name = normalize_agent_name(agent_name)
+
+        # Source of truth: active rows in agent_skills table.
+        active_skills = self._load_active_skills_map(db)
+        for candidate_name in (normalized_agent_name, *_legacy_agent_aliases_for(normalized_agent_name)):
+            candidate_skills = active_skills.get(candidate_name)
+            if candidate_skills:
+                return list(candidate_skills)
+
+        # Transitional fallback for backward compatibility.
         settings = self._load_llm_settings(db)
         raw_map = settings.get('agent_skills', {})
-        if not isinstance(raw_map, dict):
-            return []
+        if isinstance(raw_map, dict):
+            raw_value = raw_map.get(normalized_agent_name)
+            if raw_value is None:
+                for candidate_name in _legacy_agent_aliases_for(normalized_agent_name):
+                    if candidate_name in raw_map:
+                        raw_value = raw_map.get(candidate_name)
+                        break
+            legacy_items = _dedupe_and_limit_skills(_coerce_skills_items(raw_value))
+            if legacy_items:
+                return legacy_items
 
-        raw_value = raw_map.get(normalized_agent_name)
-        if raw_value is None:
-            for candidate_name in _legacy_agent_aliases_for(normalized_agent_name):
-                if candidate_name in raw_map:
-                    raw_value = raw_map.get(candidate_name)
-                    break
-        raw_items: list[str]
-        if isinstance(raw_value, str):
-            text = raw_value.strip()
-            if not text:
-                return []
-            if text.startswith('['):
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, list):
-                        raw_items = [str(item).strip() for item in parsed]
-                    else:
-                        raw_items = [text]
-                except json.JSONDecodeError:
-                    raw_items = [part.strip() for part in text.splitlines()]
-            elif '\n' in text:
-                raw_items = [part.strip() for part in text.splitlines()]
-            elif '||' in text:
-                raw_items = [part.strip() for part in text.split('||')]
-            elif ';' in text:
-                raw_items = [part.strip() for part in text.split(';')]
-            else:
-                raw_items = [text]
-        elif isinstance(raw_value, (list, tuple, set)):
-            raw_items = [str(item).strip() for item in raw_value]
-        else:
-            return []
-
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for item in raw_items:
-            cleaned = item.strip()
-            if not cleaned:
+        # Final fallback: local SKILL.md for the agent.
+        for file_path in _resolve_skill_file_candidates(normalized_agent_name):
+            if not file_path.is_file():
                 continue
-            if len(cleaned) > MAX_AGENT_SKILL_LENGTH:
-                cleaned = cleaned[:MAX_AGENT_SKILL_LENGTH].rstrip()
-            key = cleaned.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(cleaned)
-            if len(deduped) >= MAX_AGENT_SKILLS_PER_AGENT:
-                break
+            file_items = _load_skills_from_markdown(file_path)
+            if file_items:
+                return file_items
 
-        return deduped
+        return []
 
     def resolve_enabled_tools(self, db: Session | None, agent_name: str) -> list[str]:
         normalized_agent_name = normalize_agent_name(agent_name)

@@ -2,11 +2,13 @@ import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import Role, require_roles
 from app.db.models.connector_config import ConnectorConfig
+from app.db.models.agent_skill import AgentSkill
 from app.db.session import get_db
 from app.schemas.connector import (
     ConnectorConfigOut,
@@ -19,7 +21,6 @@ from app.schemas.connector import (
 )
 from app.services.connectors.runtime_settings import RuntimeConnectorSettings
 from app.services.config.trading_config import build_scoped_trading_settings
-from app.services.llm.skill_bootstrap import bootstrap_agent_skills_into_settings
 from app.services.llm.model_selector import (
     AgentModelSelector,
     DEFAULT_DECISION_MODE,
@@ -74,65 +75,24 @@ def _inject_env_secret_defaults(connector_name: str, settings_payload: dict, app
     return payload, changed
 
 
-def _normalize_agent_skills(raw_skills: object) -> dict[str, list[str]]:
-    if not isinstance(raw_skills, dict):
-        return {}
+def _active_agent_skills_map(db: Session) -> dict[str, list[str]]:
+    rows = (
+        db.query(AgentSkill.agent_name, AgentSkill.skills)
+        .filter(AgentSkill.is_active.is_(True))
+        .order_by(AgentSkill.agent_name.asc(), AgentSkill.version.desc())
+        .all()
+    )
 
-    normalized: dict[str, list[str]] = {}
-    for raw_agent_name, raw_value in raw_skills.items():
-        agent_name = normalize_agent_name(str(raw_agent_name or '').strip())
-        if not agent_name:
+    skills_by_agent: dict[str, list[str]] = {}
+    for agent_name, skills in rows:
+        if agent_name in skills_by_agent:
             continue
-
-        raw_items: list[str]
-        if isinstance(raw_value, str):
-            text = raw_value.strip()
-            if not text:
-                continue
-            if text.startswith('['):
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, list):
-                        raw_items = [str(item).strip() for item in parsed]
-                    else:
-                        raw_items = [text]
-                except json.JSONDecodeError:
-                    raw_items = [item.strip() for item in text.splitlines()]
-            elif '\n' in text:
-                raw_items = [item.strip() for item in text.splitlines()]
-            elif '||' in text:
-                raw_items = [item.strip() for item in text.split('||')]
-            elif ';' in text:
-                raw_items = [item.strip() for item in text.split(';')]
-            else:
-                raw_items = [text]
-        elif isinstance(raw_value, (list, tuple, set)):
-            raw_items = [str(item).strip() for item in raw_value]
-        else:
+        if not isinstance(skills, list):
             continue
-
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for item in raw_items:
-            cleaned = item.strip()
-            if not cleaned:
-                continue
-            if len(cleaned) > 500:
-                cleaned = cleaned[:500].rstrip()
-            key = cleaned.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(cleaned)
-            if len(deduped) >= 12:
-                break
-
-        if deduped:
-            existing = normalized.get(agent_name, [])
-            merged = existing + [item for item in deduped if item not in existing]
-            normalized[agent_name] = merged[:12]
-
-    return normalized
+        normalized = [str(item).strip() for item in skills if str(item or '').strip()]
+        if normalized:
+            skills_by_agent[str(agent_name)] = normalized
+    return skills_by_agent
 
 
 def _sanitize_ollama_settings(raw_settings: dict) -> dict:
@@ -155,7 +115,8 @@ def _sanitize_ollama_settings(raw_settings: dict) -> dict:
                 break
     settings['agent_models'] = agent_models
 
-    settings['agent_skills'] = _normalize_agent_skills(settings.get('agent_skills'))
+    if not isinstance(settings.get('agent_skills'), dict):
+        settings['agent_skills'] = {}
     settings['decision_mode'] = normalize_decision_mode(
         settings.get('decision_mode'),
         fallback=DEFAULT_DECISION_MODE,
@@ -169,19 +130,13 @@ def _sanitize_ollama_settings(raw_settings: dict) -> dict:
     return settings
 
 
-def _bootstrap_and_sanitize_ollama_settings(raw_settings: dict, app_settings) -> dict:
+def _sanitize_ollama_settings_with_defaults(raw_settings: dict, app_settings) -> dict:
     base_settings = {
         **dict(raw_settings or {}),
         'provider': dict(raw_settings or {}).get('provider', app_settings.llm_provider),
         'decision_mode': dict(raw_settings or {}).get('decision_mode', app_settings.decision_mode),
     }
-    bootstrapped_settings, _changed, _status = bootstrap_agent_skills_into_settings(
-        current_settings=base_settings,
-        bootstrap_file=app_settings.agent_skills_bootstrap_file,
-        mode=app_settings.agent_skills_bootstrap_mode,
-        apply_once=app_settings.agent_skills_bootstrap_apply_once,
-    )
-    return _sanitize_ollama_settings(bootstrapped_settings if isinstance(bootstrapped_settings, dict) else base_settings)
+    return _sanitize_ollama_settings(base_settings)
 
 
 def _validate_decision_mode_value(raw_settings: dict) -> None:
@@ -234,7 +189,7 @@ def list_connectors(
         if connector_name not in existing:
             connector_settings: dict = {}
             if connector_name == 'ollama':
-                connector_settings = _bootstrap_and_sanitize_ollama_settings({}, settings)
+                connector_settings = _sanitize_ollama_settings_with_defaults({}, settings)
             connector_settings, _ = _inject_env_secret_defaults(connector_name, connector_settings, settings)
             conn = ConnectorConfig(connector_name=connector_name, enabled=True, settings=connector_settings)
             db.add(conn)
@@ -245,7 +200,7 @@ def list_connectors(
         has_changes = False
 
         if conn.connector_name == 'ollama':
-            sanitized_settings = _bootstrap_and_sanitize_ollama_settings(current_settings, settings)
+            sanitized_settings = _sanitize_ollama_settings_with_defaults(current_settings, settings)
             if sanitized_settings != next_settings:
                 next_settings = sanitized_settings
                 has_changes = True
@@ -264,6 +219,21 @@ def list_connectors(
     if 'ollama' in updated_connector_names:
         AgentModelSelector.clear_cache()
     connectors = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name.in_(SUPPORTED_CONNECTORS)).all()
+
+    active_skills_map = _active_agent_skills_map(db)
+    if active_skills_map:
+        for conn in connectors:
+            if conn.connector_name != 'ollama':
+                continue
+            current_settings = conn.settings if isinstance(conn.settings, dict) else {}
+            merged_settings = dict(current_settings)
+            merged_settings['agent_skills'] = active_skills_map
+            if merged_settings != current_settings:
+                conn.settings = merged_settings
+                db.commit()
+                connectors = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name.in_(SUPPORTED_CONNECTORS)).all()
+            break
+
     return [ConnectorConfigOut.model_validate(conn) for conn in connectors]
 
 
