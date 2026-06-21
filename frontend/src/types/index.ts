@@ -303,6 +303,18 @@ export interface PromptTemplate {
   updated_at: string;
 }
 
+export interface AgentSkillVersion {
+  id: number;
+  agent_name: string;
+  version: number;
+  is_active: boolean;
+  skills: string[];
+  notes?: string | null;
+  created_by_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AgentValidationDetail {
   bar: number;
   time: string;
@@ -359,4 +371,3 @@ export interface LlmModelUsage {
   success_calls: number;
   last_seen?: string | null;
 }
-
