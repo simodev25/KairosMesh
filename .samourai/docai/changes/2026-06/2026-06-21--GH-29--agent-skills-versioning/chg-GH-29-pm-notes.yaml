@@ -1,0 +1,35 @@
+change_id: GH-29
+title: "Refactoring : versionner les skills des agents (table dédiée comme prompt_templates)"
+phases:
+  clarify_scope: { started: "2026-06-21T14:10:00Z", completed: "2026-06-21T14:25:00Z" }
+  specification: { started: null, completed: null }
+  test_planning: { started: null, completed: null }
+  delivery_planning: { started: null, completed: null }
+  delivery: { started: null, completed: null }
+  system_spec_update: { started: null, completed: null }
+  review_fix: { started: null, completed: null }
+  quality_gates: { started: null, completed: null }
+  dod_check: { started: null, completed: null }
+  pr_creation: { started: null, completed: null, url: null }
+decisions:
+  - text: "Granularité : un JEU de skills par agent versionnée (pas skill individuelle). Même pattern que prompt_templates."
+    date: "2026-06-21"
+  - text: "Migration : Alembic data migration dans le même script (créer table + migrer données depuis connector_configs.settings)."
+    date: "2026-06-21"
+  - text: "Bootstrap : supprimer skill_bootstrap.py et le mécanisme env vars. Remplacer par seed dans la table au premier startup (comme prompt seed)."
+    date: "2026-06-21"
+  - text: "Backward compat : le backend continue de servir agent_skills dans GET /connectors pour le frontend existant (lecture seule, source = nouvelle table). Le PUT connector ignore agent_skills (redirige vers la nouvelle table ou erreur)."
+    date: "2026-06-21"
+  - text: "Frontend adapté dans ce même ticket : ConnectorsPage utilise la nouvelle API /api/v1/agents/{name}/skills au lieu du PUT connector."
+    date: "2026-06-21"
+  - text: "Couvrir les 12 agents du JSON existant (pas seulement les 8 du pipeline principal). Inclut strategy-designer, schedule-planner-agent, order-guardian."
+    date: "2026-06-21"
+open_questions: []
+blockers: []
+notes:
+  - text: "Pré-requis de GH-28 (Evolution Lab). Skills actuellement dans connector_configs.settings JSON sans versioning."
+    type: info
+    date: "2026-06-21"
+  - text: "Points d'accès identifiés : model_selector.py (resolve_skills), skill_bootstrap.py, toolkit.py, registry.py (4 sites), governance/registry.py, strategy/designer.py, ConnectorsPage.tsx (lecture+écriture). 6 fichiers de tests impactés."
+    type: info
+    date: "2026-06-21"
