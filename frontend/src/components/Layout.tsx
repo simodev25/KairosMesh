@@ -20,7 +20,8 @@ const navItems = [
   { to: '/orders', label: 'ORDRES', icon: Receipt, node: '03' },
   { to: '/strategies', label: 'STRATEGY_ENGINE', icon: Cpu, node: '04' },
   { to: '/backtests', label: 'BACKTEST_ENGINE', icon: FlaskConical, node: '05' },
-  { to: '/connectors', label: 'SYSTEM_CONFIG', icon: Settings, node: '06' },
+  { to: '/evolution-lab', label: 'EVOLUTION_LAB', icon: Cpu, node: '06' },
+  { to: '/connectors', label: 'SYSTEM_CONFIG', icon: Settings, node: '07' },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
