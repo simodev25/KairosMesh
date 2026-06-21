@@ -16,6 +16,7 @@ from app.db.models.strategy import Strategy
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.strategy import StrategyOut, StrategyGenerateRequest, StrategyEditRequest, StrategyPromoteRequest, StrategyStartMonitoringRequest
+from app.schemas.optimizer import OptimizerLaunchRequest, OptimizerCampaignOut
 from app.services.backtest.engine import BacktestEngine
 from app.services.llm.provider_client import LlmClient
 from app.services.strategy.generation_optimizer import (
@@ -860,3 +861,131 @@ def stop_monitoring(
     db.refresh(strategy)
     logger.info('strategy_monitoring_stopped id=%s', strategy.strategy_id)
     return StrategyOut.model_validate(strategy)
+
+
+# ─── Strategy Optimizer Endpoints ───────────────────────────────────────────────
+
+
+@router.post('/{strategy_id}/optimize', response_model=OptimizerCampaignOut, status_code=201)
+def start_optimization(
+    strategy_id: int,
+    payload: OptimizerLaunchRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> OptimizerCampaignOut:
+    """Launch an optimization campaign for a VALIDATED strategy."""
+    from app.services.strategy.optimizer_service import create_campaign
+    from app.tasks.optimizer_task import execute as optimizer_execute
+
+    strategy = db.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail='Strategy not found')
+    if strategy.status != 'VALIDATED':
+        raise HTTPException(status_code=422, detail=f'Strategy must be VALIDATED (current: {strategy.status})')
+
+    config: dict = {}
+    if payload.max_iterations is not None:
+        config['max_iterations'] = payload.max_iterations
+    if payload.time_budget_seconds is not None:
+        config['time_budget_seconds'] = payload.time_budget_seconds
+    if payload.max_candidates_per_iteration is not None:
+        config['max_candidates_per_iteration'] = payload.max_candidates_per_iteration
+
+    try:
+        campaign = create_campaign(db, strategy_id, config)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    # Launch celery task
+    settings = get_settings()
+    try:
+        result = optimizer_execute.apply_async(
+            args=[campaign.id],
+            queue=settings.celery_optimizer_queue,
+            ignore_result=True,
+        )
+        campaign.celery_task_id = result.id
+        db.commit()
+        db.refresh(campaign)
+    except Exception:
+        logger.warning('optimizer_task_enqueue_failed campaign_id=%s', campaign.id, exc_info=True)
+
+    return OptimizerCampaignOut.from_campaign(campaign)
+
+
+@router.get('/{strategy_id}/optimizer-campaign', response_model=OptimizerCampaignOut)
+def get_optimizer_campaign(
+    strategy_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> OptimizerCampaignOut:
+    """Get the latest optimizer campaign for a strategy."""
+    from app.services.strategy.optimizer_service import get_active_campaign
+
+    strategy = db.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail='Strategy not found')
+
+    campaign = get_active_campaign(db, strategy_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail='No optimizer campaign found for this strategy')
+
+    return OptimizerCampaignOut.from_campaign(campaign)
+
+
+@router.post('/optimizer-campaign/{campaign_id}/accept', response_model=OptimizerCampaignOut)
+def accept_optimizer_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> OptimizerCampaignOut:
+    """Accept a completed campaign — applies best params to the strategy."""
+    from app.services.strategy.optimizer_service import accept_campaign
+
+    try:
+        campaign = accept_campaign(db, campaign_id)
+    except ValueError as exc:
+        msg = str(exc)
+        if 'not found' in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=409, detail=msg)
+
+    return OptimizerCampaignOut.from_campaign(campaign)
+
+
+@router.post('/optimizer-campaign/{campaign_id}/reject', response_model=OptimizerCampaignOut)
+def reject_optimizer_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> OptimizerCampaignOut:
+    """Reject a completed campaign — leave strategy params unchanged."""
+    from app.services.strategy.optimizer_service import reject_campaign
+
+    try:
+        campaign = reject_campaign(db, campaign_id)
+    except ValueError as exc:
+        msg = str(exc)
+        if 'not found' in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=409, detail=msg)
+
+    return OptimizerCampaignOut.from_campaign(campaign)
+
+
+@router.delete('/optimizer-campaign/{campaign_id}', status_code=204)
+def cancel_optimizer_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER_OPERATOR)),
+) -> None:
+    """Cancel a running/pending campaign."""
+    from app.services.strategy.optimizer_service import cancel_campaign
+
+    try:
+        cancel_campaign(db, campaign_id)
+    except ValueError as exc:
+        msg = str(exc)
+        if 'not found' in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=409, detail=msg)
