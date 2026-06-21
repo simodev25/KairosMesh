@@ -1,0 +1,54 @@
+{
+  "run_id": 1,
+  "agent_name": "technical-analyst",
+  "attempt_number": 1,
+  "timestamp": "20260514T120204Z",
+  "msg_type": "Msg",
+  "msg_role": "assistant",
+  "msg_name": "technical-analyst",
+  "metadata": {
+    "symbol": "EURUSD.PRO",
+    "timeframe": "H1",
+    "structural_bias": "bullish",
+    "local_momentum": "bullish",
+    "setup_quality": "high",
+    "key_levels": [
+      "1.0800",
+      "1.0850"
+    ],
+    "patterns_found": [
+      "higher highs",
+      "bull flag"
+    ],
+    "contradictions": [
+      "RSI slightly overbought"
+    ],
+    "summary": "Trend remains bullish with pullback opportunities near support.",
+    "tradability": "high",
+    "degraded": false
+  },
+  "content_type": "str",
+  "content": "{\"symbol\": \"EURUSD.PRO\", \"timeframe\": \"H1\", \"structural_bias\": \"bullish\", \"local_momentum\": \"bullish\", \"setup_quality\": \"high\", \"key_levels\": [\"1.0800\", \"1.0850\"], \"patterns_found\": [\"higher highs\", \"bull flag\"], \"contradictions\": [\"RSI slightly overbought\"], \"summary\": \"Trend remains bullish with pullback opportunities near support.\", \"tradability\": \"high\", \"degraded\": false}",
+  "text_content": "{\"symbol\": \"EURUSD.PRO\", \"timeframe\": \"H1\", \"structural_bias\": \"bullish\", \"local_momentum\": \"bullish\", \"setup_quality\": \"high\", \"key_levels\": [\"1.0800\", \"1.0850\"], \"patterns_found\": [\"higher highs\", \"bull flag\"], \"contradictions\": [\"RSI slightly overbought\"], \"summary\": \"Trend remains bullish with pullback opportunities near support.\", \"tradability\": \"high\", \"degraded\": false}",
+  "extracted_payload": {
+    "symbol": "EURUSD.PRO",
+    "timeframe": "H1",
+    "structural_bias": "bullish",
+    "local_momentum": "bullish",
+    "setup_quality": "high",
+    "key_levels": [
+      "1.0800",
+      "1.0850"
+    ],
+    "patterns_found": [
+      "higher highs",
+      "bull flag"
+    ],
+    "contradictions": [
+      "RSI slightly overbought"
+    ],
+    "summary": "Trend remains bullish with pullback opportunities near support.",
+    "tradability": "high",
+    "degraded": false
+  }
+}

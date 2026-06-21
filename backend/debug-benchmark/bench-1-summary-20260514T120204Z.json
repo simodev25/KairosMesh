@@ -1,0 +1,44 @@
+{
+  "run_id": 1,
+  "fixture_id": 1,
+  "scenario_type": "single-agent",
+  "model_spec": {
+    "provider": "ollama",
+    "model_name": "deepseek-v3.2",
+    "parameters": {
+      "temperature": 0.0
+    }
+  },
+  "attempts": [
+    {
+      "agent_name": "technical-analyst",
+      "attempt_number": 1,
+      "scores": {
+        "schema_validity": 1.0,
+        "completeness": 1.0,
+        "tool_policy": 1.0,
+        "reference_consistency": 1.0,
+        "stability": null,
+        "overall": 0.8
+      },
+      "raw_output_keys": [
+        "contradictions",
+        "degraded",
+        "key_levels",
+        "local_momentum",
+        "patterns_found",
+        "setup_quality",
+        "structural_bias",
+        "summary",
+        "symbol",
+        "timeframe",
+        "tradability"
+      ],
+      "analysis_run_id": 1,
+      "llm_calls_count": 0
+    }
+  ],
+  "status": "COMPLETED",
+  "error": null,
+  "timestamp": "20260514T120204Z"
+}
