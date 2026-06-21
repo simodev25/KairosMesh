@@ -23,15 +23,15 @@ change:
 
 ### Phase 1 — Modèles DB évolution (effort total ~1h40)
 
-- [ ] **1.1** Créer modèle `EvolutionCampaign`.
+- [x] **1.1** Créer modèle `EvolutionCampaign`. (créé `backend/app/db/models/evolution_campaign.py`)
   - Fichiers: `backend/app/db/models/evolution_campaign.py`
   - Effort: 35 min
 
-- [ ] **1.2** Créer modèle `EvolutionCandidate`.
+- [x] **1.2** Créer modèle `EvolutionCandidate`. (créé `backend/app/db/models/evolution_candidate.py`)
   - Fichiers: `backend/app/db/models/evolution_candidate.py`
   - Effort: 30 min
 
-- [ ] **1.3** Créer modèles `EvolutionCandidateEvaluation` + `EvolutionPromotion`.
+- [x] **1.3** Créer modèles `EvolutionCandidateEvaluation` + `EvolutionPromotion`. (créés `evolution_candidate_evaluation.py` + `evolution_promotion.py`; `pytest -q`: 637 pass, 1 fail préexistant `test_trading_config`)
   - Fichiers: `backend/app/db/models/evolution_candidate_evaluation.py`, `backend/app/db/models/evolution_promotion.py`
   - Effort: 35 min
 
