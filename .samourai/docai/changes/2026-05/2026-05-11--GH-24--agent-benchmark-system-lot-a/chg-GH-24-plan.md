@@ -359,6 +359,111 @@ Criterion: version bump minor appliqué — PASSED (`0.2.0`).
 
 ## Test Scenarios
 
+### Phase 9: Observabilité benchmark — logs d’exécution détaillés
+
+**Goal**: Améliorer le diagnostic production des runs benchmark sans modifier la logique métier.
+
+**Tasks**:
+
+- [x] **9.1** Ajouter des logs structurés dans `engine.py` (début/fin de run, construction context, construction agents, appels scénarios, extraction raw_output, scoring par attempt, résultat final). (logs ajoutés avec préfixe `benchmark run_id=%s`)
+- [x] **9.2** Ajouter des logs structurés dans `scenarios.py` avant/après chaque appel agent, extraction payload et fallbacks d’extraction. (logs info/debug/warning/error ajoutés, sans changement fonctionnel)
+- [x] **9.3** Renforcer `benchmark_task.py` pour tracer le traceback complet en échec + statut final du run. (`logger.error(..., exc_info=True)` + logs statut final)
+- [x] **9.4** Valider avec la suite ciblée benchmark E2E. (`cd backend && python3 -m pytest tests/unit/test_benchmark_e2e.py -v` PASS)
+
+**Acceptance Criteria**:
+
+- Must: Tous les logs ajoutés respectent le préfixe `benchmark run_id=...`.
+- Must: Aucune modification de logique métier benchmark.
+- Must: Tests ciblés benchmark E2E passent.
+
+Criterion: préfixe de logs `benchmark run_id=...` appliqué sur les points clés demandés — PASSED (engine/scenarios/task mis à jour).
+Criterion: logique métier inchangée (ajouts de logging uniquement) — PASSED.
+Criterion: tests benchmark E2E PASS — PASSED (`5 passed in 1.00s`).
+
+**Files and modules**:
+
+- `backend/app/services/benchmark/engine.py` (updated)
+- `backend/app/services/benchmark/scenarios.py` (updated)
+- `backend/app/tasks/benchmark_task.py` (updated)
+
+**Tests**:
+
+- `cd backend && python3 -m pytest tests/unit/test_benchmark_e2e.py -v`
+
+**Completion signal**: `chore(GH-24): add detailed benchmark execution logging`
+
+---
+
+### Phase 10: Alignement prompts benchmark avec prompts DB agentscope
+
+**Goal**: Utiliser le vrai system prompt (DB + fallback registry) dans `BenchmarkEngine._build_agent` avec priorité override fixture.
+
+**Tasks**:
+
+- [x] **10.1** Ajouter une couverture de test ciblée pour vérifier que `_build_agent` utilise `PromptTemplateService.render(...)` (fallback `DEFAULT_PROMPTS`) et transmet les variables `pair/timeframe` issues de `fixture.inputs`. (`backend/tests/unit/test_benchmark_engine_prompt_resolution.py` ajouté ; tests RED→GREEN validant DB+fallback et override)
+- [x] **10.2** Modifier `backend/app/services/benchmark/engine.py` : priorité `fixture.config.system_prompt` non vide, sinon résolution DB via `PromptTemplateService`, avec fallback robuste identique au pattern registry. (`engine.py` mis à jour: override fixture > PromptTemplateService.render > fallback `DEFAULT_PROMPTS` + warning en cas d’échec render)
+- [x] **10.3** Exécuter la validation ciblée demandée : `cd backend && python3 -m pytest tests/unit/test_benchmark_e2e.py -v`. (PASS: `5 passed in 0.75s`; log runner `./.samourai/tmpai/run-logs-runner/2026-05-12/143132-pytest-benchmark-e2e.log`)
+
+**Acceptance Criteria**:
+
+- Must: Sans override fixture, le benchmark charge le system prompt via DB (PromptTemplateService) avec fallback `DEFAULT_PROMPTS`.
+- Must: Avec override `fixture.config.system_prompt` non vide, cette valeur prime sur la DB.
+- Must: Tests ciblés benchmark E2E passent après changement.
+
+Criterion: chargement prompt DB/fallback et priorité override fixture — PASSED (`tests/unit/test_benchmark_engine_prompt_resolution.py`: `2 passed in 1.01s`, log `./.samourai/tmpai/run-logs-runner/2026-05-12/143123-pytest-benchmark-engine-prompt-resolution.log`).
+Criterion: tests benchmark E2E PASS — PASSED (`tests/unit/test_benchmark_e2e.py`: `5 passed in 0.75s`, log `./.samourai/tmpai/run-logs-runner/2026-05-12/143132-pytest-benchmark-e2e.log`).
+
+**Files and modules**:
+
+- `backend/app/services/benchmark/engine.py` (updated)
+- `backend/tests/unit/test_benchmark_engine_prompt_resolution.py` (new)
+
+**Tests**:
+
+- `cd backend && python3 -m pytest tests/unit/test_benchmark_engine_prompt_resolution.py -v`
+- `cd backend && python3 -m pytest tests/unit/test_benchmark_e2e.py -v`
+
+**Completion signal**: `fix(GH-24): load benchmark system prompts from DB with fixture override priority`
+
+---
+
+### Phase 11: Dumps debug benchmark (traces attempts + résumé run)
+
+**Goal**: Ajouter une traçabilité JSON dédiée aux benchmarks (attempt-level + run summary) sans modifier la logique métier de scoring/extraction.
+
+**Tasks**:
+
+- [x] **11.1** Ajouter les settings backend `DEBUG_BENCHMARK_ENABLED` (default `true`) et `DEBUG_BENCHMARK_DIR` (default `./debug-benchmark`) dans `config.py`. (settings ajoutés dans `backend/app/core/config.py`)
+- [x] **11.2** Implémenter un dump non-bloquant des `Msg` benchmark après chaque appel agent dans `scenarios.py` (`single-agent`, `debate-bundle`, `full-pipeline`) avec troncature texte max 10000 chars et warning en cas d'échec d'écriture. (helper `_dump_benchmark_trace` + appels après `_extract_output_payload`)
+- [x] **11.3** Implémenter un dump résumé non-bloquant en fin de `execute_run` dans `engine.py` (`bench-{run_id}-summary-{ts}.json`) incluant run metadata, attempts/scoring/raw_output keys et statut final. (helper `_dump_benchmark_run_summary` + persistance en fin de run et sur branche `max_llm_calls`)
+- [x] **11.4** Ajouter le volume Docker `./backend/debug-benchmark:/app/debug-benchmark` côté `backend` et `worker`. (`docker-compose.yml` mis à jour)
+- [x] **11.5** Exécuter la validation ciblée benchmark E2E. (`cd backend && python3 -m pytest tests/unit/test_benchmark_e2e.py -v` PASS: `7 passed in 2.53s`)
+
+**Acceptance Criteria**:
+
+- Must: Les dumps benchmark sont contrôlés par `DEBUG_BENCHMARK_ENABLED` et écrits dans `DEBUG_BENCHMARK_DIR`.
+- Must: Le dump des traces est non-bloquant (erreurs d'écriture loggées en warning, exécution métier continue).
+- Must: Les champs texte dumpés sont tronqués à 10000 caractères maximum.
+- Must: Tests benchmark E2E ciblés passent après changement.
+
+Criterion: settings debug benchmark configurables — PASSED (`backend/app/core/config.py`).
+Criterion: dump traces attempts + dump résumé run non-bloquants — PASSED (`scenarios.py` et `engine.py` avec garde fail-open/warning).
+Criterion: troncature des champs texte max 10000 chars — PASSED (helpers `_truncate_text`/`_safe_json_payload`).
+Criterion: tests benchmark E2E PASS — PASSED (`cd backend && python3 -m pytest tests/unit/test_benchmark_e2e.py -v` → `7 passed in 2.53s`).
+
+**Files and modules**:
+
+- `backend/app/core/config.py` (updated)
+- `backend/app/services/benchmark/scenarios.py` (updated)
+- `backend/app/services/benchmark/engine.py` (updated)
+- `docker-compose.yml` (updated)
+
+**Tests**:
+
+- `cd backend && python3 -m pytest tests/unit/test_benchmark_e2e.py -v`
+
+**Completion signal**: `feat(GH-24): add benchmark debug trace dumps and run summary`
+
 | ID | Scénario | Phases | AC |
 |----|----------|--------|----|
 | TS-1 | Créer une fixture valide → hash calculé server-side, version=1 | 5, 7 | AC-F1-1 |
@@ -391,6 +496,9 @@ Criterion: version bump minor appliqué — PASSED (`0.2.0`).
 |---------|------|--------|---------|
 | 1.0 | 2026-05-11 | plan-writer | Plan initial (phases DB → scoring → engine → API → Celery → tests → release) |
 | 1.1 | 2026-05-11 | coder | Exécution phases 1..8 + preuves tests + critères PASSED/PARTIAL + logs d’exécution |
+| 1.2 | 2026-05-12 | coder | Ajout Phase 9 « Observabilité benchmark » (logging détaillé engine/scenarios/task) + validation tests E2E benchmark. |
+| 1.3 | 2026-05-12 | coder | Ajout Phase 10 « Alignement prompts benchmark avec prompts DB agentscope » (tests + implémentation + validation E2E ciblée). |
+| 1.4 | 2026-05-14 | coder | Ajout Phase 11 « Dumps debug benchmark » (settings + traces attempts + résumé run + volume docker + validation E2E). |
 
 ## Execution Log
 
@@ -404,3 +512,6 @@ Criterion: version bump minor appliqué — PASSED (`0.2.0`).
 | Phase 6 | DONE | 2026-05-11T16:05:00Z | 2026-05-11T16:12:00Z | `6b43e5f` | Tâche Celery benchmark + queue dédiée + max_llm_calls |
 | Phase 7 | DONE* | 2026-05-11T16:12:00Z | 2026-05-11T16:25:00Z | `6b43e5f` | 20 tests benchmark PASS; *suite backend complète non lancée (instruction utilisateur) |
 | Phase 8 | DONE | 2026-05-11T16:25:00Z | 2026-05-11T16:35:00Z | `PENDING` | Reconciliation spec/doc + version bump minor |
+| Phase 9 | DONE | 2026-05-12T00:00:00Z | 2026-05-12T00:00:00Z | `PENDING` | Logs détaillés benchmark ajoutés (`engine.py`, `scenarios.py`, `benchmark_task.py`) ; tests ciblés benchmark E2E PASS. |
+| Phase 10 | DONE | 2026-05-12T00:00:00Z | 2026-05-12T00:00:00Z | `PENDING` | Alignement `BenchmarkEngine` sur prompts DB (`PromptTemplateService`) avec priorité override fixture ; tests prompts + E2E benchmark PASS. |
+| Phase 11 | DONE | 2026-05-14T00:00:00Z | 2026-05-14T00:00:00Z | `PENDING` | Dumps debug benchmark ajoutés (`scenarios.py` + `engine.py`) avec settings dédiés + volume docker + tests benchmark E2E PASS. |

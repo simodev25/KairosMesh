@@ -211,6 +211,8 @@ class Settings(BaseSettings):
     debug_trade_json_include_price_history: bool = Field(default=True, alias='DEBUG_TRADE_JSON_INCLUDE_PRICE_HISTORY')
     debug_trade_json_price_history_limit: int = Field(default=200, ge=20, le=5000, alias='DEBUG_TRADE_JSON_PRICE_HISTORY_LIMIT')
     debug_trade_json_inline_in_run_trace: bool = Field(default=False, alias='DEBUG_TRADE_JSON_INLINE_IN_RUN_TRACE')
+    debug_benchmark_enabled: bool = Field(default=True, alias='DEBUG_BENCHMARK_ENABLED')
+    debug_benchmark_dir: str = Field(default='./debug-benchmark', alias='DEBUG_BENCHMARK_DIR')
 
     @field_validator('cors_origins', mode='before')
     @classmethod

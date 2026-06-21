@@ -1,3 +1,12 @@
+import type {
+  BenchmarkCreateFixturePayload,
+  BenchmarkCreateRunPayload,
+  BenchmarkFixture,
+  BenchmarkRun,
+  BenchmarkRunDetail,
+  BenchmarkRunResults,
+} from '../types/benchmark';
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api/v1';
 
 function authHeaders(token?: string): HeadersInit {
@@ -241,6 +250,34 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }, token),
+  // Benchmark (GH-26)
+  listBenchmarkFixtures: (token: string) =>
+    request<BenchmarkFixture[]>('/benchmark/fixtures', {}, token),
+  createBenchmarkFixture: (token: string, payload: BenchmarkCreateFixturePayload) =>
+    request<BenchmarkFixture>('/benchmark/fixtures', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+  getBenchmarkFixture: (token: string, fixtureId: number) =>
+    request<BenchmarkFixture>(`/benchmark/fixtures/${fixtureId}`, {}, token),
+  listBenchmarkRuns: (token: string, params: { fixture_id?: number; status?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.fixture_id != null) search.set('fixture_id', String(params.fixture_id));
+    if (params.status) search.set('status', params.status);
+    const suffix = search.toString();
+    return request<BenchmarkRun[]>(`/benchmark/runs${suffix ? `?${suffix}` : ''}`, {}, token);
+  },
+  createBenchmarkRun: (token: string, payload: BenchmarkCreateRunPayload) =>
+    request<BenchmarkRun>('/benchmark/runs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+  getBenchmarkRun: (token: string, runId: number) =>
+    request<BenchmarkRunDetail>(`/benchmark/runs/${runId}`, {}, token),
+  getBenchmarkRunResults: (token: string, runId: number) =>
+    // TODO(GH-26/OQ-1): le contrat backend de /benchmark/runs/{id}/results peut évoluer.
+    // On conserve un typage tolérant via BenchmarkRunResults.extra/raw.
+    request<BenchmarkRunResults>(`/benchmark/runs/${runId}/results`, {}, token),
   // Strategies
   listStrategies: (token: string) => request('/strategies', {}, token),
   getStrategy: (token: string, id: number) => request(`/strategies/${id}`, {}, token),

@@ -115,6 +115,32 @@ class BenchmarkRunDetailOut(BenchmarkRunOut):
     cases: list[BenchmarkCaseOut] = Field(default_factory=list)
 
 
+class BenchmarkScoresV1Out(BaseModel):
+    schema_validity: float
+    completeness: float
+    tool_policy: float
+    reference_consistency: float
+    stability: float
+    overall: float
+
+
+class BenchmarkAgentResultsOut(BaseModel):
+    agent_key: str
+    attempts_count: int
+    avg_scores: BenchmarkScoresV1Out
+
+
+class BenchmarkRunResultsOut(BaseModel):
+    run_id: int
+    fixture_id: int
+    model_spec: dict[str, Any]
+    scenario_type: str
+    status: str
+    overall_scores: BenchmarkScoresV1Out
+    agent_results: list[BenchmarkAgentResultsOut] = Field(default_factory=list)
+    total_attempts: int
+
+
 class BenchmarkRunListFilters(BaseModel):
     fixture_id: int | None = None
     agent_name: str | None = None

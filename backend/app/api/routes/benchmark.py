@@ -15,6 +15,7 @@ from app.schemas.benchmark import (
     BenchmarkRunCreateRequest,
     BenchmarkRunDetailOut,
     BenchmarkRunOut,
+    BenchmarkRunResultsOut,
 )
 from app.services.benchmark.fixtures_service import (
     create_fixture,
@@ -23,7 +24,7 @@ from app.services.benchmark.fixtures_service import (
     patch_fixture_activation,
     soft_delete_fixture,
 )
-from app.services.benchmark.runs_service import cancel_pending_run, create_run, get_run_or_404, list_runs
+from app.services.benchmark.runs_service import cancel_pending_run, create_run, get_run_or_404, get_run_results, list_runs
 from app.tasks.celery_app import celery_app
 
 
@@ -154,6 +155,15 @@ def get_benchmark_run(
     if run is None:
         raise HTTPException(status_code=404, detail='Benchmark run not found')
     return BenchmarkRunDetailOut.model_validate(run)
+
+
+@router.get('/runs/{run_id}/results', response_model=BenchmarkRunResultsOut)
+def get_benchmark_run_results(
+    run_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(Role.SUPER_ADMIN, Role.ADMIN, Role.ANALYST)),
+) -> BenchmarkRunResultsOut:
+    return get_run_results(db, run_id)
 
 
 @router.delete('/runs/{run_id}', response_model=BenchmarkRunOut)

@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ShieldCheck,
+  Gauge,
 } from 'lucide-react';
 
 
@@ -21,6 +22,7 @@ const navItems = [
   { to: '/strategies', label: 'STRATEGY_ENGINE', icon: Cpu, node: '04' },
   { to: '/backtests', label: 'BACKTEST_ENGINE', icon: FlaskConical, node: '05' },
   { to: '/connectors', label: 'SYSTEM_CONFIG', icon: Settings, node: '06' },
+  { to: '/benchmark', label: 'BENCHMARK', icon: Gauge, node: '07' },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
