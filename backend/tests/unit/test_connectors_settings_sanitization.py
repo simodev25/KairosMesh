@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -14,6 +12,7 @@ from app.api.routes.connectors import (
 )
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.models.agent_skill import AgentSkill
 from app.db.models.connector_config import ConnectorConfig
 from app.schemas.connector import ConnectorConfigUpdate
 
@@ -35,24 +34,16 @@ def test_sanitize_ollama_settings_preserves_enabled_flags() -> None:
     assert result['agent_llm_enabled']['news-analyst'] is True
 
 
-def test_sanitize_ollama_settings_normalizes_agent_skills() -> None:
+def test_sanitize_ollama_settings_keeps_agent_skills_map_shape() -> None:
     source = {
         'provider': 'ollama',
         'agent_skills': {
-            'news-analyst': 'Prioriser impact macro\nciter incertitude\nprioriser impact macro',
-            'trader-agent': ['Clear decision', 'Clear decision', 'Respect SL/TP'],
-            'risk-manager': "Valider le risque, sans casser la phrase.",
-            '': ['ignore'],
-            'market-context-analyst': 123,
+            'news-analyst': ['prioriser impact macro'],
         },
     }
 
     result = _sanitize_ollama_settings(source)
-    assert result['agent_skills']['news-analyst'] == ['Prioriser impact macro', 'citer incertitude']
-    assert result['agent_skills']['trader-agent'] == ['Clear decision', 'Respect SL/TP']
-    assert result['agent_skills']['risk-manager'] == ["Valider le risque, sans casser la phrase."]
-    assert '' not in result['agent_skills']
-    assert 'market-context-analyst' not in result['agent_skills']
+    assert result['agent_skills'] == {'news-analyst': ['prioriser impact macro']}
 
 
 def test_sanitize_ollama_settings_normalizes_decision_mode() -> None:
@@ -224,48 +215,42 @@ def test_list_connectors_injects_env_secret_defaults_when_missing() -> None:
         settings.alphavantage_api_key = previous_values['alphavantage_api_key']
 
 
-def test_list_connectors_bootstraps_ollama_agent_skills_on_first_load(tmp_path) -> None:
+def test_list_connectors_reads_ollama_agent_skills_from_agent_skills_table() -> None:
     engine = create_engine('sqlite:///:memory:')
     Base.metadata.create_all(bind=engine)
 
-    bootstrap_file = tmp_path / 'skills.json'
-    bootstrap_file.write_text(
-        json.dumps(
-            {
-                'agent_skills': {
-                    'news-analyst': ['Interpret retained catalysts first'],
-                    'trader-agent': ['Prefer HOLD if the edge is unclear'],
-                }
-            }
-        ),
-        encoding='utf-8',
-    )
+    with Session(engine) as db:
+        db.add(
+            AgentSkill(
+                agent_name='news-analyst',
+                version=1,
+                is_active=True,
+                skills=['Interpret retained catalysts first'],
+                notes='seed',
+                created_by_id=None,
+            )
+        )
+        db.add(
+            AgentSkill(
+                agent_name='trader-agent',
+                version=1,
+                is_active=True,
+                skills=['Prefer HOLD if the edge is unclear'],
+                notes='seed',
+                created_by_id=None,
+            )
+        )
+        db.commit()
 
-    settings = get_settings()
-    previous_values = {
-        'agent_skills_bootstrap_file': settings.agent_skills_bootstrap_file,
-        'agent_skills_bootstrap_mode': settings.agent_skills_bootstrap_mode,
-        'agent_skills_bootstrap_apply_once': settings.agent_skills_bootstrap_apply_once,
-    }
-    try:
-        settings.agent_skills_bootstrap_file = str(bootstrap_file)
-        settings.agent_skills_bootstrap_mode = 'merge'
-        settings.agent_skills_bootstrap_apply_once = True
+        rows = list_connectors(db, _=None)
+        by_name = {row.connector_name: row.settings for row in rows}
+        ollama_settings = by_name['ollama']
+        assert ollama_settings['agent_skills']['news-analyst'] == ['Interpret retained catalysts first']
+        assert ollama_settings['agent_skills']['trader-agent'] == ['Prefer HOLD if the edge is unclear']
 
-        with Session(engine) as db:
-            rows = list_connectors(db, _=None)
-            by_name = {row.connector_name: row.settings for row in rows}
-            ollama_settings = by_name['ollama']
-            assert ollama_settings['agent_skills']['news-analyst'] == ['Interpret retained catalysts first']
-            assert ollama_settings['agent_skills']['trader-agent'] == ['Prefer HOLD if the edge is unclear']
-
-            persisted = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'ollama').first()
-            assert persisted is not None
-            assert persisted.settings['agent_skills']['news-analyst'] == ['Interpret retained catalysts first']
-    finally:
-        settings.agent_skills_bootstrap_file = previous_values['agent_skills_bootstrap_file']
-        settings.agent_skills_bootstrap_mode = previous_values['agent_skills_bootstrap_mode']
-        settings.agent_skills_bootstrap_apply_once = previous_values['agent_skills_bootstrap_apply_once']
+        persisted = db.query(ConnectorConfig).filter(ConnectorConfig.connector_name == 'ollama').first()
+        assert persisted is not None
+        assert persisted.settings['agent_skills']['news-analyst'] == ['Interpret retained catalysts first']
 
 
 # --- External MCP tests ---
