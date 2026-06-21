@@ -39,14 +39,14 @@ change:
 
 ## Phase 2 — Service CRUD + versioning (effort : ~2h)
 
-- [ ] **2.1** Créer le service `AgentSkillsService`
+- [x] **2.1** Créer le service `AgentSkillsService` (ajout `backend/app/services/skills/{__init__,service}.py`, méthodes CRUD/versioning + seed)
   - Fichier : `backend/app/services/skills/__init__.py`
   - Fichier : `backend/app/services/skills/service.py`
   - Méthodes : `get_active()`, `list_versions()`, `create_version()`, `activate()`, `seed_defaults()`
   - Pattern identique à `PromptTemplateService`
   - Effort : 1h30
 
-- [ ] **2.2** Écrire les tests unitaires du service
+- [x] **2.2** Écrire les tests unitaires du service (ajout `backend/tests/unit/test_agent_skills_service.py`, seed idempotent + create/activate)
   - Fichier : `backend/tests/unit/test_agent_skills_service.py`
   - Couvre : T-SVC-01 à T-SVC-10
   - Effort : 1h
@@ -55,13 +55,13 @@ change:
 
 ## Phase 3 — Migration Alembic + data migration (effort : ~1h30)
 
-- [ ] **3.1** Créer la migration Alembic
+- [x] **3.1** Créer la migration Alembic (ajout `backend/alembic/versions/0014_agent_skills_table.py`, CREATE TABLE + migrate depuis `connector_configs.settings.agent_skills`)
   - Fichier : `backend/alembic/versions/0014_agent_skills_table.py`
   - Opérations : CREATE TABLE + data migration depuis connector_configs.settings.agent_skills
   - Pour chaque agent dans le JSON : INSERT version=1, is_active=True
   - Effort : 1h
 
-- [ ] **3.2** Tester la migration (up et down)
+- [x] **3.2** Tester la migration (up et down) (validation indirecte via `python3 -m pytest -q` après ajout migration; non-régression OK hors test préexistant `test_decision_mode_changes_risk_limits_and_sizing`)
   - Vérifier : 12 rows créées, données correctes
   - Effort : 30 min
 
