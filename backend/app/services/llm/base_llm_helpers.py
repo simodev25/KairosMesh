@@ -13,6 +13,7 @@ from typing import Any
 
 from app.db.models.llm_call_log import LlmCallLog
 from app.db.session import SessionLocal
+from app.services.llm.call_context import get_current_analysis_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ def persist_llm_call_log(
                 total_tokens=prompt_tokens + completion_tokens,
                 cost_usd=cost_usd,
                 latency_ms=latency_ms,
+                analysis_run_id=get_current_analysis_run_id(),
                 error=error,
             )
         )

@@ -5,6 +5,10 @@ from app.db.models.agent_runtime_session import AgentRuntimeSession
 from app.db.models.audit_log import AuditLog
 from app.db.models.backtest_run import BacktestRun
 from app.db.models.backtest_trade import BacktestTrade
+from app.db.models.benchmark_attempt import BenchmarkAttempt
+from app.db.models.benchmark_case import BenchmarkCase
+from app.db.models.benchmark_fixture import BenchmarkFixture
+from app.db.models.benchmark_run import BenchmarkRun
 from app.db.models.connector_config import ConnectorConfig
 from app.db.models.execution_order import ExecutionOrder
 from app.db.models.governance_run import GovernanceRun
@@ -30,6 +34,10 @@ __all__ = [
     'PromptTemplate',
     'BacktestRun',
     'BacktestTrade',
+    'BenchmarkFixture',
+    'BenchmarkRun',
+    'BenchmarkCase',
+    'BenchmarkAttempt',
     'MetaApiAccount',
     'PortfolioSnapshot',
     'LlmCallLog',

@@ -98,6 +98,27 @@ npx playwright test
 
 ## Conventions
 
+## Benchmark subsystem (GH-24 Lot A)
+
+Le backend expose un sous-système de benchmark sous `/api/v1/benchmark` :
+
+- `POST /api/v1/benchmark/fixtures` (ADMIN)
+- `GET /api/v1/benchmark/fixtures` (ANALYST+)
+- `GET /api/v1/benchmark/fixtures/{id}` (ANALYST+)
+- `PATCH /api/v1/benchmark/fixtures/{id}` (ADMIN)
+- `DELETE /api/v1/benchmark/fixtures/{id}` (ADMIN, soft delete)
+- `POST /api/v1/benchmark/runs` (ADMIN)
+- `GET /api/v1/benchmark/runs` (ANALYST+)
+- `GET /api/v1/benchmark/runs/{id}` (ANALYST+)
+- `DELETE /api/v1/benchmark/runs/{id}` (ADMIN, annulation run PENDING)
+
+Notes opérationnelles:
+
+- Exécution asynchrone via Celery queue dédiée `benchmark` (`CELERY_BENCHMARK_QUEUE`).
+- Le moteur benchmark réutilise le cœur partagé AgentScope (`ALL_AGENT_FACTORIES`, `build_toolkit`, `build_model`, `build_formatter`) sans copie.
+- Le scénario `full-pipeline` benchmark s’arrête à `risk-manager` (pas d’appel `execution-manager`) pour éviter tout effet d’exécution.
+- La corrélation de coûts LLM utilise `analysis_run_id` propagé jusqu’à `llm_call_logs`.
+
 ### Stratégie de Branches
 
 | Préfixe | Usage | Exemple |

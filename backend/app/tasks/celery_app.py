@@ -18,7 +18,7 @@ celery_app = Celery(
     'trading_platform',
     broker=settings.celery_broker_url,
     backend=backend_url,
-    include=['app.tasks.run_analysis_task', 'app.tasks.backtest_task', 'app.tasks.strategy_backtest_task', 'app.tasks.strategy_monitor_task', 'app.tasks.portfolio_tasks', 'app.tasks.governance_task'],
+    include=['app.tasks.run_analysis_task', 'app.tasks.backtest_task', 'app.tasks.strategy_backtest_task', 'app.tasks.strategy_monitor_task', 'app.tasks.portfolio_tasks', 'app.tasks.governance_task', 'app.tasks.benchmark_task'],
 )
 celery_app.conf.task_routes = {
     'app.tasks.run_analysis_task.*': {'queue': settings.celery_analysis_queue},
@@ -27,6 +27,7 @@ celery_app.conf.task_routes = {
     'app.tasks.strategy_monitor_task.*': {'queue': settings.celery_analysis_queue},
     'app.tasks.portfolio_tasks.*': {'queue': settings.celery_analysis_queue},
     'app.tasks.governance_task.*': {'queue': settings.celery_analysis_queue},
+    'app.tasks.benchmark_task.*': {'queue': settings.celery_benchmark_queue},
 }
 celery_app.conf.task_default_queue = settings.celery_analysis_queue
 celery_app.conf.result_backend = backend_url
@@ -47,6 +48,7 @@ import app.tasks.strategy_backtest_task  # noqa: E402,F401
 import app.tasks.strategy_monitor_task  # noqa: E402,F401
 import app.tasks.portfolio_tasks  # noqa: E402,F401
 import app.tasks.governance_task  # noqa: E402,F401
+import app.tasks.benchmark_task  # noqa: E402,F401
 
 # Beat schedule: periodic strategy monitoring (every 30 seconds)
 celery_app.conf.beat_schedule = {
