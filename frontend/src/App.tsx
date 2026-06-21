@@ -13,6 +13,7 @@ const OrdersPage = lazy(() => import('./pages/OrdersPage').then((module) => ({ d
 const ConnectorsPage = lazy(() => import('./pages/ConnectorsPage').then((module) => ({ default: module.ConnectorsPage })));
 const StrategiesPage = lazy(() => import('./pages/StrategiesPage').then((module) => ({ default: module.StrategiesPage })));
 const PortfolioPage = lazy(() => import('./pages/PortfolioPage'));
+const EvolutionLabPage = lazy(() => import('./pages/EvolutionLabPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 
 
@@ -104,6 +105,10 @@ function AppRoutes() {
       <Route
         path="/strategies"
         element={withLayout(<StrategiesPage />)}
+      />
+      <Route
+        path="/evolution-lab"
+        element={withLayout(<EvolutionLabPage />)}
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
