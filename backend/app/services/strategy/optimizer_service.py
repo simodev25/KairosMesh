@@ -17,7 +17,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import yaml
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -438,53 +437,47 @@ def _run_openevolve_loop(
                 artifacts={'stderr': f'Backtest error: {str(e)[:200]}'},
             )
 
-    # 3. Write OpenEvolve config
+    # 3. Build OpenEvolve Config object (programmatic — not YAML)
+    from openevolve.config import Config as OEConfig, LLMModelConfig
+
     bounds_description = '\n'.join(
         f'  - {k}: min={lo}, max={hi}' for k, (lo, hi) in bounds.items()
     )
 
-    openevolve_config = {
-        'max_iterations': max_iterations,
-        'llm': {
-            'model': model_name,
-            'temperature': 0.7,
-            'api_key': api_key,
-            'base_url': base_url,
-        },
-        'database': {
-            'population_size': min(max_iterations * 2, 100),
-            'num_islands': 2,
-        },
-        'evaluator': {
-            'enable_artifacts': True,
-        },
-        'prompt': {
-            'num_top_programs': 2,
-            'num_diverse_programs': 1,
-            'include_artifacts': True,
-            'system_message': (
-                f"You are a quantitative trading strategy optimizer.\n"
-                f"You optimize parameters for a '{strategy.template}' strategy "
-                f"on {strategy.symbol} {strategy.timeframe}.\n\n"
-                f"RULES:\n"
-                f"- Return ONLY valid JSON (no markdown, no explanation).\n"
-                f"- Keep the exact same structure: "
-                f"{{\"template\": ..., \"symbol\": ..., \"timeframe\": ..., \"params\": {{...}}}}\n"
-                f"- Only modify values inside 'params'.\n"
-                f"- Respect parameter bounds:\n{bounds_description}\n\n"
-                f"GOAL: Maximize the composite score "
-                f"(win_rate × profit_factor × low_drawdown × positive_return × sufficient_trades).\n"
-                f"Use the feedback from previous evaluations to guide your changes.\n"
-            ),
-        },
-    }
+    system_message = (
+        f"You are a quantitative trading strategy optimizer.\n"
+        f"You optimize parameters for a '{strategy.template}' strategy "
+        f"on {strategy.symbol} {strategy.timeframe}.\n\n"
+        f"RULES:\n"
+        f"- Return ONLY valid JSON (no markdown, no explanation).\n"
+        f"- Keep the exact same structure: "
+        f"{{\"template\": ..., \"symbol\": ..., \"timeframe\": ..., \"params\": {{...}}}}\n"
+        f"- Only modify values inside 'params'.\n"
+        f"- Respect parameter bounds:\n{bounds_description}\n\n"
+        f"GOAL: Maximize the composite score "
+        f"(win_rate × profit_factor × low_drawdown × positive_return × sufficient_trades).\n"
+        f"Use the feedback from previous evaluations to guide your changes.\n"
+    )
+
+    # Ensure base_url ends with /v1 for OpenAI-compatible providers
+    llm_base_url = base_url.rstrip('/')
+    if not llm_base_url.endswith('/v1'):
+        llm_base_url += '/v1'
+
+    oe_config = OEConfig()
+    oe_config.max_iterations = max_iterations
+    oe_config.llm.models = [
+        LLMModelConfig(
+            name=model_name,
+            api_key=api_key or 'ollama',
+            api_base=llm_base_url,
+            temperature=0.7,
+            system_message=system_message,
+        ),
+    ]
 
     # 4. Run OpenEvolve
-    config_dir = tempfile.mkdtemp(prefix='openevolve_strategy_')
-    config_path = os.path.join(config_dir, 'config.yaml')
-
-    with open(config_path, 'w') as f:
-        yaml.dump(openevolve_config, f)
+    output_dir = tempfile.mkdtemp(prefix='openevolve_strategy_')
 
     try:
         # Evaluate initial params first
@@ -503,7 +496,8 @@ def _run_openevolve_loop(
             initial_program=initial_program,
             evaluator=openevolve_evaluator,
             iterations=max_iterations,
-            config=config_path,
+            config=oe_config,
+            output_dir=output_dir,
         )
 
         # Parse the best result
@@ -540,7 +534,7 @@ def _run_openevolve_loop(
         campaign.completed_at = datetime.now(timezone.utc)
         db.commit()
         # Cleanup temp dir
-        shutil.rmtree(config_dir, ignore_errors=True)
+        shutil.rmtree(output_dir, ignore_errors=True)
 
 
 def _run_naive_loop(
