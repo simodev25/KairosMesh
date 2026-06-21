@@ -503,7 +503,7 @@ def _run_openevolve_loop(
             initial_program=initial_program,
             evaluator=openevolve_evaluator,
             iterations=max_iterations,
-            config_path=config_path,
+            config=config_path,
         )
 
         # Parse the best result
