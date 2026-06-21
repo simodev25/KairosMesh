@@ -24,6 +24,7 @@ from app.core.config import get_settings
 from app.db.models.strategy import Strategy
 from app.db.models.strategy_optimizer_campaign import StrategyOptimizerCampaign
 from app.db.models.strategy_optimizer_evaluation import StrategyOptimizerEvaluation
+from app.services.llm.model_selector import AgentModelSelector
 from app.services.strategy.generation_optimizer import compute_generation_candidate_score
 from app.services.strategy.lookback_windows import strategy_lookback_days
 from app.services.strategy.optimizer_adapter import build_evaluator, validate_params_in_bounds
@@ -269,6 +270,35 @@ def run_optimization_loop(db: Session, campaign_id: int) -> None:
         _run_naive_loop(db, campaign, strategy, config, max_iterations)
 
 
+def _resolve_llm_config(db: Session) -> tuple[str, str, str, str]:
+    """Resolve LLM provider, model, base_url, api_key from project settings.
+
+    Returns (provider, model_name, base_url, api_key).
+    Falls back to settings defaults if model_selector is unavailable.
+    """
+    settings = get_settings()
+    try:
+        selector = AgentModelSelector()
+        provider = selector.resolve_provider(db)
+        model_name = selector.resolve(db)
+    except Exception:
+        # Fallback: use settings defaults
+        provider = 'openai'
+        model_name = 'gpt-4.1-mini'
+
+    if provider == 'openai':
+        base_url = settings.openai_base_url
+        api_key = settings.openai_api_key
+    elif provider == 'mistral':
+        base_url = settings.mistral_base_url
+        api_key = settings.mistral_api_key
+    else:  # ollama
+        base_url = settings.ollama_base_url
+        api_key = settings.ollama_api_key
+
+    return provider, model_name, base_url or '', api_key or ''
+
+
 def _run_openevolve_loop(
     db: Session,
     campaign: StrategyOptimizerCampaign,
@@ -278,6 +308,29 @@ def _run_openevolve_loop(
 ) -> None:
     """Run optimization using OpenEvolve with LLM-driven mutation."""
     campaign_id = campaign.id
+
+    # 0. Resolve LLM config from project settings
+    provider, model_name, base_url, api_key = _resolve_llm_config(db)
+    logger.info(
+        'openevolve_loop_start campaign_id=%s provider=%s model=%s',
+        campaign_id, provider, model_name,
+    )
+
+    # Set env vars for OpenEvolve's internal LLM client
+    if provider == 'openai':
+        if api_key:
+            os.environ.setdefault('OPENAI_API_KEY', api_key)
+        if base_url and base_url != 'https://api.openai.com/v1':
+            os.environ.setdefault('OPENAI_BASE_URL', base_url)
+    elif provider == 'mistral':
+        # Mistral is OpenAI-compatible
+        if api_key:
+            os.environ.setdefault('OPENAI_API_KEY', api_key)
+        if base_url:
+            os.environ.setdefault('OPENAI_BASE_URL', base_url)
+    else:  # ollama
+        os.environ.setdefault('OPENAI_API_KEY', api_key or 'ollama')
+        os.environ.setdefault('OPENAI_BASE_URL', f"{base_url.rstrip('/')}/v1")
 
     # 1. Initial program = JSON of params
     initial_program = json.dumps({
@@ -393,8 +446,10 @@ def _run_openevolve_loop(
     openevolve_config = {
         'max_iterations': max_iterations,
         'llm': {
-            'model': config.get('model', 'gpt-4.1-mini'),
+            'model': model_name,
             'temperature': 0.7,
+            'api_key': api_key,
+            'base_url': base_url,
         },
         'database': {
             'population_size': min(max_iterations * 2, 100),
