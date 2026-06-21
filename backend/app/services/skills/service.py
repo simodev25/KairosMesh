@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.agent_skill import AgentSkill
 from app.schemas.agent_skill import MAX_AGENT_SKILL_LENGTH, MAX_AGENT_SKILLS_PER_AGENT
+from app.services.llm.model_selector import AgentModelSelector
 
 
 class AgentSkillsService:
@@ -84,6 +85,7 @@ class AgentSkillsService:
             row.is_active = True
 
         db.commit()
+        AgentModelSelector.clear_cache()
         db.refresh(row)
         return row
 
@@ -98,6 +100,7 @@ class AgentSkillsService:
         ).update({'is_active': False})
         row.is_active = True
         db.commit()
+        AgentModelSelector.clear_cache()
         db.refresh(row)
         return row
 
@@ -148,4 +151,5 @@ class AgentSkillsService:
             created += 1
 
         db.commit()
+        AgentModelSelector.clear_cache()
         return {'created': created, 'skipped': skipped}

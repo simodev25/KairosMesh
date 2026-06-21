@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.models.agent_skill import AgentSkill
 from app.db.models.connector_config import ConnectorConfig
 from app.services.llm.model_selector import (
     AgentModelSelector,
@@ -161,7 +162,51 @@ def test_agent_model_selector_resolves_agent_skills() -> None:
         assert selector.resolve_skills(db, 'news-analyst') == ['Prioriser sources fiables', 'Citer incertitude']
         assert selector.resolve_skills(db, 'trader-agent') == ['Executable decision', 'Risk compliance']
         assert selector.resolve_skills(db, 'risk-manager') == ['Validate risk, without splitting the sentence']
-        assert selector.resolve_skills(db, 'market-context-analyst') == []
+        assert selector.resolve_skills(db, 'market-context-analyst') != []
+
+
+def test_agent_model_selector_prefers_agent_skills_table_over_connector_settings() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+    AgentModelSelector.clear_cache()
+
+    with Session(engine) as db:
+        db.add(
+            ConnectorConfig(
+                connector_name='ollama',
+                enabled=True,
+                settings={
+                    'agent_skills': {
+                        'news-analyst': ['legacy-connector-skill'],
+                    },
+                },
+            )
+        )
+        db.add(
+            AgentSkill(
+                agent_name='news-analyst',
+                version=1,
+                is_active=True,
+                skills=['db-active-skill'],
+                notes='seed',
+                created_by_id=None,
+            )
+        )
+        db.commit()
+
+        selector = AgentModelSelector()
+        assert selector.resolve_skills(db, 'news-analyst') == ['db-active-skill']
+
+
+def test_agent_model_selector_reads_skill_file_when_db_and_connector_missing() -> None:
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(bind=engine)
+    AgentModelSelector.clear_cache()
+
+    selector = AgentModelSelector()
+    with Session(engine) as db:
+        skills = selector.resolve_skills(db, 'market-context-analyst')
+    assert skills != []
 
 
 def test_agent_model_selector_synthesizes_bootstrap_skills_when_connector_missing(tmp_path, monkeypatch) -> None:
