@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     celery_analysis_queue: str = Field(default='analysis', alias='CELERY_ANALYSIS_QUEUE')
     celery_backtest_queue: str = Field(default='backtests', alias='CELERY_BACKTEST_QUEUE')
     celery_benchmark_queue: str = Field(default='benchmark', alias='CELERY_BENCHMARK_QUEUE')
+    celery_evolution_queue: str = Field(default='evolution', alias='CELERY_EVOLUTION_QUEUE')
     celery_task_acks_late: bool = Field(default=True, alias='CELERY_TASK_ACKS_LATE')
     celery_task_reject_on_worker_lost: bool = Field(default=True, alias='CELERY_TASK_REJECT_ON_WORKER_LOST')
     celery_task_track_started: bool = Field(default=True, alias='CELERY_TASK_TRACK_STARTED')
@@ -49,6 +50,8 @@ class Settings(BaseSettings):
     celery_backtest_time_limit_seconds: int = Field(default=1500, alias='CELERY_BACKTEST_TIME_LIMIT_SECONDS')
     celery_benchmark_soft_time_limit_seconds: int = Field(default=1200, alias='CELERY_BENCHMARK_SOFT_TIME_LIMIT_SECONDS')
     celery_benchmark_time_limit_seconds: int = Field(default=1500, alias='CELERY_BENCHMARK_TIME_LIMIT_SECONDS')
+    celery_evolution_soft_time_limit_seconds: int = Field(default=1800, alias='CELERY_EVOLUTION_SOFT_TIME_LIMIT_SECONDS')
+    celery_evolution_time_limit_seconds: int = Field(default=2400, alias='CELERY_EVOLUTION_TIME_LIMIT_SECONDS')
 
     ollama_base_url: str = Field(default='https://ollama.com', alias='OLLAMA_BASE_URL')
     ollama_api_key: str = Field(default='', alias='OLLAMA_API_KEY')
