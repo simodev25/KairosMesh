@@ -250,6 +250,47 @@ export const api = {
   llmModelsUsage: (token: string, days = 30, limit = 20) =>
     request(`/analytics/llm-models?days=${days}&limit=${limit}`, {}, token),
   backtestsSummary: (token: string) => request('/analytics/backtests-summary', {}, token),
+  createEvolutionCampaign: (
+    token: string,
+    payload: {
+      name: string;
+      agent_name: string;
+      provider: string;
+      model_name: string;
+      model_parameters: Record<string, unknown>;
+      baseline_prompt_template_id: number;
+      baseline_skill_id?: number;
+      max_iterations: number;
+      max_candidates: number;
+      max_llm_calls: number;
+      budget_usd_limit: number;
+      evaluation_config: Record<string, unknown>;
+    },
+  ) => request('/evolution/campaigns', { method: 'POST', body: JSON.stringify(payload) }, token),
+  listEvolutionCampaigns: (
+    token: string,
+    params: { status?: string; agent_name?: string; offset?: number; limit?: number } = {},
+  ) => {
+    const search = new URLSearchParams();
+    if (params.status) search.set('status', params.status);
+    if (params.agent_name) search.set('agent_name', params.agent_name);
+    if (params.offset != null) search.set('offset', String(params.offset));
+    if (params.limit != null) search.set('limit', String(params.limit));
+    const suffix = search.toString();
+    return request(`/evolution/campaigns${suffix ? `?${suffix}` : ''}`, {}, token);
+  },
+  getEvolutionCampaign: (token: string, campaignId: number) => request(`/evolution/campaigns/${campaignId}`, {}, token),
+  cancelEvolutionCampaign: (token: string, campaignId: number) =>
+    request(`/evolution/campaigns/${campaignId}/cancel`, { method: 'POST' }, token),
+  listEvolutionCandidates: (token: string, campaignId: number, sort: 'generation' | 'fitness' = 'generation') =>
+    request(`/evolution/campaigns/${campaignId}/candidates?sort=${sort}`, {}, token),
+  getEvolutionFitnessSeries: (token: string, campaignId: number) =>
+    request(`/evolution/campaigns/${campaignId}/fitness-series`, {}, token),
+  promoteEvolutionCandidate: (
+    token: string,
+    candidateId: number,
+    payload: { promote_prompt: boolean; promote_skills: boolean },
+  ) => request(`/evolution/candidates/${candidateId}/promote`, { method: 'POST', body: JSON.stringify(payload) }, token),
   listBacktests: (token: string) => request('/backtests', {}, token),
   getBacktest: (token: string, id: number) => request(`/backtests/${id}`, {}, token),
   createBacktest: (
