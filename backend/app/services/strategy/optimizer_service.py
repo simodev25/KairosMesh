@@ -302,6 +302,7 @@ def _build_evaluator_script(
     symbol: str,
     timeframe: str,
     db_url: str,
+    cancel_file: str,
 ) -> str:
     """Build a standalone Python evaluator script for OpenEvolve subprocess.
 
@@ -319,10 +320,16 @@ import os
 sys.path.insert(0, '/app')
 os.environ.setdefault('DATABASE_URL', {db_url!r})
 
+_CANCEL_FILE = {cancel_file!r}
+
 
 def evaluate(file_path: str):
     """Evaluate a candidate JSON program via back-test."""
     from openevolve.evaluation_result import EvaluationResult
+
+    # Check cancellation sentinel file
+    if os.path.exists(_CANCEL_FILE):
+        raise RuntimeError('Campaign cancelled by user')
 
     try:
         with open(file_path, 'r') as f:
@@ -445,11 +452,13 @@ def _run_openevolve_loop(
 
     # 3. Write standalone evaluator script to disk
     settings = get_settings()
+    cancel_file = os.path.join(output_dir, '.cancel')
     evaluator_code = _build_evaluator_script(
         template=strategy.template,
         symbol=strategy.symbol,
         timeframe=strategy.timeframe,
         db_url=settings.database_url,
+        cancel_file=cancel_file,
     )
     evaluator_file_path = os.path.join(output_dir, 'evaluator.py')
     with open(evaluator_file_path, 'w') as f:
@@ -500,7 +509,28 @@ def _run_openevolve_loop(
         ),
     ]
 
-    # 5. Run OpenEvolve (async → sync bridge)
+    # 5. Start cancel-watcher thread (polls DB every 3s, writes sentinel file)
+    import threading
+
+    def _cancel_watcher() -> None:
+        from app.db.session import SessionLocal
+        while not os.path.exists(cancel_file):
+            try:
+                with SessionLocal() as check_db:
+                    row = check_db.get(StrategyOptimizerCampaign, campaign_id)
+                    if row and row.status == 'CANCELLED':
+                        with open(cancel_file, 'w') as cf:
+                            cf.write('cancelled')
+                        logger.info('cancel_watcher: sentinel written for campaign %s', campaign_id)
+                        return
+            except Exception:
+                pass
+            time.sleep(3)
+
+    cancel_thread = threading.Thread(target=_cancel_watcher, daemon=True)
+    cancel_thread.start()
+
+    # 6. Run OpenEvolve (async → sync bridge)
     try:
         from openevolve.controller import OpenEvolve as OEController
 
