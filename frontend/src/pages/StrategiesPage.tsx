@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
+import { OptimizerPanel } from '../components/OptimizerPanel';
 import {
   Cpu, Plus, Loader2, Zap, LineChart,  XCircle,
   Play, ArrowRight, Send, Bot,
@@ -59,6 +60,8 @@ function StrategyCard({
   onDelete,
   onDetail,
   validatingId,
+  token,
+  onStrategyUpdated,
 }: {
   strategy: Strategy;
   onValidate: (id: number) => void;
@@ -67,6 +70,8 @@ function StrategyCard({
   onDelete: (id: number) => void;
   onDetail: (strategy: Strategy) => void;
   validatingId: number | null;
+  token: string;
+  onStrategyUpdated: () => void;
 }) {
   const m = strategy.metrics;
   const winRate = m.win_rate != null ? `${m.win_rate}%` : '--';
@@ -186,6 +191,18 @@ function StrategyCard({
           </button>
         )}
       </div>
+
+      {/* Optimizer Panel for VALIDATED strategies */}
+      {strategy.status === 'VALIDATED' && token && (
+        <div className="px-4 pb-3">
+          <OptimizerPanel
+            strategyId={strategy.id}
+            strategyStatus={strategy.status}
+            token={token}
+            onStrategyUpdated={onStrategyUpdated}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -411,6 +428,8 @@ export function StrategiesPage() {
                 onDelete={deleteStrategy}
                 onDetail={setDetailStrategy}
                 validatingId={validatingId}
+                token={token || ''}
+                onStrategyUpdated={loadStrategies}
               />
               {/* LLM Edit zone */}
               {['DRAFT', 'VALIDATED', 'REJECTED'].includes(s.status) && (

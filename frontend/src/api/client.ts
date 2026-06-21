@@ -290,6 +290,17 @@ export const api = {
     }, token),
   stopMonitoring: (token: string, id: number) =>
     request(`/strategies/${id}/stop-monitoring`, { method: 'POST' }, token),
+  // Optimizer
+  launchOptimizer: (token: string, strategyId: number, config: { max_iterations?: number; time_budget_seconds?: number; max_candidates_per_iteration?: number }) =>
+    request(`/strategies/${strategyId}/optimize`, { method: 'POST', body: JSON.stringify(config) }, token),
+  getOptimizerCampaign: (token: string, strategyId: number) =>
+    request(`/strategies/${strategyId}/optimizer-campaign`, {}, token),
+  acceptCampaign: (token: string, campaignId: number) =>
+    request(`/strategies/optimizer-campaign/${campaignId}/accept`, { method: 'POST' }, token),
+  rejectCampaign: (token: string, campaignId: number) =>
+    request(`/strategies/optimizer-campaign/${campaignId}/reject`, { method: 'POST' }, token),
+  cancelCampaign: (token: string, campaignId: number) =>
+    request<null>(`/strategies/optimizer-campaign/${campaignId}`, { method: 'DELETE' }, token),
   // Governance
   listGovernanceRecommendations: (token: string, params: { limit?: number; symbol?: string; status?: string; approval_status?: string } = {}) => {
     const search = new URLSearchParams();
