@@ -1,0 +1,49 @@
+change_id: GH-28
+title: "Evolution Lab — Intégration OpenEvolve pour évolution de prompts/skills par agent (Lots C+D)"
+phases:
+  clarify_scope: { started: "2026-06-21T16:30:00Z", completed: "2026-06-21T16:35:00Z" }
+  specification: { started: "2026-06-21T16:35:00Z", completed: "2026-06-21T16:50:00Z" }
+  test_planning: { started: "2026-06-21T16:35:00Z", completed: "2026-06-21T16:50:00Z" }
+  delivery_planning: { started: "2026-06-21T16:35:00Z", completed: "2026-06-21T16:50:00Z" }
+  delivery: { started: "2026-06-21T16:50:00Z", completed: "2026-06-21T17:30:00Z" }
+  system_spec_update: { started: null, completed: null }
+  review_fix: { started: "2026-06-21T18:00:00Z", completed: "2026-06-21T20:05:00Z" }
+  quality_gates: { started: "2026-06-21T20:05:00Z", completed: "2026-06-21T20:10:00Z" }
+  dod_check: { started: "2026-06-21T20:10:00Z", completed: "2026-06-21T20:15:00Z" }
+  pr_creation: { started: "2026-06-21T20:15:00Z", completed: null, url: null }
+decisions:
+  - text: "9 agents ciblés (tous les agents de trading)"
+    date: "2026-06-21"
+  - text: "Budget par défaut : 100 itérations max, 50 candidats max"
+    date: "2026-06-21"
+  - text: "Surface d'évolution : system_prompt + user_prompt_template + skills"
+    date: "2026-06-21"
+  - text: "Lots C (backend) + D (frontend) livrés ensemble"
+    date: "2026-06-21"
+  - text: "Skills versionnées via table agent_skills (GH-29 livré)"
+    date: "2026-06-21"
+  - text: "Promotion manuelle obligatoire — pas d'auto-activation"
+    date: "2026-06-21"
+  - text: "Queue Celery dédiée 'evolution' — isolation du pipeline live"
+    date: "2026-06-21"
+open_questions: []
+blockers: []
+notes:
+  - text: "Pré-requis GH-29 (skills versionnées) livré et mergé. ADR-001 rédigé."
+    type: info
+    date: "2026-06-21"
+  - text: "Design frontend validé par le développeur (cockpit terminal, 3 tabs, diff side-by-side)."
+    type: info
+    date: "2026-06-21"
+  - text: "OpenEvolve : pip install, API Python (run_evolution), compatible Ollama/OpenAI/Mistral, ~1-10$ par campagne."
+    type: info
+    date: "2026-06-21"
+  - text: "Review iter-1: 3 major + 2 minor findings. Phase 14 remédiation ajoutée au plan. Phases quality_gates/dod_check/pr_creation réouvertes."
+    type: info
+    date: "2026-06-21"
+  - text: "Retro: la PR avait été créée avant la review (phases quality_gates, dod_check, pr_creation exécutées prématurément). La review a trouvé des bugs critiques (crash campagne, budget non piloté). Le workflow doit respecter l'ordre des phases."
+    type: retro
+    date: "2026-06-21"
+  - text: "DoD check PASS: 45/45 tâches plan cochées, 10 AC spec satisfaits, review iter-2 PASS, quality gates OK (fails pré-existants uniquement)."
+    type: info
+    date: "2026-06-21"

@@ -105,11 +105,15 @@ class BenchmarkEvaluator:
         )
         db.add(evaluation)
 
+        # Estimate evaluation cost from total LLM calls (rough: $0.001 per call)
+        evaluation_cost = total_llm_calls * 0.001
+
         candidate.metrics_summary = metrics_summary
         candidate.fitness_score = aggregate_score
         candidate.status = 'evaluated'
-        candidate.llm_calls_count = total_llm_calls
-        candidate.llm_cost_usd = float(candidate.llm_cost_usd or 0.0)
+        candidate.llm_calls_count = (candidate.llm_calls_count or 0) + total_llm_calls
+        # Add evaluation cost to existing mutation cost (additive)
+        candidate.llm_cost_usd = float(candidate.llm_cost_usd or 0.0) + evaluation_cost
         db.commit()
         db.refresh(evaluation)
         return evaluation

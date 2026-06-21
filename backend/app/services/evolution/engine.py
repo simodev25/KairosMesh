@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -8,6 +9,8 @@ from app.db.models.evolution_campaign import EvolutionCampaign
 from app.db.models.evolution_candidate import EvolutionCandidate
 from app.services.evolution.evaluator import BenchmarkEvaluator
 from app.services.evolution.mutator import PromptMutator
+
+logger = logging.getLogger(__name__)
 
 
 class EvolutionEngine:
@@ -68,6 +71,12 @@ class EvolutionEngine:
             return True
         return False
 
+    @staticmethod
+    def _is_cancelled(db: Session, campaign: EvolutionCampaign) -> bool:
+        """Re-check cancel_requested from DB for immediate exit."""
+        db.refresh(campaign)
+        return campaign.status == 'cancel_requested'
+
     def run_campaign(self, db: Session, campaign: EvolutionCampaign) -> EvolutionCampaign:
         if campaign.status in {'completed', 'cancelled', 'failed'}:
             return campaign
@@ -91,8 +100,33 @@ class EvolutionEngine:
             db.commit()
             db.refresh(campaign)
 
-            candidate = self.mutator.mutate(db, campaign=campaign, parent=parent, generation=generation)
+            # Check cancellation before mutation
+            if self._is_cancelled(db, campaign):
+                break
+
+            # Mutation with exception handling — never crash the campaign
+            try:
+                candidate = self.mutator.mutate(db, campaign=campaign, parent=parent, generation=generation)
+            except Exception as exc:
+                logger.error('Mutator exception gen=%d: %s', generation, exc, exc_info=True)
+                candidate = EvolutionCandidate(
+                    campaign_id=campaign.id,
+                    generation=generation,
+                    parent_candidate_id=parent.id,
+                    system_prompt=parent.system_prompt,
+                    user_prompt_template=parent.user_prompt_template,
+                    skills=list(parent.skills or []),
+                    status='rejected',
+                    metrics_summary={'error': f'Unexpected mutator exception: {exc}'},
+                )
+                db.add(candidate)
+                db.commit()
+                db.refresh(candidate)
+
             campaign.consumed_candidates = int(campaign.consumed_candidates or 0) + 1
+            # Propagate mutation cost to campaign budget
+            mutation_cost = float(candidate.llm_cost_usd or 0.0)
+            campaign.consumed_budget_usd = float(campaign.consumed_budget_usd or 0.0) + mutation_cost
             db.commit()
             db.refresh(campaign)
 
@@ -100,9 +134,25 @@ class EvolutionEngine:
                 parent = best_candidate
                 continue
 
-            self.evaluator.evaluate_candidate(db, campaign=campaign, candidate=candidate)
-            latest_cost = float(candidate.llm_cost_usd or 0.0)
-            campaign.consumed_budget_usd = float(campaign.consumed_budget_usd or 0.0) + latest_cost
+            # Check cancellation before evaluation
+            if self._is_cancelled(db, campaign):
+                break
+
+            # Evaluation with exception handling
+            cost_before_eval = float(candidate.llm_cost_usd or 0.0)
+            try:
+                self.evaluator.evaluate_candidate(db, campaign=campaign, candidate=candidate)
+            except Exception as exc:
+                logger.error('Evaluator exception gen=%d: %s', generation, exc, exc_info=True)
+                candidate.status = 'rejected'
+                candidate.metrics_summary = {'error': f'Evaluation failed: {exc}'}
+                db.commit()
+                parent = best_candidate
+                continue
+
+            # Propagate evaluation cost (delta since mutation) to campaign budget
+            evaluation_cost = float(candidate.llm_cost_usd or 0.0) - cost_before_eval
+            campaign.consumed_budget_usd = float(campaign.consumed_budget_usd or 0.0) + evaluation_cost
 
             best_score = float(best_candidate.fitness_score or 0.0)
             candidate_score = float(candidate.fitness_score or 0.0)

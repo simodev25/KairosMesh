@@ -1,0 +1,57 @@
+[
+  {
+    "id": 1,
+    "severity": "major",
+    "confidence": "high",
+    "file": "backend/app/services/evolution/mutator.py",
+    "line": 79,
+    "title": "Exception mutator bloquante fait crasher la campagne",
+    "description": "Un payload mutator invalide crée un candidat `rejected` puis lève une exception. L'exception remonte jusqu'à l'orchestrateur et interrompt la campagne entière au lieu de continuer l'itération.",
+    "suggestedFix": "Ne pas remonter une exception bloquante dans ce cas fonctionnel. Retourner le candidat rejeté au moteur et poursuivre la boucle de génération/évaluation.",
+    "suppressed": false
+  },
+  {
+    "id": 2,
+    "severity": "major",
+    "confidence": "high",
+    "file": "backend/app/services/evolution/evaluator.py",
+    "line": 112,
+    "title": "Coût LLM non propagé donc budget non piloté",
+    "description": "Le `cost_usd` de mutation/évaluation n'est pas correctement remonté jusqu'au moteur. Le budget consommé reste à 0, ce qui invalide la borne budgétaire de la campagne.",
+    "suggestedFix": "Propager `cost_usd` depuis mutation/évaluation puis incrémenter `candidate.llm_cost_usd` et `campaign.consumed_budget_usd` à chaque itération.",
+    "suppressed": false
+  },
+  {
+    "id": 3,
+    "severity": "major",
+    "confidence": "high",
+    "file": "backend/app/services/evolution/engine.py",
+    "line": 88,
+    "title": "Fenêtre de course sur annulation en cours de boucle",
+    "description": "Le flag `cancel_requested` est vérifié uniquement en tête de boucle. Une annulation demandée juste après ce check peut laisser passer une mutation/évaluation supplémentaire.",
+    "suggestedFix": "Re-vérifier `cancel_requested` juste avant mutation et juste avant évaluation, avec sortie immédiate si demandé.",
+    "suppressed": false
+  },
+  {
+    "id": 4,
+    "severity": "minor",
+    "confidence": "high",
+    "file": "backend/tests/unit/test_evolution_api.py",
+    "line": 1,
+    "title": "Couverture API incomplète sur scénarios clés",
+    "description": "Les tests actuels ne couvrent pas suffisamment les cas RBAC/403, cancel, promote et fitness-series. Cela laisse des régressions contractuelles possibles sur les endpoints Evolution.",
+    "suggestedFix": "Ajouter des tests d'API ciblant explicitement RBAC/403, annulation, promotion et séries de fitness, avec assertions de contrat et de statut HTTP.",
+    "suppressed": false
+  },
+  {
+    "id": 5,
+    "severity": "minor",
+    "confidence": "high",
+    "file": "frontend/tests/e2e/evolution-lab.spec.ts",
+    "line": 95,
+    "title": "Mock E2E fitness-series désaligné du contrat backend",
+    "description": "Le mock utilise un schéma `points/best` différent de la forme attendue par l'API (`generations/best_fitness`, ou inverse selon la spec effective). Le test peut passer malgré une incompatibilité réelle.",
+    "suggestedFix": "Aligner le mock Playwright avec le contrat backend/spec unique et harmoniser les assertions frontend sur ce même schéma.",
+    "suppressed": false
+  }
+]

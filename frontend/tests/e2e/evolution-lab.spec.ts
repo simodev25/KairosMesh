@@ -93,12 +93,11 @@ const MOCK_CANDIDATES = [
 ];
 
 const MOCK_FITNESS_SERIES = {
-  campaign_id: 1,
-  generations: [
-    { generation: 0, best_fitness: 0.688, avg_fitness: 0.688, candidate_count: 1 },
-    { generation: 5, best_fitness: 0.742, avg_fitness: 0.71, candidate_count: 8 },
-    { generation: 10, best_fitness: 0.801, avg_fitness: 0.76, candidate_count: 15 },
-    { generation: 15, best_fitness: 0.847, avg_fitness: 0.79, candidate_count: 22 },
+  points: [
+    { generation: 0, best: 0.688, avg: 0.688 },
+    { generation: 5, best: 0.742, avg: 0.71 },
+    { generation: 10, best: 0.801, avg: 0.76 },
+    { generation: 15, best: 0.847, avg: 0.79 },
   ],
 };
 
