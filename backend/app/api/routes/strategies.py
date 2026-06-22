@@ -392,6 +392,21 @@ def delete_strategy(
     strategy = db.get(Strategy, strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail='Strategy not found')
+    # Delete related optimizer data (FK constraints)
+    from app.db.models.strategy_optimizer_campaign import StrategyOptimizerCampaign
+    from app.db.models.strategy_optimizer_evaluation import StrategyOptimizerEvaluation
+    campaign_ids = [
+        c.id for c in db.query(StrategyOptimizerCampaign.id).filter(
+            StrategyOptimizerCampaign.strategy_id == strategy.id,
+        ).all()
+    ]
+    if campaign_ids:
+        db.query(StrategyOptimizerEvaluation).filter(
+            StrategyOptimizerEvaluation.campaign_id.in_(campaign_ids),
+        ).delete(synchronize_session=False)
+        db.query(StrategyOptimizerCampaign).filter(
+            StrategyOptimizerCampaign.id.in_(campaign_ids),
+        ).delete(synchronize_session=False)
     db.delete(strategy)
     db.commit()
     logger.info('strategy_deleted id=%s name=%s', strategy.strategy_id, strategy.name)
