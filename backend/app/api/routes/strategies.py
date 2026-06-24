@@ -895,8 +895,8 @@ def start_optimization(
     strategy = db.get(Strategy, strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail='Strategy not found')
-    if strategy.status != 'VALIDATED':
-        raise HTTPException(status_code=422, detail=f'Strategy must be VALIDATED (current: {strategy.status})')
+    if strategy.status not in ('VALIDATED', 'REJECTED'):
+        raise HTTPException(status_code=422, detail=f'Strategy must be VALIDATED or REJECTED (current: {strategy.status})')
 
     config: dict = {}
     if payload.max_iterations is not None:
