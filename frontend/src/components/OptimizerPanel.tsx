@@ -123,7 +123,7 @@ export function OptimizerPanel({ strategyId, strategyStatus, token, onStrategyUp
     }
   };
 
-  const canLaunch = ['VALIDATED', 'STRATEGY_DISCARDED'].includes(strategyStatus) && (!campaign || !['RUNNING', 'PENDING'].includes(campaign.status));
+  const canLaunch = ['VALIDATED', 'REJECTED'].includes(strategyStatus) && (!campaign || !['RUNNING', 'PENDING'].includes(campaign.status));
   const isActive = campaign && ['RUNNING', 'PENDING'].includes(campaign.status);
   const isCompleted = campaign?.status === 'COMPLETED';
   const progressPct = campaign && campaign.max_iterations > 0
