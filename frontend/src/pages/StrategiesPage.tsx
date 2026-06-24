@@ -192,8 +192,8 @@ function StrategyCard({
         )}
       </div>
 
-      {/* Optimizer Panel for VALIDATED strategies */}
-      {strategy.status === 'VALIDATED' && token && (
+      {/* Optimizer Panel for VALIDATED / STRATEGY_DISCARDED strategies */}
+      {['VALIDATED', 'STRATEGY_DISCARDED'].includes(strategy.status) && token && (
         <div className="px-4 pb-3">
           <OptimizerPanel
             strategyId={strategy.id}
