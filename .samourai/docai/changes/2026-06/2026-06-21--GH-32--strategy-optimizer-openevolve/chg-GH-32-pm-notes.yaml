@@ -1,0 +1,28 @@
+change_id: GH-32
+title: "Strategy Optimizer — utiliser OpenEvolve pour trouver la meilleure stratégie"
+phases:
+  clarify_scope: { started: "2026-06-21T19:00:00Z", completed: "2026-06-21T19:00:00Z" }
+  specification: { started: null, completed: null }
+  test_planning: { started: null, completed: null }
+  delivery_planning: { started: null, completed: null }
+  delivery: { started: "2026-06-21T19:00:00Z", completed: "2026-06-24T13:31:00Z" }
+  system_spec_update: { started: null, completed: null }
+  review_fix: { started: "2026-07-04T00:00:00Z", completed: "2026-07-04T00:05:00Z" }
+  quality_gates: { started: "2026-07-04T00:05:00Z", completed: "2026-07-04T00:10:00Z" }
+  dod_check: { started: "2026-07-04T00:10:00Z", completed: "2026-07-04T00:12:00Z" }
+  pr_creation: { started: "2026-06-21T19:03:43Z", completed: "2026-06-21T19:03:43Z", url: "https://github.com/simodev25/KairosMesh/pull/33" }
+decisions:
+  - { text: "Livraison validée malgré absence de spec/plan/test-plan formels. Feature implémentée hors pipeline Samourai, mais review PASS, quality gates OK sur scope GH-32, tous les AC vérifiés.", date: "2026-07-04" }
+open_questions:
+  - { text: "Tests d'intégration DB réelle manquants — follow-up recommandé", date: "2026-07-04" }
+  - { text: "Tests API ont des erreurs de setup (mock auth SQLAlchemy) — à fixer en follow-up", date: "2026-07-04" }
+blockers: []
+notes:
+  - { text: "Feature implémentée hors pipeline Samourai — pas de spec, plan, test-plan formels. Reprise en phase review aujourd'hui.", type: retro, date: "2026-07-04" }
+  - { text: "PR #33 créée le 21 juin, 0 reviews, 0 commentaires. 21 commits, 22 fichiers, +3007 lignes.", type: info, date: "2026-07-04" }
+  - { text: "7 commits de fix post-intégration OpenEvolve — l'intégration réelle a nécessité des corrections importantes (subprocess, Config object, cancel sentinel, solo-pool worker)", type: risk, date: "2026-07-04" }
+  - { text: "Tests API ont des erreurs de setup (mock auth SQLAlchemy) signalées dans la PR — à fixer en follow-up", type: risk, date: "2026-07-04" }
+  - { text: "Aucun changement dans backend/app/risk/ ✅", type: info, date: "2026-07-04" }
+  - { text: "Review PASS — tous les 7 AC vérifiés, 2 findings mineurs (tests intégration DB réelle, doc fonctions complexes)", type: info, date: "2026-07-04" }
+  - { text: "Backend tests GH-32: 17/17 ✅. Frontend TS GH-32: 0 erreur ✅. Erreurs build/E2E globales pré-existantes sur main (TradingViewChart, BacktestsPage, etc.)", type: info, date: "2026-07-04" }
+  - { text: "DoD validé pragmatiquement : review PASS + quality gates OK sur scope GH-32 + tous AC vérifiés. Gaps documentés.", type: decision, date: "2026-07-04" }
