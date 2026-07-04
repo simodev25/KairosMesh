@@ -25,7 +25,7 @@ DEFAULT_AGENT_LLM_ENABLED: dict[str, bool] = {
     'execution-manager': False,
 }
 
-SUPPORTED_LLM_PROVIDERS = {'ollama', 'openai', 'mistral'}
+SUPPORTED_LLM_PROVIDERS = {'ollama', 'openai', 'mistral', 'openrouter'}
 DETERMINISTIC_ONLY_AGENTS: set[str] = set()
 MAX_AGENT_SKILLS_PER_AGENT = 12
 MAX_AGENT_SKILL_LENGTH = 500
@@ -595,6 +595,8 @@ class AgentModelSelector:
             return str(self.settings.openai_model or '').strip() or 'gpt-4o-mini'
         if normalized_provider == 'mistral':
             return str(self.settings.mistral_model or '').strip() or 'mistral-small-latest'
+        if normalized_provider == 'openrouter':
+            return str(self.settings.openrouter_model or '').strip() or 'deepseek/deepseek-chat-v3-0324'
         return str(self.settings.ollama_model or '').strip() or 'deepseek-v3.2'
 
     def is_enabled(self, db: Session | None, agent_name: str) -> bool:

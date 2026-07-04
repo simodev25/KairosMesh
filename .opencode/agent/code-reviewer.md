@@ -1,6 +1,5 @@
 ---
 description: Elite code review specialist — security vulnerabilities, performance, correctness, production reliability. Use PROACTIVELY for code quality assurance within the Samourai pipeline.
-model: inherit
 temperature: 0.2
 reasoningEffort: high
 tools:

@@ -109,6 +109,14 @@ class MarketProvider:
             'timeout_ms': 15000,
             'max_queries': 2,
         },
+        'openrouter': {
+            'enabled': True,
+            'priority': 95,
+            'timeout_ms': 5000,
+            'api_key_env': 'OPENROUTER_API_KEY',
+            'endpoint_env': 'OPENROUTER_ENDPOINT',
+            'lookback_hours': 48,
+        },
     }
     news_analysis_defaults: dict[str, Any] = {
         'max_items_total': 25,
@@ -1149,6 +1157,12 @@ class MarketProvider:
                 ('ALPHAVANTAGE_API_KEY', 'alphavantage_api_key'),
                 default=str(self.settings.alphavantage_api_key or '').strip(),
             )
+        if provider_name == 'openrouter':
+            return RuntimeConnectorSettings.get_string(
+                'news',
+                ('OPENROUTER_API_KEY', 'openrouter_api_key'),
+                default=str(self.settings.openrouter_api_key or '').strip(),
+            )
         return ''
 
     def _provider_timeout_seconds(self, provider_cfg: dict[str, Any], default_ms: int = 4000) -> float:
@@ -1657,6 +1671,77 @@ class MarketProvider:
             'attempts': attempts_meta,
             'lookback_hours': lookback_hours,
         }
+
+    def _fetch_openrouter_items(
+        self,
+        pair: str,
+        *,
+        max_items: int,
+        timeout_seconds: float,
+        provider_cfg: dict[str, Any],
+        api_key: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Fetch news items from OpenRouter integration.
+
+        This uses a configurable HTTP endpoint provided via provider config.
+        If endpoint is not configured, returns empty results.
+        """
+        lookback_hours = int(max(self._safe_float(provider_cfg.get('lookback_hours'), 48), 1.0))
+        endpoint = provider_cfg.get('endpoint') if isinstance(provider_cfg.get('endpoint'), str) else ''
+        if not endpoint:
+            return [], {'endpoint': endpoint}
+        query = ' OR '.join(self._keywords_for_pair(pair)[:8])
+        from_dt = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
+        headers = {}
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
+        params = {
+            'q': query,
+            'from': from_dt,
+            'limit': max_items,
+        }
+        items: list[dict[str, Any]] = []
+        used_endpoint = endpoint
+        with httpx.Client(timeout=timeout_seconds) as client:
+            try:
+                resp = client.get(endpoint, params=params, headers=headers)
+                resp.raise_for_status()
+                payload = resp.json() if resp.content else {}
+            except Exception:
+                try:
+                    resp = client.get(endpoint, params=params)
+                    resp.raise_for_status()
+                    payload = resp.json() if resp.content else {}
+                except Exception:
+                    payload = {}
+                    used_endpoint = endpoint
+
+        current_items = (
+            payload.get('items') or payload.get('articles') or payload.get('results') or []
+        )
+        if not isinstance(current_items, list):
+            current_items = []
+
+        for item in current_items:
+            if not isinstance(item, dict):
+                continue
+            normalized = self._normalize_article_item(
+                provider='openrouter',
+                pair=pair,
+                title=str(item.get('title') or ''),
+                summary=str(item.get('summary') or item.get('description') or ''),
+                url=item.get('url'),
+                published_at=item.get('published_at') or item.get('published'),
+                source_name=str(item.get('publisher') or ''),
+                language=str(item.get('language') or 'en'),
+            )
+            if normalized is None:
+                continue
+            items.append(normalized)
+            if len(items) >= max_items:
+                break
+
+        return items, {'endpoint': used_endpoint, 'query': query, 'lookback_hours': lookback_hours}
 
     # ------------------------------------------------------------------
     # LLM-powered web search provider
