@@ -98,6 +98,30 @@ services:
       rabbitmq:
         condition: service_started
 
+  optimizer-worker:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://trading:trading@postgres:5432/trading_platform
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_IGNORE_RESULT: 'true'
+      AGENTSCOPE_TRACING_URL: http://tempo:4318/v1/traces
+    volumes:
+      - ./backend/debug-strategy:/app/debug-strategy
+    command: >
+      sh -c "celery -A app.tasks.celery_app.celery_app worker --loglevel=info
+      --pool=solo -Q strategy-optimizer -n optimizer@%h"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+
   frontend:
     build:
       context: ./frontend

@@ -30,3 +30,5 @@ email-validator==2.2.0
 pytest==8.4.1
 pytest-asyncio==1.1.0
 opentelemetry-exporter-otlp-proto-http>=1.39.0
+openevolve>=0.1.0
+pyyaml>=6.0
