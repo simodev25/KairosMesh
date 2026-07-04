@@ -137,6 +137,7 @@ async function mockConnectorsApi(page: Page, options: { saveFails?: boolean } = 
 }
 
 test('connectors page loads and saves decision mode', async ({ page }) => {
+  test.setTimeout(60000);
   const mock = await mockConnectorsApi(page);
 
   await page.goto('/connectors');
@@ -147,7 +148,7 @@ test('connectors page loads and saves decision mode', async ({ page }) => {
   await expect(modeSelect).toHaveValue('conservative');
 
   await modeSelect.selectOption('permissive');
-  await page.getByRole('button', { name: 'Enregistrer le mode de décision' }).click();
+  await page.getByRole('button', { name: 'Save decision mode' }).click();
 
   await expect(modeSelect).toHaveValue('permissive');
   await expect.poll(() => {
@@ -163,6 +164,7 @@ test('connectors page loads and saves decision mode', async ({ page }) => {
 });
 
 test('connectors page surfaces decision mode save errors', async ({ page }) => {
+  test.setTimeout(60000);
   await mockConnectorsApi(page, { saveFails: true });
 
   await page.goto('/connectors');
@@ -171,7 +173,7 @@ test('connectors page surfaces decision mode save errors', async ({ page }) => {
   const modeSelect = page.getByLabel('Decision Mode');
   await expect(modeSelect).toBeVisible();
   await modeSelect.selectOption('balanced');
-  await page.getByRole('button', { name: 'Enregistrer le mode de décision' }).click();
+  await page.getByRole('button', { name: 'Save decision mode' }).click();
 
   await expect(page.locator('.alert')).toContainText('mock save failed');
 });

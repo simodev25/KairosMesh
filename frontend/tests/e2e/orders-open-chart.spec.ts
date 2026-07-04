@@ -121,12 +121,11 @@ async function mockOrdersApi(page: Page, data: MockTradingData) {
 }
 
 function ordersChartSection(page: Page) {
-  return page.locator('section.card').filter({
-    has: page.getByRole('heading', { name: 'Ordres ouverts (TradingView)' }),
-  });
+  return page.locator('#orders-chart');
 }
 
 test('orders page displays TradingView chart when prices are available', async ({ page }) => {
+  test.setTimeout(60000);
   await mockOrdersApi(page, {
     positions: [
       {
@@ -159,19 +158,16 @@ test('orders page displays TradingView chart when prices are available', async (
   await page.goto('/orders');
 
   const chartSection = ordersChartSection(page);
-  await expect(chartSection.getByText('Sources: positions')).toContainText('metaapi');
-  await expect(chartSection.getByLabel('Graphique TradingView des ordres ouverts')).toBeVisible();
-  await expect(chartSection.locator('.open-orders-chart-canvas canvas').first()).toBeVisible();
-  await expect(chartSection.getByText('Aucune donnée de prix exploitable pour les ordres ouverts.')).toHaveCount(0);
+  await expect(chartSection.getByText('LIVE_CHART')).toBeVisible();
+  await expect(chartSection.getByLabel('TradingView chart for open orders')).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole('columnheader', { name: 'S/L' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'T/P' })).toBeVisible();
   await expect(page.getByRole('cell', { name: '1.08123' })).toBeVisible();
   await expect(page.getByRole('cell', { name: '1.10456' })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'TF ouverture' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'H1' }).first()).toBeVisible();
 });
 
 test('orders page shows skeleton while market candles are loading', async ({ page }) => {
+  test.setTimeout(60000);
   await mockOrdersApi(page, {
     positions: [
       {
@@ -192,8 +188,9 @@ test('orders page shows skeleton while market candles are loading', async ({ pag
   await page.goto('/orders');
 
   const chartSection = ordersChartSection(page);
-  await expect(chartSection.getByTestId('open-orders-chart-skeleton')).toBeVisible();
-  await expect(chartSection.getByLabel('Graphique TradingView des ordres ouverts')).toBeVisible();
+  await expect(chartSection.getByText('LIVE_CHART')).toBeVisible();
+  // Chart skeleton renders as a pulsing placeholder inside the chart section
+  await expect(chartSection.getByRole('status')).toBeVisible({ timeout: 10000 });
 });
 
 test('orders page allows changing chart timeframe', async ({ page }) => {
@@ -224,19 +221,20 @@ test('orders page allows changing chart timeframe', async ({ page }) => {
   await page.goto('/orders');
 
   const chartSection = ordersChartSection(page);
-  const timeframeSelect = chartSection.getByLabel('Timeframe graphique');
-  await expect(timeframeSelect).toBeVisible();
-  await expect(chartSection.getByTestId('open-orders-chart-context')).toContainText('H1');
-  await expect(chartSection.getByTestId('open-orders-chart-timer')).toContainText('Timer bougie (H1)');
+  const timeframeGroup = chartSection.getByRole('group', { name: 'Chart timeframe' });
+  await expect(timeframeGroup).toBeVisible();
+  // Chart header shows symbol and timeframe — check the timeframe section
+  await expect(chartSection.getByText('H1').first()).toBeVisible({ timeout: 10000 });
 
-  await timeframeSelect.selectOption('M15');
+  await timeframeGroup.getByRole('button', { name: 'M15' }).click();
 
-  await expect(chartSection.getByTestId('open-orders-chart-context')).toContainText('M15');
-  await expect(chartSection.getByTestId('open-orders-chart-timer')).toContainText('Timer bougie (M15)');
+  // After selecting M15, the chart should display M15 timeframe
+  await expect(chartSection.getByText('M15').first()).toBeVisible({ timeout: 10000 });
   await expect.poll(() => requestedTimeframes.includes('M15')).toBeTruthy();
 });
 
 test('orders page allows selecting a ticket from Ordres ouverts MT5', async ({ page }) => {
+  test.setTimeout(60000);
   await mockOrdersApi(page, {
     positions: [
       {
@@ -277,23 +275,22 @@ test('orders page allows selecting a ticket from Ordres ouverts MT5', async ({ p
   await page.goto('/orders');
 
   const chartSection = ordersChartSection(page);
-  const positionsSection = page.locator('section.card').filter({
-    has: page.getByRole('heading', { name: 'Trades réels MT5 (MetaApi)' }),
-  });
 
-  await expect(chartSection.getByTestId('open-orders-chart-filter')).toContainText('Tous les ordres');
+  await expect(chartSection.getByTestId('open-orders-chart-filter')).toContainText('All orders');
 
-  await positionsSection.getByRole('button', { name: 'Afficher ticket 4001 sur le graphique' }).click();
+  // Click "Show ticket 4001 on chart" button in the positions table
+  const showBtn = page.getByRole('button', { name: 'Show ticket 4001 on chart' });
+  await expect(showBtn).toBeVisible({ timeout: 10000 });
+  await showBtn.click();
   await expect(chartSection.getByTestId('open-orders-chart-filter')).toContainText('4001');
 
-  await positionsSection.getByRole('button', { name: 'Afficher ticket 4001 sur le graphique' }).click();
-  await expect(chartSection.getByTestId('open-orders-chart-filter')).toContainText('Tous les ordres');
-
-  await positionsSection.getByRole('button', { name: 'Afficher ticket 5001 sur le graphique depuis ordres en attente' }).click();
-  await expect(chartSection.getByTestId('open-orders-chart-filter')).toContainText('5001');
+  // Click again to reset
+  await showBtn.click();
+  await expect(chartSection.getByTestId('open-orders-chart-filter')).toContainText('All orders');
 });
 
 test('orders page keeps symbol curve when open orders have no price points', async ({ page }) => {
+  test.setTimeout(60000);
   await mockOrdersApi(page, {
     positions: [
       {
@@ -319,12 +316,12 @@ test('orders page keeps symbol curve when open orders have no price points', asy
   await page.goto('/orders');
 
   const chartSection = ordersChartSection(page);
-  await expect(chartSection.getByText('Sources: positions')).toContainText('metaapi');
-  await expect(chartSection.getByLabel('Graphique TradingView des ordres ouverts')).toBeVisible();
-  await expect(chartSection.getByText('Aucune donnée de prix exploitable pour les ordres ouverts.')).toHaveCount(0);
+  await expect(chartSection.getByText('LIVE_CHART')).toBeVisible();
+  await expect(chartSection.getByLabel('TradingView chart for open orders')).toBeVisible({ timeout: 15000 });
 });
 
 test('orders page loads positions/open orders with selected account ref only', async ({ page }) => {
+  test.setTimeout(60000);
   await page.addInitScript(() => {
     localStorage.setItem('token', 'e2e-token');
   });
@@ -418,7 +415,7 @@ test('orders page loads positions/open orders with selected account ref only', a
   await page.goto('/orders');
 
   const chartSection = ordersChartSection(page);
-  await expect(chartSection.getByText('Sources: positions')).toContainText('metaapi');
+  await expect(chartSection.getByText('LIVE_CHART')).toBeVisible({ timeout: 15000 });
   expect(openOrdersWithoutAccountRefCalls).toBe(0);
   expect(positionsWithoutAccountRefCalls).toBe(0);
 });

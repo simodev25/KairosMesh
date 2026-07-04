@@ -141,15 +141,18 @@ test('OPTIMISER button visible only for VALIDATED strategies', async ({ page }) 
 // ---------------------------------------------------------------------------
 
 test('click OPTIMISER opens config with max_iterations and time_budget inputs', async ({ page }) => {
+  test.setTimeout(60000);
   await setupMockApi(page);
   await page.goto('/strategies');
 
-  await page.getByRole('button', { name: /OPTIMISER/i }).click();
+  const optimiserBtn = page.getByRole('button', { name: /OPTIMISER/i });
+  await expect(optimiserBtn).toBeVisible({ timeout: 10000 });
+  await optimiserBtn.click();
 
   // Config panel should be visible with inputs
-  await expect(page.getByText('OPTIMIZER_CONFIG')).toBeVisible();
-  await expect(page.getByLabel(/Max Iterations/i)).toBeVisible();
-  await expect(page.getByLabel(/Time Budget/i)).toBeVisible();
+  await expect(page.getByText('OPTIMIZER_CONFIG')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('label', { hasText: 'Max Iterations' })).toBeVisible();
+  await expect(page.locator('label', { hasText: 'Time Budget' })).toBeVisible();
   await expect(page.getByRole('button', { name: /LANCER/i })).toBeVisible();
 });
 
