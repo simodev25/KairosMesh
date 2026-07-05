@@ -8,6 +8,7 @@ from app.services.llm.model_selector import (
     AgentModelSelector,
     get_external_tools_for_agent,
     normalize_external_mcps,
+    normalize_llm_provider,
     validate_agent_tools_payload,
 )
 
