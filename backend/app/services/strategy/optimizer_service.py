@@ -290,6 +290,9 @@ def _resolve_llm_config(db: Session) -> tuple[str, str, str, str]:
     elif provider == 'mistral':
         base_url = settings.mistral_base_url
         api_key = settings.mistral_api_key
+    elif provider == 'openrouter':
+        base_url = settings.openrouter_base_url
+        api_key = settings.openrouter_api_key
     else:  # ollama
         base_url = settings.ollama_base_url
         api_key = settings.ollama_api_key

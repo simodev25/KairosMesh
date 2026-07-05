@@ -18,6 +18,7 @@ class LlmClient:
         self.ollama = OllamaCloudClient()
         self.openai = OpenAICompatibleClient('openai')
         self.mistral = OpenAICompatibleClient('mistral')
+        self.openrouter = OpenAICompatibleClient('openrouter')
 
     def _resolve_provider(self, db: Session | None) -> str:
         return normalize_llm_provider(self.model_selector.resolve_provider(db), fallback='ollama')
@@ -27,6 +28,8 @@ class LlmClient:
             return self.openai
         if provider == 'mistral':
             return self.mistral
+        if provider == 'openrouter':
+            return self.openrouter
         return self.ollama
 
     @staticmethod

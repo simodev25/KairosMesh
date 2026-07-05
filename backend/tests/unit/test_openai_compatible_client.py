@@ -23,3 +23,20 @@ def test_mistral_client_prefers_runtime_connector_api_key(monkeypatch) -> None:
     )
 
     assert client._normalized_api_key() == 'runtime-mistral'
+
+
+def test_openrouter_client_base_url() -> None:
+    client = OpenAICompatibleClient('openrouter')
+    client.settings.openrouter_base_url = 'https://openrouter.ai/api/v1'
+    assert client._normalized_base_url() == 'https://openrouter.ai/api/v1'
+
+
+def test_openrouter_client_default_model() -> None:
+    client = OpenAICompatibleClient('openrouter')
+    assert client._default_model() == 'openrouter/auto'
+
+
+def test_openrouter_client_not_configured_without_key() -> None:
+    client = OpenAICompatibleClient('openrouter')
+    client.settings.openrouter_api_key = ''
+    assert client.is_configured() is False

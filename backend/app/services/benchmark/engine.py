@@ -42,6 +42,8 @@ class BenchmarkEngine:
             return provider, model_name, settings.openai_base_url, settings.openai_api_key
         if provider == 'mistral':
             return provider, model_name, settings.mistral_base_url, settings.mistral_api_key
+        if provider == 'openrouter':
+            return provider, model_name, settings.openrouter_base_url, settings.openrouter_api_key
         return 'ollama', model_name, settings.ollama_base_url, settings.ollama_api_key
 
     async def _build_agent(
