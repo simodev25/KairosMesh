@@ -90,3 +90,18 @@ def test_mistral_uses_openai_formatter():
 def test_formatter_unknown_provider_falls_back_to_openai():
     f = build_formatter("unknown")
     assert f.__class__.__name__ == "OpenAIChatFormatter"
+
+
+@patch("app.services.agentscope.model_factory.OpenAIChatModel")
+def test_build_openrouter_model(mock_cls):
+    mock_cls.return_value = MagicMock()
+    build_model(provider="openrouter", model_name="openrouter/auto", base_url="https://openrouter.ai/api/v1", api_key="sk-or-v1-test")
+    mock_cls.assert_called_once()
+    call_kwargs = mock_cls.call_args[1]
+    assert call_kwargs["model_name"] == "openrouter/auto"
+    assert call_kwargs["api_key"] == "sk-or-v1-test"
+
+
+def test_openrouter_uses_openai_formatter():
+    f = build_formatter("openrouter", multi_agent=True)
+    assert f.__class__.__name__ == "OpenAIMultiAgentFormatter"

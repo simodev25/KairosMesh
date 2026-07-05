@@ -9,11 +9,11 @@
 
   // Fallback model used by any agent without an explicit "model" in the "agent" section.
   // Format: "provider/model-id"
-  "model": "github-copilot/gpt-5.2",
+  "model": "openrouter/deepseek/deepseek-chat-v3-0324",
 
   // Lightweight model for non-critical utility tasks:
   // session title generation, short summaries, metadata.
-  "small_model": "github-copilot/gpt-5-mini",
+  "small_model": "openrouter/openai/gpt-5-nano",
 
   // ─── Global Instructions ───────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@
     // Full access required to read/write artifacts, call sub-agents,
     // and interact with trackers (GitHub MCP when enabled).
     "pm": {
-      "model": "github-copilot/claude-opus-4.6",
+      "model": "openrouter/deepseek/deepseek-v4-pro",
       "steps": 200,           // long orchestration: many possible steps
       "permission": {
         "bash": "allow",
@@ -271,7 +271,7 @@
     // @coder: implements plan phases. Reads, writes, and runs commands.
     // No web access — works exclusively within the repository.
     "coder": {
-      "model": "github-copilot/gpt-5.3-codex",
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324",
       "steps": 220,            // multi-phase implementation: many file operations
       "permission": {
         "bash": "allow",      // run commands (tests, build, typecheck)
@@ -288,7 +288,7 @@
     // @fixer: fixes bugs and test failures using root-cause analysis.
     // Similar access to @coder but fewer steps (targeted investigation).
     "fixer": {
-      "model": "github-copilot/gpt-5.3-codex",
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324",
       "steps": 120,            // targeted debugging — should not wander too long
       "permission": {
         "bash": "allow",
@@ -303,7 +303,7 @@
     // @refactor: performs safe, incremental code refactoring.
     // Preserves behavior and validates with tests.
     "refactor": {
-      "model": "github-copilot/gpt-5.3-codex", // same model as @coder
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324", // same model as @coder
       "steps": 60,
       "permission": {
         "bash": "allow",
@@ -322,7 +322,7 @@
     // @tdd-orchestrator: enforces the red-green-refactor cycle for a task.
     // Delegated by @coder in /run-plan when the tdd-orchestrator skill is active.
     "tdd-orchestrator": {
-      "model": "github-copilot/gpt-5.3-codex",
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324",
       "steps": 60,            // RED→GREEN→REFACTOR cycle × N behaviors
       "permission": {
         "bash": "allow",      // run tests at each step of the cycle
@@ -340,7 +340,7 @@
     // @reviewer: validates code against spec + plan + quality heuristics.
     // May modify the plan (adding a remediation phase) but not the source code.
     "reviewer": {
-      "model": "github-copilot/gpt-5.3-codex",
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324",
       "temperature": 0.2,     // deterministic review: reduces variability in findings
       "steps": 30,            // diff reading + report = bounded task
       "permission": {
@@ -359,7 +359,7 @@
     // @code-reviewer: targeted diff analysis — security, correctness, performance.
     // Delegated by @reviewer and /git-workflow. Strict read-only: modifies NOTHING.
     "code-reviewer": {
-      "model": "github-copilot/gpt-5.3-codex",
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324",
       "temperature": 0.2,     // consistent and reproducible findings
       "steps": 20,            // bounded analysis — no action, report only
       "permission": {
@@ -377,7 +377,7 @@
     // @gap-analysis: artifact traceability analysis (spec/plan/test/code gaps).
     // Similar to @code-reviewer but focused on lifecycle coverage.
     "gap-analysis": {
-      "model": "github-copilot/gpt-5.3-codex", // same model as @reviewer
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324", // same model as @reviewer
       "temperature": 0.2,     // deterministic analysis for reproducible reports
       "steps": 25,
       "permission": {
@@ -395,7 +395,7 @@
 
     // @verdict: final GO/NO-GO evaluator based on gates and evidence.
     "verdict": {
-      "model": "github-copilot/gpt-5.3-codex", // same model as @reviewer
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324", // same model as @reviewer
       "temperature": 0.1,     // highly deterministic for consistent verdicts
       "steps": 20,
       "permission": {
@@ -412,7 +412,7 @@
 
     // @jira-analysis: analyzes ticket quality and extracts requirements.
     "jira-analysis": {
-      "model": "github-copilot/gpt-5.3-codex", // same model as @reviewer
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324", // same model as @reviewer
       "temperature": 0.2,
       "steps": 20,
       "permission": {
@@ -429,7 +429,7 @@
 
     // @review-feedback-applier: applies review feedback after human validation.
     "review-feedback-applier": {
-      "model": "github-copilot/gpt-5.2-codex",
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324",
       "steps": 30
       // To enable GitHub MCP (read PR comments):
       // "tools": { "github*": true }
@@ -439,7 +439,7 @@
 
     // @committer: creates exactly one Conventional Commit. Simple and fast task.
     "committer": {
-      "model": "github-copilot/gpt-5-mini", // lightweight model sufficient for git operations
+      "model": "openrouter/openai/gpt-5-nano", // lightweight model sufficient for git operations
       "steps": 15,            // git add + diff analysis + commit = few steps
       "permission": {
         "bash": "allow",      // git status, git add, git commit
@@ -451,7 +451,7 @@
 
     // @pr-manager: creates/updates the PR and stops before merge.
     "pr-manager": {
-      "model": "github-copilot/claude-sonnet-4.5",
+      "model": "openrouter/deepseek/deepseek-chat",
       "steps": 20
       // To enable GitHub MCP (create PR via API):
       // "tools": { "github*": true }
@@ -461,21 +461,21 @@
 
     // @spec-writer: writes the change specification (chg-xxx-spec.md).
     "spec-writer": {
-      "model": "github-copilot/claude-sonnet-4.6", // Claude: best for structured writing
+      "model": "openrouter/deepseek/deepseek-chat", // Claude: best for structured writing
       "steps": 30,
       "tools": { "socraticode*": true }  // explore existing code before writing spec
     },
 
     // @test-plan-writer: writes the test plan (chg-xxx-test-plan.md).
     "test-plan-writer": {
-      "model": "github-copilot/gpt-5.2",
+      "model": "openrouter/qwen/qwen3-plus",
       "steps": 25,
       "tools": { "socraticode*": true }  // find existing test patterns and coverage
     },
 
     // @plan-writer: writes the implementation plan (chg-xxx-plan.md).
     "plan-writer": {
-      "model": "github-copilot/gpt-5.2",
+      "model": "openrouter/qwen/qwen3-plus",
       "steps": 50,
       "tools": { "socraticode*": true }  // understand codebase structure before planning
     },
@@ -483,7 +483,7 @@
     // @doc-syncer: synchronizes system documentation with delivered code.
     // Reads the diff and updates doc/spec/. No web access.
     "doc-syncer": {
-      "model": "github-copilot/claude-sonnet-4.5",
+      "model": "openrouter/deepseek/deepseek-chat",
       "steps": 20,
       "permission": {
         "bash": "allow",      // git diff to see what changed
@@ -499,7 +499,7 @@
     // @runner: executes commands (build, tests, lint) and logs the results.
     // Does not modify source files — read and execute only.
     "runner": {
-      "model": "github-copilot/gpt-5-mini", // execution task, no complex reasoning required
+      "model": "openrouter/openai/gpt-5-nano", // execution task, no complex reasoning required
       "steps": 25,
       "permission": {
         "bash": "allow",      // run build, tests, lint, quality gates
@@ -514,7 +514,7 @@
     // @architect: technical and architectural decisions. Produces ADRs.
     // Most powerful model for complex reasoning.
     "architect": {
-      "model": "github-copilot/gpt-5.4",  // best model for architectural thinking
+      "model": "openrouter/deepseek/deepseek-v4-pro",  // best model for architectural thinking
       "steps": 40,
       "color": "secondary",
       "tools": { "socraticode*": true }  // graph/impact for architectural analysis
@@ -522,13 +522,13 @@
 
     // @bootstrapper: onboards a new project into the Samourai ecosystem.
     "bootstrapper": {
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "openrouter/deepseek/deepseek-chat",
       "steps": 30
     },
 
     // @toolsmith: creates and improves kit tools, agents, and commands.
     "toolsmith": {
-      "model": "github-copilot/gpt-5.3-codex",
+      "model": "openrouter/deepseek/deepseek-chat-v3-0324",
       "steps": 40
     },
 
@@ -536,26 +536,26 @@
 
     // @editor: writes and translates user-facing content per copywriting.md.
     "editor": {
-      "model": "github-copilot/claude-sonnet-4.6", // Claude: best for natural language
+      "model": "openrouter/deepseek/deepseek-chat", // Claude: best for natural language
       "steps": 20
     },
 
     // @designer: UI/UX design, aligned with the design system.
     "designer": {
-      "model": "github-copilot/gpt-4o",    // GPT-4o: vision + design
+      "model": "openrouter/openai/gpt-4.1-nano",    // GPT-4o: vision + design
       "steps": 20,
       "tools": { "puppeteer*": true }  // enables Puppeteer MCP for UI screenshots
     },
 
     // @image-generator: image generation via text-to-image.
     "image-generator": {
-      "model": "github-copilot/gpt-4o",
+      "model": "openrouter/openai/gpt-4.1-nano",
       "steps": 10               // single generation = few steps
     },
 
     // @image-reviewer: analyzes screenshots and visual artifacts. Read-only.
     "image-reviewer": {
-      "model": "github-copilot/gpt-4o",   // GPT-4o: multimodal (vision)
+      "model": "openrouter/openai/gpt-4.1-nano",   // GPT-4o: multimodal (vision)
       "steps": 10,
       "permission": {
         "edit": "deny",         // analysis only, modifies nothing
@@ -568,7 +568,7 @@
     // @external-researcher: research via web and MCP (context7, deepwiki, etc.).
     // Only agent authorized to leave the repository — webfetch and websearch enabled.
     "external-researcher": {
-      "model": "github-copilot/gemini-3.1-pro-preview", // Gemini: large context window for research
+      "model": "openrouter/google/gemini-2.5-flash", // Gemini: large context window for research
       "steps": 30,
       "permission": {
         "webfetch": "allow",    // fetch web pages and documentation
@@ -584,7 +584,7 @@
     // Agent Samourai distinct des agents internes du pipeline Kairos Mesh.
     // Accède à l'API backend locale pour les données de marché si disponible.
     "trading-analyst": {
-      "model": "github-copilot/claude-sonnet-4.6", // Claude: raisonnement nuancé pour l'analyse financière
+      "model": "openrouter/deepseek/deepseek-chat", // Claude: raisonnement nuancé pour l'analyse financière
       "steps": 40,
       "temperature": 0.2,       // déterministe: analyse prudente, évite la sur-créativité
       "permission": {
@@ -605,7 +605,7 @@
     // Lit/modifie les skills (SKILL.md), les prompts DB via API, et la config LLM.
     // ⚠️ Agents Binding (risk-manager, execution-manager): demander confirmation avant activation.
     "kairos-agent-manager": {
-      "model": "github-copilot/claude-sonnet-4.6", // Claude: analyse structurée des prompts + skills
+      "model": "openrouter/deepseek/deepseek-chat", // Claude: analyse structurée des prompts + skills
       "steps": 50,
       "temperature": 0.2,       // prudent: modifications ciblées, pas de sur-créativité
       "permission": {

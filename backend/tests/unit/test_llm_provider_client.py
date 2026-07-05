@@ -74,3 +74,9 @@ def test_llm_client_lists_models_for_explicit_provider_override() -> None:
         result = client.list_models(db, provider='mistral')
         assert result['provider'] == 'mistral'
         assert result['models'] == ['mistral-small-latest']
+
+
+def test_llm_client_dispatches_openrouter() -> None:
+    client = LlmClient()
+    provider_client = client._provider_client('openrouter')
+    assert provider_client.provider == 'openrouter'

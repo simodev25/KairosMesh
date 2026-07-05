@@ -27,6 +27,8 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
         llm_configured = bool((settings.openai_api_key or '').strip())
     elif llm_provider == 'mistral':
         llm_configured = bool((settings.mistral_api_key or '').strip())
+    elif llm_provider == 'openrouter':
+        llm_configured = bool((settings.openrouter_api_key or '').strip())
     else:
         llm_configured = bool((settings.ollama_api_key or '').strip())
     services['llm'] = 'configured' if llm_configured else 'degraded'

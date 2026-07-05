@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/mbensass/projetPreso/MultiAgentTrading/logs/.ca09de9b73b4073e7d4dfe992f6284b94ab79cde-audit.json",
+    "files": [
+        {
+            "date": 1783181284530,
+            "name": "/Users/mbensass/projetPreso/MultiAgentTrading/logs/mcp-puppeteer-2026-07-04.log",
+            "hash": "8052710f5d7c0420524984db6f83bd057dacdc9f2aed57f5c79206b4b4c706f7"
+        }
+    ],
+    "hashType": "sha256"
+}

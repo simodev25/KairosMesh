@@ -50,7 +50,7 @@ def build_model(
             stream=stream,
             generate_kwargs={"temperature": temperature},
         )
-    if provider in ("openai", "mistral"):
+    if provider in ("openai", "mistral", "openrouter"):
         return OpenAIChatModel(
             model_name=model_name,
             api_key=api_key,

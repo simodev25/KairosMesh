@@ -74,6 +74,8 @@ class OpenAICompatibleClient:
     def _display_name(self) -> str:
         if self.provider == 'mistral':
             return 'Mistral'
+        if self.provider == 'openrouter':
+            return 'OpenRouter'
         return 'OpenAI'
 
     def _normalized_api_key(self, db: Session | None = None) -> str:
@@ -85,6 +87,12 @@ class OpenAICompatibleClient:
                 or RuntimeConnectorSettings.get_string('ollama', ('MISTRAL_API_KEY', 'mistral_api_key'))
             )
             key = (runtime_key or self.settings.mistral_api_key or '').strip()
+        elif self.provider == 'openrouter':
+            runtime_key = (
+                RuntimeConnectorSettings.get_string('openrouter', ('OPENROUTER_API_KEY', 'openrouter_api_key'))
+                or RuntimeConnectorSettings.get_string('ollama', ('OPENROUTER_API_KEY', 'openrouter_api_key'))
+            )
+            key = (runtime_key or self.settings.openrouter_api_key or '').strip()
         else:
             runtime_key = (
                 RuntimeConnectorSettings.get_string('openai', ('OPENAI_API_KEY', 'openai_api_key'))
@@ -96,7 +104,12 @@ class OpenAICompatibleClient:
         return key
 
     def _normalized_base_url(self) -> str:
-        raw_base_url = self.settings.mistral_base_url if self.provider == 'mistral' else self.settings.openai_base_url
+        if self.provider == 'mistral':
+            raw_base_url = self.settings.mistral_base_url
+        elif self.provider == 'openrouter':
+            raw_base_url = self.settings.openrouter_base_url
+        else:
+            raw_base_url = self.settings.openai_base_url
         base_url = str(raw_base_url or '').strip().rstrip('/')
         if not base_url:
             return base_url
@@ -107,11 +120,15 @@ class OpenAICompatibleClient:
     def _default_model(self) -> str:
         if self.provider == 'mistral':
             return str(self.settings.mistral_model or '').strip() or 'mistral-small-latest'
+        if self.provider == 'openrouter':
+            return str(self.settings.openrouter_model or '').strip() or 'openrouter/auto'
         return str(self.settings.openai_model or '').strip() or 'gpt-4o-mini'
 
     def _timeout_seconds(self) -> float:
         if self.provider == 'mistral':
             return float(self.settings.mistral_timeout_seconds)
+        if self.provider == 'openrouter':
+            return float(self.settings.openrouter_timeout_seconds)
         return float(self.settings.openai_timeout_seconds)
 
     def is_configured(self, base_url: str | None = None, *, db: Session | None = None) -> bool:
@@ -126,6 +143,9 @@ class OpenAICompatibleClient:
         if self.provider == 'mistral':
             input_rate = float(self.settings.mistral_input_cost_per_1m_tokens)
             output_rate = float(self.settings.mistral_output_cost_per_1m_tokens)
+        elif self.provider == 'openrouter':
+            input_rate = float(self.settings.openrouter_input_cost_per_1m_tokens)
+            output_rate = float(self.settings.openrouter_output_cost_per_1m_tokens)
         else:
             input_rate = float(self.settings.openai_input_cost_per_1m_tokens)
             output_rate = float(self.settings.openai_output_cost_per_1m_tokens)
