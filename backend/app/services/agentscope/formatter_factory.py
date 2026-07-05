@@ -25,5 +25,5 @@ def build_formatter(
 
     if use_ollama_native:
         return OllamaMultiAgentFormatter() if multi_agent else OllamaChatFormatter()
-    # OpenAI, Mistral, and remote Ollama all use OpenAI-compatible API
+    # OpenAI, Mistral, OpenRouter, and remote Ollama all use OpenAI-compatible API
     return OpenAIMultiAgentFormatter() if multi_agent else OpenAIChatFormatter()

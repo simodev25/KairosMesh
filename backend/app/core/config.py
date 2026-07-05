@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     mistral_output_cost_per_1m_tokens: float = Field(default=0.0, alias='MISTRAL_OUTPUT_COST_PER_1M_TOKENS')
     openrouter_base_url: str = Field(default='https://openrouter.ai/api/v1', alias='OPENROUTER_BASE_URL')
     openrouter_api_key: str = Field(default='', alias='OPENROUTER_API_KEY')
-    openrouter_model: str = Field(default='deepseek/deepseek-chat-v3.2', alias='OPENROUTER_MODEL')
+    openrouter_model: str = Field(default='openrouter/auto', alias='OPENROUTER_MODEL')
     openrouter_timeout_seconds: int = Field(default=30, alias='OPENROUTER_TIMEOUT_SECONDS')
     openrouter_input_cost_per_1m_tokens: float = Field(default=0.0, alias='OPENROUTER_INPUT_COST_PER_1M_TOKENS')
     openrouter_output_cost_per_1m_tokens: float = Field(default=0.0, alias='OPENROUTER_OUTPUT_COST_PER_1M_TOKENS')

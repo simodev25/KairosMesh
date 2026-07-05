@@ -140,6 +140,17 @@ Variables are loaded at startup through `pydantic-settings`. Names are case-inse
 | `MISTRAL_INPUT_COST_PER_1M_TOKENS` | `float` | `0.0` | Cost per 1 M input tokens in USD, for cost tracking. |
 | `MISTRAL_OUTPUT_COST_PER_1M_TOKENS` | `float` | `0.0` | Cost per 1 M output tokens in USD, for cost tracking. |
 
+### OpenRouter
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `OPENROUTER_BASE_URL` | `str` | `https://openrouter.ai/api/v1` | Base URL for the OpenRouter API. |
+| `OPENROUTER_API_KEY` | `str` | `` (empty) | OpenRouter API key. Required when `LLM_PROVIDER=openrouter`. |
+| `OPENROUTER_MODEL` | `str` | `openrouter/auto` | Model name. Use `openrouter/auto` for automatic model selection, or specify any supported model (e.g. `anthropic/claude-3-opus`). |
+| `OPENROUTER_TIMEOUT_SECONDS` | `int` | `30` | HTTP request timeout. |
+| `OPENROUTER_INPUT_COST_PER_1M_TOKENS` | `float` | `0.0` | Cost per 1 M input tokens in USD, for cost tracking. |
+| `OPENROUTER_OUTPUT_COST_PER_1M_TOKENS` | `float` | `0.0` | Cost per 1 M output tokens in USD, for cost tracking. |
+
 ---
 
 ## 5. Broker — MetaAPI

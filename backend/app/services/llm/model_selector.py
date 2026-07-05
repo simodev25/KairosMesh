@@ -596,7 +596,7 @@ class AgentModelSelector:
         if normalized_provider == 'mistral':
             return str(self.settings.mistral_model or '').strip() or 'mistral-small-latest'
         if normalized_provider == 'openrouter':
-            return str(self.settings.openrouter_model or '').strip() or 'deepseek/deepseek-chat-v3-0324'
+            return str(self.settings.openrouter_model or '').strip() or 'openrouter/auto'
         return str(self.settings.ollama_model or '').strip() or 'deepseek-v3.2'
 
     def is_enabled(self, db: Session | None, agent_name: str) -> bool:

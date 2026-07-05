@@ -1817,6 +1817,16 @@ class MarketProvider:
                 default=str(self.settings.mistral_api_key or '').strip(),
             )
             return provider, base_url.rstrip('/'), api_key
+        if provider == 'openrouter':
+            base_url = RuntimeConnectorSettings.get_string(
+                'openrouter', ('OPENROUTER_BASE_URL', 'openrouter_base_url'),
+                default=str(self.settings.openrouter_base_url or '').strip(),
+            ) or 'https://openrouter.ai/api/v1'
+            api_key = RuntimeConnectorSettings.get_string(
+                'openrouter', ('OPENROUTER_API_KEY', 'openrouter_api_key'),
+                default=str(self.settings.openrouter_api_key or '').strip(),
+            )
+            return provider, base_url.rstrip('/'), api_key
         # Default: ollama
         base_url = str(self.settings.ollama_base_url or '').strip().rstrip('/')
         api_key = RuntimeConnectorSettings.get_string(

@@ -380,3 +380,8 @@ def test_normalize_agent_tools_preserves_ext_tool_ids():
     assert "ext__test-finance-mcp__get_earnings" in ta, "ext__ tool must be preserved"
     assert ta["ext__test-finance-mcp__get_earnings"] is False
     assert ta["ext__test-finance-mcp__get_analyst_rating"] is True
+
+
+def test_normalize_llm_provider_accepts_openrouter() -> None:
+    assert normalize_llm_provider('openrouter') == 'openrouter'
+    assert normalize_llm_provider('OPENROUTER') == 'openrouter'
