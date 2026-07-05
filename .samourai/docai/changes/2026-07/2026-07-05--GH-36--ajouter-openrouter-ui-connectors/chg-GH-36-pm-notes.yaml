@@ -1,0 +1,17 @@
+change_id: GH-36
+title: "Ajouter OpenRouter dans l'UI Connectors"
+phases:
+  clarify_scope: { started: null, completed: null }
+  specification: { started: null, completed: null }
+  test_planning: { started: null, completed: null }
+  delivery_planning: { started: null, completed: null }
+  delivery: { started: null, completed: null }
+  system_spec_update: { started: null, completed: null }
+  review_fix: { started: null, completed: null }
+  quality_gates: { started: null, completed: null }
+  dod_check: { started: null, completed: null }
+  pr_creation: { started: null, completed: null, url: null }
+decisions: []
+open_questions: []
+blockers: []
+notes: []
