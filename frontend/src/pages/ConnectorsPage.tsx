@@ -118,11 +118,11 @@ const AGENT_PROMPT_FALLBACKS: Record<string, { system: string; user: string }> =
   },
 };
 
-type LlmProvider = 'ollama' | 'openai' | 'mistral';
+type LlmProvider = 'ollama' | 'openai' | 'mistral' | 'openrouter';
 type DecisionMode = 'conservative' | 'balanced' | 'permissive';
 const EXECUTION_MODE_OPTIONS: ExecutionMode[] = ['simulation', 'paper', 'live'];
 
-const LLM_PROVIDERS: LlmProvider[] = ['ollama', 'openai', 'mistral'];
+const LLM_PROVIDERS: LlmProvider[] = ['ollama', 'openai', 'mistral', 'openrouter'];
 const DECISION_MODE_OPTIONS: Array<{ value: DecisionMode; label: string; description: string }> = [
   {
     value: 'conservative',
@@ -143,6 +143,7 @@ const DECISION_MODE_OPTIONS: Array<{ value: DecisionMode; label: string; descrip
 
 function normalizeLlmProvider(value: unknown): LlmProvider {
   const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (text === 'openrouter') return 'openrouter';
   if (text === 'openai') return 'openai';
   if (text === 'mistral') return 'mistral';
   return 'ollama';
@@ -177,6 +178,7 @@ function normalizeBooleanSetting(value: unknown, fallback = false): boolean {
 }
 
 function defaultModelForProvider(provider: LlmProvider): string {
+  if (provider === 'openrouter') return 'openrouter/auto';
   if (provider === 'openai') return 'gpt-4o-mini';
   if (provider === 'mistral') return 'mistral-small-latest';
   return 'deepseek-v3.2';
@@ -288,6 +290,7 @@ type SecretFieldKey =
   | 'ALPHAVANTAGE_API_KEY'
   | 'OLLAMA_API_KEY'
   | 'MISTRAL_API_KEY'
+  | 'OPENROUTER_API_KEY'
   | 'OPENAI_API_KEY'
   | 'METAAPI_TOKEN'
   | 'METAAPI_ACCOUNT_ID';
@@ -307,6 +310,7 @@ const EMPTY_SECRET_FIELDS: Record<SecretFieldKey, string> = {
   ALPHAVANTAGE_API_KEY: '',
   OLLAMA_API_KEY: '',
   MISTRAL_API_KEY: '',
+  OPENROUTER_API_KEY: '',
   OPENAI_API_KEY: '',
   METAAPI_TOKEN: '',
   METAAPI_ACCOUNT_ID: '',
@@ -650,6 +654,7 @@ export function ConnectorsPage() {
 
     setSecretFields({
       OLLAMA_API_KEY: readConnectorSecret(ollamaSettings, 'OLLAMA_API_KEY'),
+      OPENROUTER_API_KEY: readConnectorSecret(ollamaSettings, 'OPENROUTER_API_KEY'),
       OPENAI_API_KEY: readConnectorSecret(ollamaSettings, 'OPENAI_API_KEY'),
       MISTRAL_API_KEY: readConnectorSecret(ollamaSettings, 'MISTRAL_API_KEY'),
       NEWSAPI_API_KEY: readConnectorSecret(newsSettings, 'NEWSAPI_API_KEY'),
@@ -1191,7 +1196,7 @@ export function ConnectorsPage() {
     setError(null);
     try {
       await Promise.all([
-        api.updateConnector(token, 'ollama', buildSettings('ollama', ['OLLAMA_API_KEY', 'OPENAI_API_KEY', 'MISTRAL_API_KEY'])),
+        api.updateConnector(token, 'ollama', buildSettings('ollama', ['OLLAMA_API_KEY', 'OPENAI_API_KEY', 'MISTRAL_API_KEY', 'OPENROUTER_API_KEY'])),
         api.updateConnector(
           token,
           'news',
@@ -2068,6 +2073,16 @@ export function ConnectorsPage() {
                     autoComplete="off"
                   />
                   <p className="model-source">Current:<code>{maskSecretPreview(secretFields.MISTRAL_API_KEY)}</code></p>
+                </label>
+                <label>
+                  OPENROUTER_API_KEY
+                  <input
+                    type="password"
+                    value={secretFields.OPENROUTER_API_KEY}
+                    onChange={(e) => setSecretFields((prev) => ({ ...prev, OPENROUTER_API_KEY: e.target.value }))}
+                    autoComplete="off"
+                  />
+                  <p className="model-source">Current:<code>{maskSecretPreview(secretFields.OPENROUTER_API_KEY)}</code></p>
                 </label>
                 <span className="text-[10px] font-semibold tracking-[0.12em] text-text-muted uppercase block mt-2 mb-1">NEWS_PROVIDER_KEYS</span>
                 <label>
